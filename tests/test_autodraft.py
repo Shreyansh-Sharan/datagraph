@@ -45,3 +45,16 @@ def test_draft_is_buildable_end_to_end(db):
     assert run.status == "succeeded", run.error
     inv = dict(store.type_inventory(v.id))
     assert inv["http://d/hr#Employee"] == 4 and inv["http://d/hr#Department"] == 2 and inv["http://d/hr#EmployeeSkill"] == 3
+
+
+def test_draft_refuses_tables_without_columns():
+    import pytest
+    from ontoforge.autodraft import AutodraftError
+    from ontoforge.catalog import CatalogAdapter
+
+    class Cat(CatalogAdapter):
+        def list_tables(self, schema=None): return ["known", "ghost"]
+        def column_types(self, table): return {"id": "int"} if table == "known" else {}
+
+    with pytest.raises(AutodraftError, match="ghost"):
+        draft_from_catalog(Cat(), ontology_iri="http://d/x", base_iri="http://d/x/")

@@ -16,6 +16,10 @@ from ontoforge.mapping import AttributeBinding, ClassMapping, MappingSpec, Relat
 from ontoforge.ontology import DatatypeProperty, ObjectProperty, OntoClass, Ontology
 
 
+class AutodraftError(ValueError):
+    pass
+
+
 @dataclass(frozen=True)
 class InferredKeys:
     primary_key: tuple[str, ...]
@@ -25,54 +29,80 @@ class InferredKeys:
 _PREFIXES = ("dim_", "fact_", "silver_", "gold_", "bronze_", "stg_", "tbl_", "t_")
 
 
-def _stems(table: str) -> list[str]:
+def _stripped(table: str) -> str:
     name = table.rsplit(".", 1)[-1].lower()
-    stripped = name
     for pre in _PREFIXES:
-        if stripped.startswith(pre):
-            stripped = stripped[len(pre):]
-            break
-    out = []
-    for cand in (stripped, singular(stripped), name, singular(name)):
-        if cand and cand not in out:
-            out.append(cand)
-    return out
+        if name.startswith(pre) and len(name) > len(pre):
+            return name[len(pre):]
+    return name
 
 
-def _primary_key_by_naming(table: str, columns: list[str]) -> tuple[str, ...]:
-    lower = {c.lower(): c for c in columns}
-    for stem in _stems(table):
-        for pattern in (f"{stem}_sk", f"{stem}_id", f"{stem}id", f"{stem}_key", f"{stem}_code", f"{stem}_no"):
-            if pattern in lower:
-                return (lower[pattern],)
-    if "id" in lower:
-        return (lower["id"],)
-    return ()
+_KEY_SUFFIX = re.compile(r"(_id|_sk|_key|_code|_no|id)$")
+
+
+def _owns(table: str, column: str) -> bool:
+    """Does ``column`` name this table's identity? ``promo_id`` ~ ``dim_promotion``, ``customer_sk`` ~ ``dim_customer``."""
+    col = column.lower()
+    if not _KEY_SUFFIX.search(col) or col == "id":
+        return False
+    stem = _KEY_SUFFIX.sub("", col)
+    base = _stripped(table)
+    return any(stem == cand or _abbreviates(stem, cand) for cand in (base, singular(base)))
 
 
 def infer_keys(catalog: CatalogAdapter, tables: list[str]) -> dict[str, InferredKeys]:
     """Guess primary and foreign keys from column names when the catalog declares none.
 
-    PK: ``<stem>_sk`` / ``<stem>_id`` / ``<stem>id`` / ``id`` (stem = table name minus dim_/fact_/... prefixes,
-    singular or plural). FK: a non-key column whose name equals another table's single-column PK.
-    Tables without a name-based PK use the set of their FK columns (typical for fact tables).
+    A column name is the key of at most one table. Assignment order:
+      1. a column naming the table itself (``customer_id`` in dim_customer, ``promo_id`` in dim_promotion);
+      2. for tables still without a key, the unassigned ``*_id``/``*_sk`` column most referenced by other
+         tables (``sku_id`` in dim_product, ``date_id`` in dim_calendar);
+      3. a plain ``id``;
+      4. a surrogate named after the raw table name (``dim_product_sk``);
+      5. otherwise the table's foreign-key columns together (fact tables), or every column.
+    Foreign key: any non-key column equal to another table's assigned single-column key.
     """
     columns = {t: list(catalog.column_types(t)) for t in tables}
-    pks = {t: _primary_key_by_naming(t, cols) for t, cols in columns.items()}
-    by_pk_name: dict[str, list[str]] = {}
-    for t, pk in pks.items():
-        if len(pk) == 1:
-            by_pk_name.setdefault(pk[0].lower(), []).append(t)
+    refs: dict[str, int] = {}
+    for cols in columns.values():
+        for c in {x.lower() for x in cols}:
+            refs[c] = refs.get(c, 0) + 1
+    pks: dict[str, tuple[str, ...]] = {t: () for t in tables}
+    assigned: set[str] = set()
+
+    def assign(t: str, col: str) -> None:
+        pks[t] = (col,)
+        assigned.add(col.lower())
+
+    for t, cols in columns.items():                                   # 1. self-named keys
+        own = [c for c in cols if _owns(t, c) and c.lower() not in assigned]
+        if own:
+            own.sort(key=lambda c: (0 if c.lower().endswith("_sk") else 1, -(refs[c.lower()] - 1)))
+            assign(t, own[0])
+    for t, cols in columns.items():                                   # 2. most-referenced unassigned id column
+        if pks[t]:
+            continue
+        cands = [c for c in cols if _KEY_SUFFIX.search(c.lower()) and c.lower() != "id" and c.lower() not in assigned and refs[c.lower()] > 1]
+        if cands:
+            cands.sort(key=lambda c: -refs[c.lower()])
+            assign(t, cands[0])
+    for t, cols in columns.items():                                   # 3. plain id
+        if not pks[t]:
+            plain = next((c for c in cols if c.lower() == "id"), None)
+            if plain:
+                pks[t] = (plain,)
+    for t, cols in columns.items():                                   # 4. raw-name surrogate
+        if not pks[t]:
+            raw = t.rsplit(".", 1)[-1].lower()
+            sur = next((c for c in cols if _KEY_SUFFIX.sub("", c.lower()) == raw and c.lower() not in assigned), None)
+            if sur:
+                assign(t, sur)
+    key_owner = {pk[0].lower(): t for t, pk in pks.items() if len(pk) == 1}
     out: dict[str, InferredKeys] = {}
     for t, cols in columns.items():
-        fks = []
-        for c in cols:
-            if pks[t] and c.lower() == pks[t][0].lower():
-                continue
-            for ref in by_pk_name.get(c.lower(), []):
-                if ref != t:
-                    fks.append(((c,), ref, (pks[ref][0],)))
-        pk = pks[t] or tuple(c for cols_, _, _ in fks for c in cols_)
+        fks = [((c,), key_owner[c.lower()], pks[key_owner[c.lower()]]) for c in cols
+               if c.lower() in key_owner and key_owner[c.lower()] != t and (not pks[t] or c.lower() != pks[t][0].lower())]
+        pk = pks[t] or tuple(c for cols_, _, _ in fks for c in cols_)             # 5. composite of FKs
         out[t] = InferredKeys(pk, fks)
     return out
 
@@ -84,18 +114,31 @@ def draft_from_catalog(catalog: CatalogAdapter, *, ontology_iri: str, base_iri: 
     inferred = infer_keys(catalog, tables) if infer else {}
     meta = {}
     for t in tables:
+        if not catalog.column_types(t):
+            raise AutodraftError(f"Table {t!r} was not found in the catalog or has no columns")
         pk, fks = catalog.primary_key(t), catalog.foreign_keys(t)
         if infer and not pk and not fks and t in inferred:
             pk, fks = inferred[t].primary_key, inferred[t].foreign_keys
         meta[t] = _TableMeta(t, catalog.column_types(t), pk, fks)
-    class_iri = {t: onto.mint(singular(_class_stem(t)), capitalize=True) for t, m in meta.items() if not m.is_link_table}
+    class_iri: dict[str, str] = {}
+    for t, m in meta.items():
+        if m.is_link_table:
+            continue
+        iri = onto.mint(singular(_class_stem(t)), capitalize=True)
+        if iri in class_iri.values():                       # e.g. dim_promotion vs fact_promotions
+            iri = onto.mint(singular(t.rsplit(".", 1)[-1]), capitalize=True)
+        n = 2
+        while iri in class_iri.values():
+            iri = onto.mint(singular(t.rsplit(".", 1)[-1]) + str(n), capitalize=True)
+            n += 1
+        class_iri[t] = iri
     classes: list[ClassMapping] = []
     relations: list[RelationMapping] = []
 
     for t, m in meta.items():
         if m.is_link_table:
             continue
-        onto.add_class(OntoClass(class_iri[t], label=humanize(singular(_class_stem(t)))))
+        onto.add_class(OntoClass(class_iri[t], label=humanize(onto.local_name(class_iri[t]))))
         attributes = []
         for col, sql_type in m.columns.items():
             if col in m.fk_columns:
@@ -162,11 +205,7 @@ def _abbreviates(short: str, long: str) -> bool:
 
 
 def _class_stem(table: str) -> str:
-    name = table.rsplit(".", 1)[-1]
-    for pre in _PREFIXES:
-        if name.lower().startswith(pre) and len(name) > len(pre):
-            return name[len(pre):]
-    return name
+    return _stripped(table)
 
 
 def singular(name: str) -> str:
