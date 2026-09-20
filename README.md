@@ -109,7 +109,9 @@ workflow: domains and versions with the review lifecycle, metadata snapshots, th
 with completeness and previews, rules, data-quality constraints and validation, builds with live
 progress, graph exploration with entity detail and neighbourhood graph, analytics, and domain
 settings (MCP policy, attachments, cohorts, GraphQL console). Identity is chosen in-app for header
-mode or by pasting an API key in token mode.
+mode or by pasting an API key in token mode. The graph stage is sigma.js + graphology (vendored,
+MIT): ForceAtlas2 layout, colour by class or Louvain community, hover highlighting, expand on
+double-click, keyboard navigation.
 
 ## Deploy
 

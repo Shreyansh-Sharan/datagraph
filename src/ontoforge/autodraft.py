@@ -153,8 +153,15 @@ def draft_from_catalog(catalog: CatalogAdapter, *, ontology_iri: str, base_iri: 
             iri = onto.mint(name)
             if iri in onto.datatype_properties or iri in onto.classes:   # never reuse an attribute's IRI
                 name, iri = name + "Ref", onto.mint(name + "Ref")
-            prop = onto.add_object_property(ObjectProperty(iri, label=humanize(name),
-                                                           domain=class_iri[t], range=class_iri[ref]))
+            existing = onto.object_properties.get(iri)
+            if existing is not None and existing.range == class_iri[ref]:   # the same relation from another table: union domain
+                prop = onto.add_object_property(ObjectProperty(iri, existing.label, existing.description, existing.domain, existing.range,
+                                                               domains=(*existing.all_domains, class_iri[t])))
+            elif existing is not None:                                        # same name, different target: keep them apart
+                name, iri = camel(f"{onto.local_name(class_iri[t])}_{name}"), onto.mint(camel(f"{onto.local_name(class_iri[t])}_{name}"))
+                prop = onto.add_object_property(ObjectProperty(iri, label=humanize(name), domain=class_iri[t], range=class_iri[ref]))
+            else:
+                prop = onto.add_object_property(ObjectProperty(iri, label=humanize(name), domain=class_iri[t], range=class_iri[ref]))
             relations.append(RelationMapping(prop.iri, class_iri[t], class_iri[ref], target_key=cols))
 
     for t, m in meta.items():

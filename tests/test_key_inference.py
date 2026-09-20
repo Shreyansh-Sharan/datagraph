@@ -129,3 +129,18 @@ def test_class_names_never_collide():
     assert keys["Promotion"] == ("promo_id",) and keys["FactPromotion"] == ("id",)
     rels = {(onto.local_name(r.source_class), onto.local_name(r.target_class)) for r in spec.relations}
     assert ("FactPromotion", "Promotion") in rels and ("Sale", "Product") in rels
+
+
+def test_shared_relations_get_union_domains_instead_of_last_writer_wins():
+    class TwoFacts(CatalogAdapter):
+        TABLES = {"dim_customer": {"customer_id": "int", "name": "string"},
+                  "fact_sales": {"id": "int", "customer_id": "int", "net": "double"},
+                  "fact_target": {"id": "int", "customer_id": "int", "target": "double"}}
+        def list_tables(self, schema=None): return sorted(self.TABLES)
+        def column_types(self, table): return dict(self.TABLES[table])
+    onto, spec = draft_from_catalog(TwoFacts(), ontology_iri="http://d/x", base_iri="http://d/x/")
+    p = onto.object_properties["http://d/x#customer"]
+    assert set(p.domains) == {"http://d/x#Sale", "http://d/x#Target"} and p.range == "http://d/x#Customer"
+    assert {onto.local_name(r.source_class) for r in spec.relations if r.property_iri == p.iri} == {"Sale", "Target"}
+    from ontoforge.mapping import mapping_status
+    assert mapping_status(onto, spec).completion == 1.0

@@ -48,6 +48,14 @@ class OntoClass:
         object.__setattr__(self, "restrictions", tuple(sorted(self.restrictions, key=lambda r: (r.property, r.kind, str(r.value)))))
 
 
+def _normalise_domains(obj) -> None:
+    """``domains`` is the full (union) domain; ``domain`` stays the primary member for single-domain callers."""
+    domains = tuple(sorted(set(obj.domains) | ({obj.domain} if obj.domain else set())))
+    object.__setattr__(obj, "domains", domains if len(domains) > 1 else ())
+    if obj.domain is None and domains:
+        object.__setattr__(obj, "domain", domains[0])
+
+
 @dataclass(frozen=True)
 class ObjectProperty:
     iri: str
@@ -59,6 +67,7 @@ class ObjectProperty:
     characteristics: tuple[str, ...] = ()
     sub_property_of: tuple[str, ...] = ()
     chain: tuple[tuple[str, ...], ...] = ()   # owl:propertyChainAxiom(s)
+    domains: tuple[str, ...] = ()             # union domain (owl:unionOf) when the property applies to several classes
 
     def __post_init__(self) -> None:
         known = [c for c in CHARACTERISTICS if c in self.characteristics]
@@ -66,6 +75,11 @@ class ObjectProperty:
         object.__setattr__(self, "characteristics", tuple(known + unknown))
         object.__setattr__(self, "sub_property_of", tuple(sorted(self.sub_property_of)))
         object.__setattr__(self, "chain", tuple(sorted(tuple(c) for c in self.chain)))
+        _normalise_domains(self)
+
+    @property
+    def all_domains(self) -> tuple[str, ...]:
+        return self.domains or ((self.domain,) if self.domain else ())
 
     @property
     def functional(self) -> bool:
@@ -80,6 +94,14 @@ class DatatypeProperty:
     domain: str | None = None
     range: str | None = None  # an XSD datatype IRI
     functional: bool = False
+    domains: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        _normalise_domains(self)
+
+    @property
+    def all_domains(self) -> tuple[str, ...]:
+        return self.domains or ((self.domain,) if self.domain else ())
 
 
 @dataclass(frozen=True)
@@ -148,9 +170,14 @@ class Ontology:
     def properties_of(self, class_iri: str, include_global: bool = True) -> list[ObjectProperty | DatatypeProperty]:
         """Properties whose domain is the class or an ancestor; domain-less properties apply everywhere."""
         scope = {class_iri, *self.ancestors(class_iri)}
-        if include_global:
-            scope.add(None)
-        return [p for p in (*self.object_properties.values(), *self.datatype_properties.values()) if p.domain in scope]
+        out = []
+        for p in (*self.object_properties.values(), *self.datatype_properties.values()):
+            if p.domain is None:
+                if include_global:
+                    out.append(p)
+            elif any(d in scope for d in p.all_domains):
+                out.append(p)
+        return out
 
     def all_properties(self) -> Iterator[ObjectProperty | DatatypeProperty]:
         yield from self.object_properties.values()
@@ -194,8 +221,10 @@ class Ontology:
                 issues.append(Issue("missing-label", p.iri, "Property has no rdfs:label"))
             if p.domain is None:
                 issues.append(Issue("missing-domain", p.iri, "Property has no rdfs:domain"))
-            elif p.domain not in self.classes:
-                issues.append(Issue("unknown-domain", p.iri, f"Domain {p.domain} is not a class of this ontology", "error"))
+            else:
+                for d in p.all_domains:
+                    if d not in self.classes:
+                        issues.append(Issue("unknown-domain", p.iri, f"Domain {d} is not a class of this ontology", "error"))
             if p.range is None:
                 issues.append(Issue("missing-range", p.iri, "Property has no rdfs:range"))
             elif isinstance(p, ObjectProperty) and p.range not in self.classes:
@@ -236,10 +265,10 @@ class Ontology:
             o.add_object_property(ObjectProperty(p["iri"], p.get("label"), p.get("description"), p.get("domain"),
                                                  p.get("range"), p.get("inverse_of"), tuple(p.get("characteristics", ())),
                                                  tuple(p.get("sub_property_of", ())),
-                                                 tuple(tuple(ch) for ch in p.get("chain", ()))))
+                                                 tuple(tuple(ch) for ch in p.get("chain", ())), tuple(p.get("domains", ()))))
         for p in d.get("datatype_properties", []):
             o.add_datatype_property(DatatypeProperty(p["iri"], p.get("label"), p.get("description"), p.get("domain"),
-                                                     p.get("range"), bool(p.get("functional", False))))
+                                                     p.get("range"), bool(p.get("functional", False)), tuple(p.get("domains", ()))))
         return o
 
     def to_turtle(self) -> str:

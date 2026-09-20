@@ -112,3 +112,21 @@ def test_functional_object_property_is_single_valued_in_graphql(db):
     reg.update_content(v.id, actor="alice", ontology_ttl=rich().to_turtle())
     sdl = print_schema(build_schema(reg, store, v.id))
     assert "reportsTo: Employee\n" in sdl and "worksIn: [Department!]!" in sdl
+
+
+def test_union_domains_round_trip_and_apply_to_every_member():
+    o = Ontology(iri="http://d/u")
+    for n in ("Sale", "Target", "Customer"):
+        o.add_class(OntoClass(f"http://d/u#{n}", n))
+    o.add_object_property(ObjectProperty("http://d/u#customer", "customer", domain="http://d/u#Sale", range="http://d/u#Customer",
+                                         domains=("http://d/u#Sale", "http://d/u#Target")))
+    ttl = o.to_turtle()
+    assert "owl:unionOf" in ttl
+    again = Ontology.from_turtle(ttl)
+    assert again == o
+    assert again.object_properties["http://d/u#customer"].domains == ("http://d/u#Sale", "http://d/u#Target")
+    assert {p.iri for p in again.properties_of("http://d/u#Target")} == {"http://d/u#customer"}
+    assert {p.iri for p in again.properties_of("http://d/u#Sale")} == {"http://d/u#customer"}
+    assert not [p.iri for p in again.properties_of("http://d/u#Customer")]
+    assert Ontology.from_dict(o.to_dict()) == o
+    assert not [i for i in o.check() if i.severity == "error"]

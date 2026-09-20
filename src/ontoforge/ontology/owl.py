@@ -39,7 +39,7 @@ def to_turtle(o: Ontology) -> str:
         node = URIRef(p.iri)
         g.add((node, RDF.type, OWL.ObjectProperty))
         _annotate(g, node, p.label, p.description)
-        _link(g, node, RDFS.domain, p.domain)
+        _domain(g, node, p)
         _link(g, node, RDFS.range, p.range)
         _link(g, node, OWL.inverseOf, p.inverse_of)
         for ch in p.characteristics:
@@ -55,7 +55,7 @@ def to_turtle(o: Ontology) -> str:
         node = URIRef(p.iri)
         g.add((node, RDF.type, OWL.DatatypeProperty))
         _annotate(g, node, p.label, p.description)
-        _link(g, node, RDFS.domain, p.domain)
+        _domain(g, node, p)
         _link(g, node, RDFS.range, p.range)
         if p.functional:
             g.add((node, RDF.type, OWL.FunctionalProperty))
@@ -87,16 +87,42 @@ def from_rdf(data: str, fmt: str = "turtle") -> Ontology:
     for node in sorted(g.subjects(RDF.type, OWL.ObjectProperty), key=str):
         chars = tuple(ch for t in g.objects(node, RDF.type) if (ch := _CLASS_CHARACTERISTIC.get(t)))
         chains = tuple(tuple(str(x) for x in Collection(g, head)) for head in g.objects(node, OWL.propertyChainAxiom))
+        dom, doms = _domains(g, node)
         o.add_object_property(ObjectProperty(str(node), _label(g, node), _text(g, node, RDFS.comment),
-                                             _iri(g, node, RDFS.domain), _iri(g, node, RDFS.range), _iri(g, node, OWL.inverseOf),
+                                             dom, _iri(g, node, RDFS.range), _iri(g, node, OWL.inverseOf),
                                              tuple(sorted(chars, key=_char_order)),
                                              tuple(sorted(str(x) for x in g.objects(node, RDFS.subPropertyOf) if isinstance(x, URIRef))),
-                                             chains))
+                                             chains, doms))
     for node in sorted(g.subjects(RDF.type, OWL.DatatypeProperty), key=str):
+        dom, doms = _domains(g, node)
         o.add_datatype_property(DatatypeProperty(str(node), _label(g, node), _text(g, node, RDFS.comment),
-                                                 _iri(g, node, RDFS.domain), _iri(g, node, RDFS.range),
-                                                 (node, RDF.type, OWL.FunctionalProperty) in g))
+                                                 dom, _iri(g, node, RDFS.range),
+                                                 (node, RDF.type, OWL.FunctionalProperty) in g, doms))
     return o
+
+
+def _domain(g: Graph, node: URIRef, p) -> None:
+    if len(p.domains) > 1:                       # rdfs:domain [ a owl:Class ; owl:unionOf ( A B ) ]
+        union = BNode()
+        g.add((union, RDF.type, OWL.Class))
+        head = BNode()
+        Collection(g, head, [URIRef(d) for d in p.domains])
+        g.add((union, OWL.unionOf, head))
+        g.add((node, RDFS.domain, union))
+    else:
+        _link(g, node, RDFS.domain, p.domain)
+
+
+def _domains(g: Graph, node) -> tuple[str | None, tuple[str, ...]]:
+    """(primary domain, union members) from rdfs:domain, unwrapping owl:unionOf."""
+    for d in g.objects(node, RDFS.domain):
+        if isinstance(d, URIRef):
+            return str(d), ()
+        head = g.value(d, OWL.unionOf)
+        if head is not None:
+            members = tuple(sorted(str(x) for x in Collection(g, head) if isinstance(x, URIRef)))
+            return (members[0] if members else None), members
+    return None, ()
 
 
 def _restriction(g: Graph, r: Restriction) -> BNode:
