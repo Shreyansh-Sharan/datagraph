@@ -58,6 +58,7 @@ class DomainVersion:
     mapping: dict | None
     r2rml_ttl: str | None
     rules: dict | None
+    quality: dict | None
     editor: str | None
     lease_expires_at: datetime | None
     created_at: datetime

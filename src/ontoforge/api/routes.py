@@ -21,6 +21,7 @@ from ontoforge.mapping import MappingSpec
 from ontoforge.ontology import Ontology
 from ontoforge.r2rml import serialize_r2rml
 from ontoforge.reasoning import generate_shapes
+from ontoforge.quality import ConstraintSet, QualityEngine, QualityError
 from ontoforge.rules import Rule, RuleEngine, RuleError, RuleSet
 from ontoforge.registry import DomainVersion, LifecycleError, NotFound, Status
 
@@ -36,7 +37,8 @@ def _version_json(v: DomainVersion) -> dict:
     d = asdict(v)
     d["has_ontology"], d["has_mapping"], d["has_r2rml"] = bool(v.ontology_ttl), bool(v.mapping), bool(v.r2rml_ttl)
     d["rule_count"] = len((v.rules or {}).get("rules", []))
-    for k in ("ontology_ttl", "mapping", "r2rml_ttl", "rules"):
+    d["constraint_count"] = len((v.quality or {}).get("constraints", []))
+    for k in ("ontology_ttl", "mapping", "r2rml_ttl", "rules", "quality"):
         d.pop(k)
     return d
 
@@ -461,6 +463,58 @@ def rules_sql(version_id: UUID, request: Request):
 def run_rules(version_id: UUID, request: Request, me: Principal = Depends(builder)):
     st = _st(request)
     return RuleEngine(st.registry, st.store).run(version_id)
+
+
+# -- data quality ----------------------------------------------------------------
+
+def _validated_constraints(request: Request, version_id: UUID, cs: ConstraintSet) -> ConstraintSet:
+    onto = _ontology(request, version_id)
+    props = {p.iri for p in onto.all_properties()}
+    for c in cs.constraints:
+        if c.target_class not in onto.classes:
+            raise QualityError(f"Constraint {c.name!r}: unknown class {c.target_class}")
+        if c.property not in props:
+            raise QualityError(f"Constraint {c.name!r}: unknown property {c.property}")
+    return cs
+
+
+@router.put("/versions/{version_id}/quality")
+def put_quality(version_id: UUID, body: dict, request: Request, me: Principal = Depends(builder)):
+    cs = _validated_constraints(request, version_id, ConstraintSet.from_dict(body))
+    _st(request).registry.update_content(version_id, actor=me.name, quality=cs.to_dict())
+    return cs.to_dict()
+
+
+@router.get("/versions/{version_id}/quality")
+def get_quality(version_id: UUID, request: Request):
+    return _st(request).registry.get_version(version_id).quality or {"constraints": []}
+
+
+@router.get("/versions/{version_id}/quality/shacl")
+def quality_shacl(version_id: UUID, request: Request):
+    cs = ConstraintSet.from_dict(_st(request).registry.get_version(version_id).quality)
+    return PlainTextResponse(cs.to_shacl(), media_type="text/turtle")
+
+
+@router.post("/versions/{version_id}/quality/import-shacl")
+def quality_import_shacl(version_id: UUID, body: OntologyIn, request: Request, me: Principal = Depends(builder)):
+    cs = _validated_constraints(request, version_id, ConstraintSet.from_shacl(body.turtle))
+    _st(request).registry.update_content(version_id, actor=me.name, quality=cs.to_dict())
+    return cs.to_dict()
+
+
+@router.get("/versions/{version_id}/quality/sql")
+def quality_sql(version_id: UUID, request: Request):
+    st = _st(request)
+    return PlainTextResponse(QualityEngine(st.registry, st.store).sql(version_id), media_type="text/plain")
+
+
+@router.post("/versions/{version_id}/reasoning/quality")
+def run_quality(version_id: UUID, request: Request, me: Principal = Depends(builder),
+                include_ontology: bool = Query(default=True)):
+    st = _st(request)
+    report = QualityEngine(st.registry, st.store).run(version_id, include_ontology)
+    return {"conforms": report.conforms, "summary": report.summary, "results": report.results}
 
 
 # -- metadata --------------------------------------------------------------------

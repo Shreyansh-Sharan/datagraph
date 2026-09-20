@@ -18,13 +18,14 @@ from ontoforge.observability import RequestLoggingMiddleware, configure_logging
 from ontoforge.r2rml import MappingError
 from ontoforge.reasoning import Reasoner
 from ontoforge.registry import LifecycleError, LockedError, NotFound, Registry
+from ontoforge.quality import QualityError
 from ontoforge.rules import RuleError
 from ontoforge.store import TripleStore
 
 from .routes import open_router, router
 
 _STATUS = {AuthError: 401, Forbidden: 403, NotFound: 404, LifecycleError: 409, LockedError: 423, LLMUnavailable: 503, LLMOutputError: 502,
-           MetadataError: 409, RuleError: 400, MappingSpecError: 400, MappingError: 400, CompileError: 400, IdentifierError: 400, ValueError: 400}
+           MetadataError: 409, RuleError: 400, QualityError: 400, MappingSpecError: 400, MappingError: 400, CompileError: 400, IdentifierError: 400, ValueError: 400}
 
 
 def create_app(db: Database, source_db: Database | None = None, settings: Settings | None = None,
