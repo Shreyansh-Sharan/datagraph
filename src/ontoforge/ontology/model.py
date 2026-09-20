@@ -1,7 +1,9 @@
 """Ontology model: OWL 2 classes and properties, kept deliberately small.
 
-Everything here maps 1:1 onto OWL/RDFS vocabulary (owl:Class, rdfs:subClassOf, owl:ObjectProperty,
-owl:DatatypeProperty, rdfs:domain, rdfs:range, owl:inverseOf, rdfs:label, rdfs:comment).
+Everything here maps 1:1 onto OWL/RDFS vocabulary: owl:Class, rdfs:subClassOf, owl:ObjectProperty,
+owl:DatatypeProperty, rdfs:domain/range, owl:inverseOf, rdfs:subPropertyOf, owl:propertyChainAxiom,
+the property-characteristic classes (owl:FunctionalProperty, ...), owl:equivalentClass,
+owl:disjointWith, and owl:Restriction (cardinality / allValuesFrom / someValuesFrom / hasValue).
 """
 from __future__ import annotations
 
@@ -11,6 +13,22 @@ from typing import Iterator
 
 XSD = "http://www.w3.org/2001/XMLSchema#"
 
+CHARACTERISTICS = ("functional", "inverse_functional", "transitive", "symmetric", "asymmetric", "reflexive", "irreflexive")
+RESTRICTION_KINDS = ("min", "max", "exactly", "some", "only", "has_value")
+
+
+@dataclass(frozen=True)
+class Restriction:
+    """A class restriction on a property: cardinality (min/max/exactly: int) or value (some/only: class or
+    datatype IRI; has_value: a literal or IRI string)."""
+    property: str
+    kind: str
+    value: int | str
+
+    def __post_init__(self) -> None:
+        if self.kind not in RESTRICTION_KINDS:
+            raise ValueError(f"Unknown restriction kind {self.kind!r}")
+
 
 @dataclass(frozen=True)
 class OntoClass:
@@ -18,6 +36,16 @@ class OntoClass:
     label: str | None = None
     description: str | None = None
     parents: tuple[str, ...] = ()
+    equivalent_to: tuple[str, ...] = ()
+    disjoint_with: tuple[str, ...] = ()
+    restrictions: tuple[Restriction, ...] = ()
+
+    def __post_init__(self) -> None:
+        # Sets in OWL; normalise order so equality and round-trips are stable.
+        object.__setattr__(self, "parents", tuple(sorted(self.parents)))
+        object.__setattr__(self, "equivalent_to", tuple(sorted(self.equivalent_to)))
+        object.__setattr__(self, "disjoint_with", tuple(sorted(self.disjoint_with)))
+        object.__setattr__(self, "restrictions", tuple(sorted(self.restrictions, key=lambda r: (r.property, r.kind, str(r.value)))))
 
 
 @dataclass(frozen=True)
@@ -28,6 +56,20 @@ class ObjectProperty:
     domain: str | None = None
     range: str | None = None
     inverse_of: str | None = None
+    characteristics: tuple[str, ...] = ()
+    sub_property_of: tuple[str, ...] = ()
+    chain: tuple[tuple[str, ...], ...] = ()   # owl:propertyChainAxiom(s)
+
+    def __post_init__(self) -> None:
+        known = [c for c in CHARACTERISTICS if c in self.characteristics]
+        unknown = [c for c in self.characteristics if c not in CHARACTERISTICS]
+        object.__setattr__(self, "characteristics", tuple(known + unknown))
+        object.__setattr__(self, "sub_property_of", tuple(sorted(self.sub_property_of)))
+        object.__setattr__(self, "chain", tuple(sorted(tuple(c) for c in self.chain)))
+
+    @property
+    def functional(self) -> bool:
+        return "functional" in self.characteristics
 
 
 @dataclass(frozen=True)
@@ -37,6 +79,7 @@ class DatatypeProperty:
     description: str | None = None
     domain: str | None = None
     range: str | None = None  # an XSD datatype IRI
+    functional: bool = False
 
 
 @dataclass(frozen=True)
@@ -113,6 +156,16 @@ class Ontology:
         yield from self.object_properties.values()
         yield from self.datatype_properties.values()
 
+    def property(self, iri: str) -> ObjectProperty | DatatypeProperty | None:
+        return self.object_properties.get(iri) or self.datatype_properties.get(iri)
+
+    def restrictions_of(self, class_iri: str) -> list[Restriction]:
+        """Own restrictions plus inherited ones."""
+        out = []
+        for iri in (class_iri, *self.ancestors(class_iri)):
+            out.extend(self.classes.get(iri, OntoClass(iri)).restrictions)
+        return out
+
     # -- checks --------------------------------------------------------------
 
     def check(self) -> list[Issue]:
@@ -125,6 +178,17 @@ class Ontology:
                     issues.append(Issue("unknown-parent", c.iri, f"Parent class {p} is not defined", "error"))
             if c.iri in self.ancestors(c.iri):
                 issues.append(Issue("subclass-cycle", c.iri, "Class is its own ancestor", "error"))
+            for d in c.disjoint_with:
+                if d == c.iri or d in self.ancestors(c.iri):
+                    issues.append(Issue("disjoint-with-ancestor", c.iri, f"Class is disjoint with itself or an ancestor ({d})", "error"))
+                elif d not in self.classes:
+                    issues.append(Issue("unknown-class-reference", c.iri, f"owl:disjointWith {d} is not defined", "error"))
+            for e in c.equivalent_to:
+                if e not in self.classes:
+                    issues.append(Issue("unknown-class-reference", c.iri, f"owl:equivalentClass {e} is not defined", "error"))
+            for r in c.restrictions:
+                if self.property(r.property) is None:
+                    issues.append(Issue("unknown-restriction-property", c.iri, f"Restriction on unknown property {r.property}", "error"))
         for p in self.all_properties():
             if not p.label:
                 issues.append(Issue("missing-label", p.iri, "Property has no rdfs:label"))
@@ -138,6 +202,19 @@ class Ontology:
                 issues.append(Issue("unknown-range", p.iri, f"Range {p.range} is not a class of this ontology", "error"))
             elif isinstance(p, DatatypeProperty) and not p.range.startswith(XSD):
                 issues.append(Issue("non-xsd-range", p.iri, f"Datatype property range {p.range} is not an XSD type"))
+            if isinstance(p, ObjectProperty):
+                for ch in p.characteristics:
+                    if ch not in CHARACTERISTICS:
+                        issues.append(Issue("unknown-characteristic", p.iri, f"Unknown characteristic {ch}", "error"))
+                if "symmetric" in p.characteristics and "asymmetric" in p.characteristics:
+                    issues.append(Issue("contradictory-characteristics", p.iri, "Both symmetric and asymmetric", "error"))
+                for sp in p.sub_property_of:
+                    if sp not in self.object_properties:
+                        issues.append(Issue("unknown-property-reference", p.iri, f"rdfs:subPropertyOf {sp} is not defined", "error"))
+                for chain in p.chain:
+                    for link in chain:
+                        if link not in self.object_properties:
+                            issues.append(Issue("unknown-property-reference", p.iri, f"Chain link {link} is not defined", "error"))
         return issues
 
     # -- (de)serialisation ---------------------------------------------------
@@ -152,12 +229,17 @@ class Ontology:
     def from_dict(cls, d: dict) -> Ontology:
         o = cls(iri=d["iri"], label=d.get("label"), description=d.get("description"))
         for c in d.get("classes", []):
-            o.add_class(OntoClass(c["iri"], c.get("label"), c.get("description"), tuple(c.get("parents", ()))))
+            o.add_class(OntoClass(c["iri"], c.get("label"), c.get("description"), tuple(c.get("parents", ())),
+                                  tuple(c.get("equivalent_to", ())), tuple(c.get("disjoint_with", ())),
+                                  tuple(Restriction(r["property"], r["kind"], r["value"]) for r in c.get("restrictions", ()))))
         for p in d.get("object_properties", []):
             o.add_object_property(ObjectProperty(p["iri"], p.get("label"), p.get("description"), p.get("domain"),
-                                                 p.get("range"), p.get("inverse_of")))
+                                                 p.get("range"), p.get("inverse_of"), tuple(p.get("characteristics", ())),
+                                                 tuple(p.get("sub_property_of", ())),
+                                                 tuple(tuple(ch) for ch in p.get("chain", ()))))
         for p in d.get("datatype_properties", []):
-            o.add_datatype_property(DatatypeProperty(p["iri"], p.get("label"), p.get("description"), p.get("domain"), p.get("range")))
+            o.add_datatype_property(DatatypeProperty(p["iri"], p.get("label"), p.get("description"), p.get("domain"),
+                                                     p.get("range"), bool(p.get("functional", False))))
         return o
 
     def to_turtle(self) -> str:

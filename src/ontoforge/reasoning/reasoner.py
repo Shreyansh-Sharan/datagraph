@@ -28,6 +28,40 @@ _NOISE_PREDICATES = {OWL.sameAs, OWL.differentFrom, RDFS.subClassOf, RDFS.subPro
 class InferenceReport:
     inferred: int
     seconds: float
+    inconsistent: list[str] = field(default_factory=list)   # entities typed owl:Nothing (disjointness violations)
+
+
+def infer_triples(tbox: Graph, data: Graph) -> list[tuple]:
+    """OWL 2 RL closure of tbox+data; returns only new, interesting ABox triples.
+
+    Disjoint-class violations are made explicit as ``x rdf:type owl:Nothing`` (the OWL RL cax-dw
+    conclusion) so callers can report inconsistent entities instead of silently dropping them.
+    """
+    tbox_terms = set(tbox.subjects())
+    asserted = set(data)
+    work = Graph()
+    for t in tbox:
+        work.add(t)
+    for t in data:
+        work.add(t)
+    DeductiveClosure(OWLRL_Semantics, axiomatic_triples=False, datatype_axioms=False).expand(work)
+    for c1, c2 in list(work.subject_objects(OWL.disjointWith)):
+        for x in set(work.subjects(RDF.type, c1)) & set(work.subjects(RDF.type, c2)):
+            work.add((x, RDF.type, OWL.Nothing))
+    return [t for t in work if t not in asserted and t not in tbox and _keep(t, tbox_terms)]
+
+
+def _keep(t, tbox_terms: set) -> bool:
+    s, p, o = t
+    if isinstance(s, Literal) or s in tbox_terms or p in _NOISE_PREDICATES:
+        return False
+    if Ontology.local_name(str(p)) == "error":   # owlrl's inconsistency notes; we report owl:Nothing instead
+        return False
+    if p == RDF.type and o in _NOISE_TYPES:
+        return False
+    if isinstance(o, Literal) and p in (RDFS.label, RDFS.comment):
+        return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -54,19 +88,12 @@ class Reasoner:
     def owl_rl(self, version_id: UUID) -> InferenceReport:
         t0 = time.perf_counter()
         tbox = self._ontology_graph(version_id)
-        tbox_terms = set(tbox.subjects())
         data = rows_to_graph(self.store.iter_triples(version_id, inferred=False))
-        asserted = set(data)
-        work = Graph()
-        for t in tbox:
-            work.add(t)
-        for t in data:
-            work.add(t)
-        DeductiveClosure(OWLRL_Semantics, axiomatic_triples=False, datatype_axioms=False).expand(work)
-        new = [t for t in work if t not in asserted and t not in tbox and self._keep(t, tbox_terms)]
+        new = infer_triples(tbox, data)
         self.store.clear_inferred(version_id)
         n = self.store.add_inferred(version_id, (triple_to_row(t) for t in new))
-        return InferenceReport(inferred=n, seconds=round(time.perf_counter() - t0, 4))
+        inconsistent = sorted(str(s) for s, p, o in new if p == RDF.type and o == OWL.Nothing)
+        return InferenceReport(inferred=n, seconds=round(time.perf_counter() - t0, 4), inconsistent=inconsistent)
 
     def validate(self, version_id: UUID, shapes_ttl: str | None = None) -> ValidationReport:
         version = self.registry.get_version(version_id)
@@ -93,17 +120,6 @@ class Reasoner:
         if ttl:
             g.parse(data=ttl, format="turtle")
         return g
-
-    @staticmethod
-    def _keep(t, tbox_terms: set) -> bool:
-        s, p, o = t
-        if s in tbox_terms or p in _NOISE_PREDICATES:
-            return False
-        if p == RDF.type and o in _NOISE_TYPES:
-            return False
-        if isinstance(o, Literal) and p in (RDFS.label, RDFS.comment):
-            return False
-        return True
 
 
 def _opt(node) -> str | None:

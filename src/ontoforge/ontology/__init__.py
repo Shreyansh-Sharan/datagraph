@@ -1,3 +1,4 @@
-from .model import DatatypeProperty, Issue, ObjectProperty, OntoClass, Ontology, XSD
+from .model import CHARACTERISTICS, RESTRICTION_KINDS, DatatypeProperty, Issue, ObjectProperty, OntoClass, Ontology, Restriction, XSD
 
-__all__ = ["DatatypeProperty", "Issue", "ObjectProperty", "OntoClass", "Ontology", "XSD"]
+__all__ = ["CHARACTERISTICS", "RESTRICTION_KINDS", "DatatypeProperty", "Issue", "ObjectProperty", "OntoClass", "Ontology",
+           "Restriction", "XSD"]

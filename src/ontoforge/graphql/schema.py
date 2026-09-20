@@ -49,8 +49,11 @@ def schema_for(ontology: Ontology, store: TripleStore, version_id: UUID) -> Grap
                 if isinstance(p, DatatypeProperty):
                     fields[names[p.iri]] = GraphQLField(_SCALARS.get(p.range or "", GraphQLString), resolve=_attr(p.iri))
                 elif isinstance(p, ObjectProperty) and p.range in types:
-                    fields[names[p.iri]] = GraphQLField(GraphQLNonNull(GraphQLList(GraphQLNonNull(types[p.range]))),
-                                                        resolve=_related(p.iri, store, version_id))
+                    if p.functional:
+                        fields[names[p.iri]] = GraphQLField(types[p.range], resolve=_related(p.iri, store, version_id, single=True))
+                    else:
+                        fields[names[p.iri]] = GraphQLField(GraphQLNonNull(GraphQLList(GraphQLNonNull(types[p.range]))),
+                                                            resolve=_related(p.iri, store, version_id))
             return fields
         return thunk
 
@@ -86,7 +89,7 @@ def _attr(predicate: str):
     return resolve
 
 
-def _related(predicate: str, store: TripleStore, version_id: UUID):
+def _related(predicate: str, store: TripleStore, version_id: UUID, single: bool = False):
     def resolve(entity: EntityDetail, info):
         out = []
         for r in entity.outgoing:
@@ -94,7 +97,9 @@ def _related(predicate: str, store: TripleStore, version_id: UUID):
                 target = store.describe(version_id, r.target)
                 if target is not None:
                     out.append(target)
-        return out
+                    if single:
+                        return target
+        return None if single else out
     return resolve
 
 
