@@ -104,11 +104,15 @@ One shared table, keyed by domain version:
 ## UI
 
 `/ui/` serves a dependency-free single-page app (ES modules, no build step) covering the whole
-workflow: domains and versions with the review lifecycle, metadata snapshots, the ontology editor
-(classes, properties, restrictions, checks, import, AI assist, graph view), the mapping designer
-with completeness and previews, rules, data-quality constraints and validation, builds with live
-progress, graph exploration with entity detail and neighbourhood graph, analytics, and domain
-settings (MCP policy, attachments, cohorts, GraphQL console). Identity is chosen in-app for header
+workflow: domains and versions with the review lifecycle, metadata snapshots, the ontology map
+(click a class on the map to edit its icon, label, parents, properties and restrictions; checks,
+import, AI assist and a list view alongside), the mapping designer (the same map coloured by
+mapping status, with a Status / Data / SQL panel where clicking a column header binds it to an
+attribute), rules, data-quality constraints and validation, builds with live progress, graph
+exploration with a whole-graph backdrop, ranked search, entity detail and neighbourhood expansion,
+a sortable triples grid, analytics, and domain settings (MCP policy, attachments, cohorts, GraphQL
+console). The top bar shows the pipeline (Ontology › Mapping › Graph, ticked as each stage
+completes), the source warehouse, and a light/dark toggle. Identity is chosen in-app for header
 mode or by pasting an API key in token mode. The graph stage is sigma.js + graphology (vendored,
 MIT): ForceAtlas2 layout, colour by class or Louvain community, hover highlighting, expand on
 double-click, keyboard navigation.

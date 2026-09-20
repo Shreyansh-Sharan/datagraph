@@ -19,7 +19,7 @@ Legend: ✅ have · 🟡 partial · ❌ missing · ➖ not planned (UI-only or D
 | Industry ontologies: FIBO, CDISC, IOF, HL7 FHIR | ✅ | catalogue with licences; import by source/url/data, merge or replace; CDISC gated |
 | LLM ontology wizard (metadata + guidelines templates + document enrichment) | 🟡 | draft from metadata + description; no templates, no PDF/DOCX enrichment |
 | LLM ontology assistant (NL edits) | ✅ | |
-| Auto icon assignment, dashboard mapping, OntoViz canvas, D3 designer | 🟡 | own SPA: form-based class/property editor + canvas graph view; no drag-and-drop canvas editing, no icons/dashboards |
+| Auto icon assignment, dashboard mapping, OntoViz canvas, D3 designer | 🟡 | own SPA: keyword icons (`ofui:icon`), ontology map as the default editor (click a class → side form), mapping designer coloured by status with Status/Data/SQL panel and click-to-bind column headers; no drag-and-drop canvas editing, no dashboards |
 
 ## 2. Metadata & mapping
 | Capability | Status | Note |
