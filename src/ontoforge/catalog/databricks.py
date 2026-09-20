@@ -35,6 +35,26 @@ class DatabricksCatalog(CatalogAdapter):
     def column_types(self, table: str) -> dict[str, str]:
         return {name: sql_type for name, sql_type in self.run_query(_COLUMNS_SQL, self._parts(table))}
 
+    def list_tables(self, schema: str | None = None) -> list[str]:
+        catalog, sch = self._schema_parts(schema)
+        rows = self.run_query("SELECT table_name FROM system.information_schema.tables WHERE table_catalog = ? AND table_schema = ? "
+                              "AND table_name NOT LIKE '\\_\\_%' ORDER BY table_name", (catalog, sch))
+        return [r[0] for r in rows]
+
+    def table_comment(self, table: str) -> str | None:
+        rows = self.run_query("SELECT comment FROM system.information_schema.tables WHERE table_catalog = ? AND table_schema = ? "
+                              "AND table_name = ?", self._parts(table))
+        return rows[0][0] if rows and rows[0][0] else None
+
+    def _schema_parts(self, schema: str | None) -> tuple[str, str]:
+        parts = (schema or "").split(".") if schema else []
+        if len(parts) == 2:
+            return parts[0], parts[1]
+        sch = parts[0] if parts else self.default_schema
+        if not self.default_catalog or not sch:
+            raise IdentifierError("A schema is required (and a default catalog must be configured)")
+        return self.default_catalog, sch
+
     def _parts(self, table: str) -> tuple:
         parts = list(validate_table(table))
         if len(parts) == 1:

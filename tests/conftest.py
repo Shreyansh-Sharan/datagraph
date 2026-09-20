@@ -4,6 +4,13 @@ import uuid
 
 import pytest
 
+# Tests never read the developer's .env: pin the source engine and LLM provider (env beats .env).
+os.environ.setdefault("ONTOFORGE_SOURCE_KIND", "postgres")
+os.environ.setdefault("ONTOFORGE_LLM_PROVIDER", "none")
+os.environ.setdefault("ONTOFORGE_WAREHOUSE_MATERIALIZATION", "none")
+for _k in ("ONTOFORGE_DATABRICKS_HOST", "ONTOFORGE_DATABRICKS_HTTP_PATH", "ONTOFORGE_DATABRICKS_TOKEN"):
+    os.environ.setdefault(_k, "")
+
 from ontoforge.db import Database, run_migrations
 
 TEST_DATABASE_URL = os.environ.get("ONTOFORGE_TEST_DATABASE_URL",

@@ -70,7 +70,8 @@ class MetadataService:
 
     def import_tables(self, version_id: UUID, tables: list[str], *, actor: str, schema: str | None = None) -> list[TableSnapshot]:
         self.registry.assert_editable(version_id, actor)
-        out = [self._capture(t) for t in tables]
+        qualified = [t if "." in t or not schema else f"{schema}.{t}" for t in tables]
+        out = [self._capture(t) for t in qualified]
         for snap in out:
             self._save(version_id, snap)
         return out

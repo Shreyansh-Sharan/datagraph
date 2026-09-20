@@ -7,3 +7,8 @@ dist/
 # Clean-room rule R2: the reference implementation must never enter this tree.
 **/ontobricks-ref/
 **/databrickslabs/
+
+# secrets
+.env
+.env.*
+!.env.example

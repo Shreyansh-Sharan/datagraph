@@ -1,6 +1,7 @@
 """Runtime settings. Every value can be overridden with an ``ONTOFORGE_``-prefixed env var."""
 from __future__ import annotations
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,8 +28,12 @@ class Settings(BaseSettings):
     warehouse_target_schema: str | None = None   # where to publish triple views/tables (e.g. "main.kg")
     warehouse_materialization: str = "none"      # "none" | "view" | "table"
 
-    llm_provider: str = "none"          # "none" | "anthropic"
+    llm_provider: str = "none"          # "none" | "anthropic" | "azure_openai"
     llm_model: str = "claude-opus-5"
+    azure_openai_api_key: str | None = Field(default=None, validation_alias=AliasChoices("AZURE_OPENAI_API_KEY", "ONTOFORGE_AZURE_OPENAI_API_KEY"))
+    azure_openai_endpoint: str | None = Field(default=None, validation_alias=AliasChoices("AZURE_OPENAI_ENDPOINT", "ONTOFORGE_AZURE_OPENAI_ENDPOINT"))
+    azure_openai_deployment: str = Field(default="gpt-5.1", validation_alias=AliasChoices("AZURE_OPENAI_DEPLOYMENT", "ONTOFORGE_AZURE_OPENAI_DEPLOYMENT"))
+    azure_openai_api_version: str = Field(default="2024-08-01-preview", validation_alias=AliasChoices("AZURE_OPENAI_API_VERSION", "ONTOFORGE_AZURE_OPENAI_API_VERSION"))
 
 
 def load_settings() -> Settings:

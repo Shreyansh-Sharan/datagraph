@@ -192,8 +192,17 @@ export async function ontologyTab(ctx) {
   }
   async function autodraft() {
     const iri = input({ value: onto?.iri || ctx.domain.base_iri.replace(/\/$/, "") });
-    dialog("Draft from tables", h("div", {}, h("p", {}, "Tables become classes, columns attributes, foreign keys relationships. This also drafts the mapping."), field("Ontology IRI", iri)),
-      { confirm: "Draft", onConfirm: async () => { const r = await api.post(`/versions/${vid}/autodraft`, { ontology_iri: iri.value }); toast(`Drafted ${r.classes} classes and ${r.relations} relations`, "ok"); ctx.reload(); } });
+    const schema = input({ placeholder: "schema (leave empty for the default)" });
+    const sel = h("select", { multiple: true, size: 10, "aria-label": "Tables" });
+    const infer = h("label", { class: "check" }, h("input", { type: "checkbox", checked: true }), "infer keys from column names (for tables without declared constraints)");
+    const load = async () => { sel.replaceChildren(h("option", { disabled: true }, "loading…")); try { const t = await api.get(`/catalog/tables${qs({ schema_name: schema.value })}`); sel.replaceChildren(...t.map(x => h("option", { value: x, selected: true }, x))); } catch (e) { sel.replaceChildren(h("option", { disabled: true }, e.detail || e.message)); } };
+    schema.addEventListener("change", load); load();
+    dialog("Draft from tables", h("div", {}, h("p", {}, "Tables become classes, columns attributes, foreign keys relationships. This also drafts the mapping."), field("Ontology IRI", iri), field("Schema", schema), field("Tables", sel, "Cmd/Ctrl-click to choose; all selected by default."), infer),
+      { confirm: "Draft", onConfirm: async () => {
+        const tables = [...sel.selectedOptions].filter(o => !o.disabled).map(o => o.value);
+        if (!tables.length) throw new Error("Select at least one table");
+        const r = await api.post(`/versions/${vid}/autodraft`, { ontology_iri: iri.value, tables, schema_name: schema.value || null, infer_keys: infer.querySelector("input").checked });
+        toast(`Drafted ${r.classes} classes and ${r.relations} relations`, "ok"); ctx.reload(); } });
   }
   async function aiDraft() {
     const iri = input({ value: onto?.iri || ctx.domain.base_iri.replace(/\/$/, "") }), desc = textarea({ placeholder: "What is this data about? Any modelling guidance?" });

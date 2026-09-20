@@ -72,3 +72,32 @@ class AnthropicProvider(LLMProvider):
             return json.loads(text)
         except json.JSONDecodeError as exc:
             raise LLMOutputError(f"Model returned invalid JSON: {exc}") from None
+
+
+class AzureOpenAIProvider(LLMProvider):
+    """An Azure OpenAI chat deployment (e.g. GPT-5.1) with strict JSON-schema output."""
+
+    def __init__(self, client=None, deployment: str = "gpt-5.1", *, api_key: str | None = None,
+                 endpoint: str | None = None, api_version: str | None = None, max_tokens: int = 16000) -> None:
+        if client is None:
+            from openai import AzureOpenAI  # lazy: optional dependency
+            client = AzureOpenAI(api_key=api_key, azure_endpoint=endpoint, api_version=api_version)
+        self.client, self.deployment, self.max_tokens = client, deployment, max_tokens
+
+    def complete_json(self, system: str, user: str, schema: dict) -> dict:
+        response = self.client.chat.completions.create(
+            model=self.deployment,
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            response_format={"type": "json_schema", "json_schema": {"name": "ontoforge_output", "schema": schema, "strict": True}},
+            max_completion_tokens=self.max_tokens,
+        )
+        choice = response.choices[0]
+        message = choice.message
+        if getattr(message, "refusal", None):
+            raise LLMOutputError(f"The model declined this request: {message.refusal}")
+        if choice.finish_reason == "length":
+            raise LLMOutputError("The model's answer was cut off (max tokens); narrow the input")
+        try:
+            return json.loads(message.content or "")
+        except json.JSONDecodeError as exc:
+            raise LLMOutputError(f"Model returned invalid JSON: {exc}") from None

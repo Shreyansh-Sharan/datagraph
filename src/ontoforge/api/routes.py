@@ -160,6 +160,7 @@ class AutodraftIn(BaseModel):
     ontology_iri: str
     tables: list[str] | None = None
     schema_name: str | None = None
+    infer_keys: bool = True
 
 
 # -- identity & administration ---------------------------------------------------
@@ -706,7 +707,7 @@ def autodraft(version_id: UUID, body: AutodraftIn, request: Request, me: Princip
     version = st.registry.get_version(version_id)
     domain = st.registry.get_domain_by_id(version.domain_id)
     onto, spec = draft_from_catalog(st.source.catalog, ontology_iri=body.ontology_iri, base_iri=domain.base_iri,
-                                    tables=body.tables, schema=body.schema_name)
+                                    tables=body.tables, schema=body.schema_name, infer=body.infer_keys)
     st.registry.update_content(version_id, actor=me.name, ontology_ttl=onto.to_turtle(), mapping=spec.to_dict())
     return {"classes": len(onto.classes), "properties": len(onto.datatype_properties) + len(onto.object_properties),
             "relations": len(spec.relations), "issues": onto.check()}

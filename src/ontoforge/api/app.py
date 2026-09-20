@@ -20,7 +20,7 @@ from ontoforge.build import BuildPipeline, BuildScheduler, DatabricksSource, Pub
 from ontoforge.compiler import CompileError, IdentifierError
 from ontoforge.config import Settings, load_settings
 from ontoforge.db import Database, run_migrations
-from ontoforge.llm import AnthropicProvider, LLMOutputError, LLMProvider, LLMUnavailable
+from ontoforge.llm import AnthropicProvider, AzureOpenAIProvider, LLMOutputError, LLMProvider, LLMUnavailable
 from ontoforge.mapping import MappingSpecError
 from ontoforge.mcp import GraphTools, create_mcp_server
 from ontoforge.metadata import MetadataError, MetadataService
@@ -112,12 +112,22 @@ def _handler(code: int):
     return handle
 
 
+def _llm_provider(settings: Settings) -> LLMProvider | None:
+    if settings.llm_provider == "anthropic":
+        return AnthropicProvider(model=settings.llm_model)
+    if settings.llm_provider == "azure_openai":
+        return AzureOpenAIProvider(deployment=settings.azure_openai_deployment, api_key=settings.azure_openai_api_key,
+                                   endpoint=settings.azure_openai_endpoint, api_version=settings.azure_openai_api_version)
+    return None
+
+
 def _source_engine(settings: Settings, db: Database) -> SourceEngine:
     if settings.source_kind == "databricks":
         missing = [k for k in ("databricks_host", "databricks_http_path", "databricks_token") if not getattr(settings, k)]
         if missing:
             raise ValueError("ONTOFORGE_SOURCE_KIND=databricks needs " + ", ".join(f"ONTOFORGE_{m.upper()}" for m in missing))
-        connect = databricks_connect_factory(settings.databricks_host, settings.databricks_http_path, settings.databricks_token)
+        connect = databricks_connect_factory(settings.databricks_host, settings.databricks_http_path, settings.databricks_token,
+                                             settings.databricks_catalog, settings.databricks_schema)
         return DatabricksSource(connect, settings.databricks_catalog, settings.databricks_schema)
     if settings.source_kind == "postgres":
         return PostgresSource(db)
@@ -129,7 +139,7 @@ def create_app_from_settings() -> FastAPI:
     settings = load_settings()
     db = Database(settings.database_url, schema=settings.database_schema)
 
-    llm = AnthropicProvider(model=settings.llm_model) if settings.llm_provider == "anthropic" else None
+    llm = _llm_provider(settings)
     run_migrations(db)
     app = create_app(db, settings=settings, llm=llm)
     inner = app.router.lifespan_context

@@ -73,9 +73,19 @@ class DatabricksSource(SourceEngine):
             conn.close()
 
 
-def databricks_connect_factory(server_hostname: str, http_path: str, access_token: str) -> ConnectionFactory:
-    """Build a factory over ``databricks-sql-connector`` (optional dependency)."""
+def databricks_connect_factory(server_hostname: str, http_path: str, access_token: str,
+                               catalog: str | None = None, schema: str | None = None) -> ConnectionFactory:
+    """Build a factory over ``databricks-sql-connector`` (optional dependency).
+
+    ``catalog``/``schema`` become the session defaults, so mapping tables can be written as
+    ``schema.table`` (or bare ``table``) instead of three-part names.
+    """
     def connect():
         from databricks import sql  # imported lazily: optional extra
-        return sql.connect(server_hostname=server_hostname, http_path=http_path, access_token=access_token)
+        kwargs = {"server_hostname": server_hostname, "http_path": http_path, "access_token": access_token}
+        if catalog:
+            kwargs["catalog"] = catalog
+        if schema:
+            kwargs["schema"] = schema
+        return sql.connect(**kwargs)
     return connect
