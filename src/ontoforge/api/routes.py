@@ -512,12 +512,13 @@ def graph_entity(version_id: UUID, request: Request, iri: str):
     detail = st.store.describe(version_id, iri)
     if detail is None:
         raise NotFound(f"Entity {iri}")
-    summary = {"datasets": [], "actions": [], "virtual_attributes": []}
+    summary = {"datasets": [], "actions": [], "virtual_attributes": [], "bridges": []}
     for t in detail.types:
         info = st.attachments.for_class(version_id, t)
         summary["datasets"] += [d["table"] for d in info["datasets"]]
         summary["actions"] += [a["name"] for a in info["actions"]]
         summary["virtual_attributes"] += info["virtual_attributes"]
+        summary["bridges"] += [b["target_domain"] for b in info["bridges"]]
     return {**asdict(detail), "attachments": {k: sorted(v) for k, v in summary.items()}}
 
 
@@ -536,6 +537,11 @@ def entity_action(version_id: UUID, name: str, request: Request, iri: str, me: P
         raise
 
 
+@router.get("/versions/{version_id}/graph/entity/bridges")
+def entity_bridges(version_id: UUID, request: Request, iri: str):
+    return _st(request).attachments.bridges_for(version_id, iri)
+
+
 @router.get("/versions/{version_id}/graph/entity/datasets")
 def entity_datasets(version_id: UUID, request: Request, iri: str, limit: int = Query(default=50, ge=1, le=500)):
     return _st(request).attachments.dataset_rows(version_id, iri, limit)
@@ -548,6 +554,11 @@ def put_attachments(version_id: UUID, body: dict, request: Request, me: Principa
     unknown = [c for c in att.classes() if c not in onto.classes]
     if unknown:
         raise AttachmentError(f"Unknown class(es): {', '.join(sorted(unknown))}")
+    for b in att.bridges:
+        try:
+            _st(request).registry.get_domain(b.target_domain)
+        except NotFound:
+            raise AttachmentError(f"Bridge target domain {b.target_domain!r} does not exist")
     _st(request).registry.update_content(version_id, actor=me.name, attachments=att.to_dict())
     return att.to_dict()
 

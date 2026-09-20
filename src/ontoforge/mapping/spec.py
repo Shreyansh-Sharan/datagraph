@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, asdict
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 from ontoforge.compiler.template import ColumnRef, parse_template
 from ontoforge.ontology.model import Ontology
@@ -121,6 +121,15 @@ class MappingSpec:
                 pattern += re.escape(part)
         m = re.match(pattern + "$", iri)
         return {n: unquote(v) for n, v in zip(names, m.groups())} if m else None
+
+    def iri_for(self, c: ClassMapping, key_values: list[str] | tuple[str, ...]) -> str:
+        """Fill a class's subject template with key values (positional), percent-encoding them like the compiler does."""
+        cols = self._key_columns(c)
+        if len(cols) != len(key_values):
+            raise MappingSpecError(f"{c.class_iri}: expected {len(cols)} key value(s), got {len(key_values)}")
+        values = dict(zip((k.lower() for k in cols), key_values))
+        return "".join(quote(str(values[p.name.lower()]), safe="-._~") if isinstance(p, ColumnRef) else p
+                       for p in parse_template(self.subject_template(c)))
 
     def subject_template(self, c: ClassMapping) -> str:
         if c.iri_template:

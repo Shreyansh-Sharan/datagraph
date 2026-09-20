@@ -12,7 +12,7 @@ from uuid import UUID
 from ontoforge.build.source import SourceEngine
 from ontoforge.mapping import MappingSpec
 from ontoforge.ontology import Ontology
-from ontoforge.registry import Registry
+from ontoforge.registry import NotFound, Registry
 
 _PLACEHOLDER = re.compile(r"(?<![:\w]):([A-Za-z_]\w*)")
 KINDS = ("scalar", "table")
@@ -72,38 +72,51 @@ class VirtualAttribute:
 
 
 @dataclass(frozen=True)
+class Bridge:
+    """Instances of class_iri are the same things as instances of target_class in target_domain,
+    matched by key values in order."""
+    class_iri: str
+    target_domain: str
+    target_class: str
+    description: str | None = None
+
+
+@dataclass(frozen=True)
 class Attachments:
     datasets: tuple[Dataset, ...] = field(default_factory=tuple)
     actions: tuple[Action, ...] = field(default_factory=tuple)
     virtual_attributes: tuple[VirtualAttribute, ...] = field(default_factory=tuple)
+    bridges: tuple[Bridge, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "datasets", tuple(self.datasets))
         object.__setattr__(self, "actions", tuple(self.actions))
         object.__setattr__(self, "virtual_attributes", tuple(self.virtual_attributes))
+        object.__setattr__(self, "bridges", tuple(self.bridges))
         for items, what in ((self.actions, "Action"), (self.virtual_attributes, "Virtual attribute")):
             keys = [(x.class_iri, x.name) for x in items]
             if len(set(keys)) != len(keys):
                 raise AttachmentError(f"{what} names must be unique per class")
 
     def classes(self) -> set[str]:
-        return {x.class_iri for x in (*self.datasets, *self.actions, *self.virtual_attributes)}
+        return {x.class_iri for x in (*self.datasets, *self.actions, *self.virtual_attributes, *self.bridges)}
 
     def to_dict(self) -> dict:
         return {"datasets": [asdict(d) for d in self.datasets], "actions": [asdict(a) for a in self.actions],
-                "virtual_attributes": [asdict(v) for v in self.virtual_attributes]}
+                "virtual_attributes": [asdict(v) for v in self.virtual_attributes], "bridges": [asdict(b) for b in self.bridges]}
 
     @classmethod
     def from_dict(cls, d: dict | None) -> Attachments:
         d = d or {}
         return cls(tuple(Dataset(x["class_iri"], x["table"], tuple(x["key_columns"]), x.get("description")) for x in d.get("datasets", [])),
                    tuple(Action(x["class_iri"], x["name"], x["sql"], x.get("description"), x.get("kind", "table")) for x in d.get("actions", [])),
-                   tuple(VirtualAttribute(x["class_iri"], x["name"], x["sql"], x.get("description")) for x in d.get("virtual_attributes", [])))
+                   tuple(VirtualAttribute(x["class_iri"], x["name"], x["sql"], x.get("description")) for x in d.get("virtual_attributes", [])),
+                   tuple(Bridge(x["class_iri"], x["target_domain"], x["target_class"], x.get("description")) for x in d.get("bridges", [])))
 
 
 class AttachmentService:
-    def __init__(self, registry: Registry, source: SourceEngine) -> None:
-        self.registry, self.source = registry, source
+    def __init__(self, registry: Registry, source: SourceEngine, store=None) -> None:
+        self.registry, self.source, self.store = registry, source, store
 
     # -- lookup ------------------------------------------------------------------
 
@@ -125,7 +138,40 @@ class AttachmentService:
         return {"datasets": [asdict(d) for d in att.datasets if d.class_iri == class_iri],
                 "actions": sorted(({"name": a.name, "description": a.description, "kind": a.kind} for a in att.actions if a.class_iri == class_iri),
                                   key=lambda a: a["name"]),
-                "virtual_attributes": sorted(v.name for v in att.virtual_attributes if v.class_iri == class_iri)}
+                "virtual_attributes": sorted(v.name for v in att.virtual_attributes if v.class_iri == class_iri),
+                "bridges": [asdict(b) for b in att.bridges if b.class_iri == class_iri]}
+
+    def bridges_for(self, version_id: UUID, iri: str) -> list[dict]:
+        att, spec = self._load(version_id)
+        try:
+            cls, keys = self._resolve(spec, iri)
+        except AttachmentError:
+            return []
+        cm = next(c for c in spec.classes if c.class_iri == cls)
+        values = [keys[k] for k in cm.key_columns]
+        out = []
+        for b in att.bridges:
+            if b.class_iri != cls:
+                continue
+            entry = {"domain": b.target_domain, "class": b.target_class, "iri": None, "exists": False, "label": None,
+                     "description": b.description}
+            try:
+                target = self.registry.served_version(self.registry.get_domain(b.target_domain).id)
+                tspec = MappingSpec.from_dict(target.mapping) if target and target.mapping else None
+                tcm = next((c for c in tspec.classes if c.class_iri == b.target_class), None) if tspec else None
+                if tcm is None:
+                    raise AttachmentError(f"{b.target_class} is not mapped in domain {b.target_domain!r}")
+                entry["iri"] = tspec.iri_for(tcm, values)
+                if self.store is not None:
+                    detail = self.store.describe(target.id, entry["iri"])
+                    entry["exists"] = detail is not None
+                    entry["label"] = detail.label if detail else Ontology.local_name(entry["iri"])
+            except NotFound:
+                entry["error"] = f"Domain {b.target_domain!r} does not exist"
+            except AttachmentError as exc:
+                entry["error"] = str(exc)
+            out.append(entry)
+        return out
 
     # -- execution ---------------------------------------------------------------
 

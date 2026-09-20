@@ -153,7 +153,15 @@ def _label(iri: str, attrs) -> str:
     for p, v in by_pred.items():
         if Ontology.local_name(p).lower() in ("name", "label", "title", "fullname", "displayname"):
             return v
-    return Ontology.local_name(iri)
+    return fallback_label(iri)
+
+
+def fallback_label(iri: str) -> str:
+    """``.../Employee/42`` -> ``Employee/42``; ``...#Thing`` -> ``Thing``."""
+    if "#" in iri:
+        return iri.rsplit("#", 1)[1] or iri
+    parts = [p for p in iri.rstrip("/").split("/") if p]
+    return "/".join(parts[-2:]) if len(parts) >= 2 and not parts[-2].startswith(("http:", "https:")) else (parts[-1] if parts else iri)
 
 
 def _md5(text: str) -> str:

@@ -54,7 +54,7 @@ def create_app(db: Database, source_db: Database | None = None, settings: Settin
     app.state.scheduler = BuildScheduler(app.state.pipeline, app.state.registry, workers=settings.build_workers)
     app.state.reasoner = Reasoner(app.state.registry, app.state.store)
     app.state.analytics = GraphAnalytics(app.state.registry, app.state.store)
-    app.state.attachments = AttachmentService(app.state.registry, app.state.source)
+    app.state.attachments = AttachmentService(app.state.registry, app.state.source, app.state.store)
     app.state.llm = llm
     mcp_app = _mcp_mount(app)
 

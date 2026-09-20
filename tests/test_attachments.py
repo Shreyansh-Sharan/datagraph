@@ -68,7 +68,7 @@ def test_dataset_rows_for_an_entity(db):
     (ds,) = svc.dataset_rows(v.id, BASE + "Employee/1")
     assert ds["table"] == "employee_skills" and [r["skill"] for r in ds["rows"]] == ["python", "sql"]
     assert svc.for_class(v.id, EX + "Employee")["datasets"][0]["description"] == "Skills per employee"
-    assert svc.for_class(v.id, EX + "Department") == {"datasets": [], "actions": [], "virtual_attributes": []}
+    assert svc.for_class(v.id, EX + "Department") == {"datasets": [], "actions": [], "virtual_attributes": [], "bridges": []}
 
 
 def test_mcp_exposes_context_actions_and_virtual_attributes(db):

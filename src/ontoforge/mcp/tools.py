@@ -203,8 +203,9 @@ class GraphTools:
                "attributes": {a.predicate: a.value for a in detail.attributes},
                "predicates_out": sorted({r.predicate for r in detail.outgoing}),
                "predicates_in": sorted({r.predicate for r in detail.incoming}),
-               "datasets": [], "actions": [], "virtual_attributes": []}
+               "datasets": [], "actions": [], "virtual_attributes": [], "bridges": []}
         if self.attachments is not None:
+            ctx["bridges"] = self.attachments.bridges_for(v.id, detail.iri)
             for t in detail.types:
                 info = self.attachments.for_class(v.id, t)
                 ctx["actions"] += info["actions"]
@@ -258,6 +259,12 @@ class GraphTools:
             for r in detail.incoming:
                 src = self.store.describe(v.id, r.source)
                 lines.append(f"  - {src.label if src else ln(r.source)} <{r.source}> {ln(r.predicate)} -> this")
+        if self.attachments is not None:
+            bridges = self.attachments.bridges_for(v.id, detail.iri)
+            if bridges:
+                lines.append("Bridges to other domains:")
+                lines += [f"  - {b['domain']}: {b['label'] or ln(b['class'])} <{b['iri']}>" + ("" if b["exists"] else " (not found there)")
+                          if not b.get("error") else f"  - {b['domain']}: {b['error']}" for b in bridges]
         if depth > 1:
             sub = self.store.neighbourhood(v.id, detail.iri, depth=depth, limit=100)
             lines.append(f"Neighbourhood (depth {depth}): {len(sub.nodes)} entities, {len(sub.edges)} edges")
