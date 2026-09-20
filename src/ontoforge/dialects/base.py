@@ -33,6 +33,10 @@ class SqlDialect(ABC):
         """Statements that (re)create a snapshot table from a query."""
         return [f"CREATE OR REPLACE TABLE {table_sql} AS {select_sql}"]
 
+    def post_materialize_sql(self, table_sql: str) -> list[str]:
+        """Statements to run after a snapshot table is created (clustering, statistics, ...)."""
+        return []
+
     def null_text(self) -> str:
         """A NULL that is typed as text, so UNION ALL branches agree on the column type."""
         return "NULL"

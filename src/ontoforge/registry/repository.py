@@ -121,6 +121,26 @@ class Registry:
             self._audit(cur, row["id"], actor, "version.created", {"version": row["version"]})
             return _version(row)
 
+    def import_version(self, domain_id: UUID, content: dict, status: Status, *, actor: str) -> DomainVersion:
+        """Append a version with the given content and status (bundle import; bypasses review)."""
+        with self._cur() as cur:
+            cur.execute("SELECT id FROM domains WHERE id = %s FOR UPDATE", (domain_id,))
+            if cur.fetchone() is None:
+                raise NotFound(f"Domain {domain_id}")
+            latest = cur.execute("SELECT version, status FROM domain_versions WHERE domain_id = %s ORDER BY version DESC LIMIT 1",
+                                 (domain_id,)).fetchone()
+            if status is Status.DRAFT and latest and latest["status"] == Status.DRAFT.value:
+                raise LifecycleError("A draft already exists for this domain")
+            json_cols = {"mapping", "rules", "quality", "attachments"}
+            row = cur.execute(
+                "INSERT INTO domain_versions (domain_id, version, status, ontology_ttl, mapping, r2rml_ttl, rules, quality, attachments) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *",
+                (domain_id, (latest["version"] + 1) if latest else 1, status.value,
+                 *[(Jsonb(content.get(k)) if k in json_cols and content.get(k) is not None else content.get(k))
+                   for k in ("ontology_ttl", "mapping", "r2rml_ttl", "rules", "quality", "attachments")])).fetchone()
+            self._audit(cur, row["id"], actor, "version.imported", {"version": row["version"], "status": status.value})
+            return _version(row)
+
     def get_version(self, version_id: UUID) -> DomainVersion:
         with self._cur() as cur:
             return _version(self._lock_version(cur, version_id, lock=False))

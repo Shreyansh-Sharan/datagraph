@@ -44,7 +44,7 @@ def test_active_version_must_be_published_and_is_served_first(db):
     assert reg.get_domain("hr").active_version_id == v1.id
     assert reg.served_version(d.id).id == v1.id                      # pinned beats newer published
     assert GraphTools(reg, store).list_domains()[0]["published_version"] == 1
-    assert export_bundle(reg, "hr")["version"]["number"] == 1
+    assert export_bundle(reg, "hr")["versions"][0]["number"] == 1
     reg.set_active_version(d.id, None)
     assert reg.served_version(d.id).id == v2.id                      # unpinned: latest published
     reg.set_active_version(d.id, v2.id)

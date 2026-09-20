@@ -22,6 +22,10 @@ class DatabricksDialect(SqlDialect):
     def null_text(self) -> str:
         return "CAST(NULL AS STRING)"
 
+    def post_materialize_sql(self, table_sql: str) -> list[str]:
+        # Liquid clustering on (predicate, subject) matches the store's access paths; OPTIMIZE compacts.
+        return [f"ALTER TABLE {table_sql} CLUSTER BY (predicate, subject)", f"OPTIMIZE {table_sql}"]
+
     def iri_encode(self, expr: str) -> str:
         # url_encode() is form-encoding (space -> '+'); IRIs want '%20'.
         return f"replace(url_encode({expr}), '+', '%20')"

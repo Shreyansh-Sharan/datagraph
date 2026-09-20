@@ -125,6 +125,8 @@ class BuildPipeline:
         if table:
             for stmt in self.source.dialect.create_table_as(self._quote(table), f"SELECT * FROM {self._quote(view)}"):
                 self.source.execute(stmt)
+            for stmt in self.source.dialect.post_materialize_sql(self._quote(table)):
+                self.source.execute(stmt)
         return {"view": view, "table": table, "materialization": cfg.materialization}
 
     def _quote(self, dotted: str) -> str:

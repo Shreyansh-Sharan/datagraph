@@ -16,10 +16,10 @@ from tests.hr_fixture import built_domain, BASE
 def test_export_then_import_recreates_domain_content(db):
     reg, store, v = built_domain(db)
     bundle = export_bundle(reg, "hr")
-    assert bundle["format"] == "ontoforge-bundle/1" and bundle["domain"]["name"] == "hr"
-    assert bundle["version"]["ontology_ttl"] and bundle["version"]["mapping"]["classes"]
+    assert bundle["format"] == "ontoforge-bundle/2" and bundle["domain"]["name"] == "hr"
+    assert bundle["versions"][0]["ontology_ttl"] and bundle["versions"][0]["mapping"]["classes"]
     json.dumps(bundle)  # must be plain JSON
-    imported = import_bundle(reg, bundle, name="hr_copy", actor="importer")
+    (imported,) = import_bundle(reg, bundle, name="hr_copy", actor="importer").versions
     assert imported.status == Status.DRAFT and imported.version == 1
     assert imported.ontology_ttl == reg.get_version(v.id).ontology_ttl
     assert reg.get_domain("hr_copy").base_iri == BASE
@@ -30,8 +30,8 @@ def test_import_into_existing_domain_creates_next_draft(db):
     reg.transition(v.id, Status.IN_REVIEW, actor="a")
     reg.add_review(v.id, reviewer="b", approved=True)
     reg.transition(v.id, Status.PUBLISHED, actor="a")
-    imported = import_bundle(reg, export_bundle(reg, "hr"), actor="importer")
-    assert imported.version == 2 and imported.status == Status.DRAFT
+    (imported,) = import_bundle(reg, export_bundle(reg, "hr"), actor="importer", on_conflict="overwrite").versions
+    assert imported.version == 2 and imported.status == Status.PUBLISHED   # status travels with the bundle
 
 
 def test_import_rejects_unknown_format(db):
@@ -43,9 +43,9 @@ def test_bundle_endpoints(db):
     reg, store, v = built_domain(db)
     with TestClient(create_app(db=db, settings=ADMIN), headers={"X-Actor": "alice"}) as c:
         r = c.get("/domains/hr/export")
-        assert r.status_code == 200 and r.json()["format"] == "ontoforge-bundle/1"
+        assert r.status_code == 200 and r.json()["format"] == "ontoforge-bundle/2"
         r = c.post("/domains/import", json={**r.json(), "name": "hr2"})
-        assert r.status_code == 201 and r.json()["version"] == 1
+        assert r.status_code == 201 and r.json()["versions"][0]["version"] == 1
         assert c.get("/domains/hr2").status_code == 200
 
 

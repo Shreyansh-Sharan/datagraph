@@ -277,13 +277,17 @@ def put_mcp_policy(name: str, body: McpPolicyIn, request: Request, me: Principal
 
 
 @router.get("/domains/{name}/export")
-def export_domain(name: str, request: Request, version_id: UUID | None = None):
-    return export_bundle(_st(request).registry, name, version_id)
+def export_domain(name: str, request: Request, version_id: UUID | None = None,
+                  versions: str = Query(default="active", pattern="^(active|latest|all)$")):
+    return export_bundle(_st(request).registry, name, version_id, versions)
 
 
 @router.post("/domains/import", status_code=201)
-def import_domain(body: dict, request: Request, me: Principal = Depends(builder)):
-    return _version_json(import_bundle(_st(request).registry, body, actor=me.name, name=body.get("name")))
+def import_domain(body: dict, request: Request, me: Principal = Depends(builder),
+                  on_conflict: str = Query(default="fail", pattern="^(fail|skip|overwrite|rename)$")):
+    result = import_bundle(_st(request).registry, body, actor=me.name, name=body.get("name"), on_conflict=on_conflict)
+    return {"domain": result.domain, "imported": result.imported, "skipped": result.skipped,
+            "versions": [_version_json(v) for v in result.versions]}
 
 
 @router.get("/domains/{name}/versions")
