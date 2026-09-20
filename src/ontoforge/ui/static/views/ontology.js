@@ -13,7 +13,7 @@ export async function ontologyTab(ctx) {
   const root = h("div", {});
   let onto = version.has_ontology ? await api.get(`/versions/${vid}/ontology`) : null;
   let selected = ctx.arg || null;
-  let mode = "list";
+  let mode = "graph";
   const editable = version.status === "draft";
 
   const head = h("div", { class: "page-head" });
@@ -34,8 +34,8 @@ export async function ontologyTab(ctx) {
     body.replaceChildren();
     if (!onto) { body.append(empty("Start the ontology", "Draft it from your tables, ask the AI, import an OWL file, or add the first class by hand.",
       editable ? button("Add class", { class: "primary", onClick: () => { onto = { iri: ctx.domain.base_iri.replace(/\/$/, ""), label: ctx.domain.name, description: null, classes: [], object_properties: [], datatype_properties: [] }; addClass(); } }) : null)); return; }
-    body.append(tabs([{ id: "list", label: "Classes" }, { id: "graph", label: "Graph" }], mode, m => { mode = m; render(); }));
-    body.append(mode === "graph" ? graphView() : listView());
+    body.append(tabs([{ id: "graph", label: "Map" }, { id: "list", label: "Classes" }], mode, m => { mode = m; render(); }));
+    body.append(mode === "graph" ? mapView() : listView());
   };
 
   function listView() {
@@ -66,10 +66,11 @@ export async function ontologyTab(ctx) {
 
   function classDetail(cls) {
     const label = input({ value: cls.label || "", disabled: !editable });
+    const iconIn = input({ value: cls.icon || "", disabled: !editable, placeholder: "🔹", maxlength: 4, class: "icon-input", "aria-label": "Icon" });
     const desc = textarea({ value: cls.description || "", rows: 2, disabled: !editable });
     const parents = h("select", { multiple: true, size: 4, disabled: !editable }, onto.classes.filter(c => c.iri !== cls.iri).map(c => h("option", { value: c.iri, selected: cls.parents?.includes(c.iri) }, local(c.iri))));
-    const apply = () => { cls.label = label.value; cls.description = desc.value || null; cls.parents = [...parents.selectedOptions].map(o => o.value); };
-    [label, desc, parents].forEach(el => el.addEventListener("change", apply));
+    const apply = () => { cls.label = label.value; cls.icon = iconIn.value.trim() || null; cls.description = desc.value || null; cls.parents = [...parents.selectedOptions].map(o => o.value); };
+    [label, iconIn, desc, parents].forEach(el => el.addEventListener("change", apply));
     const props = propsOf(cls.iri);
     const propTable = table([
       { label: "Property", render: p => h("span", {}, h("strong", {}, p.label || local(p.iri)),
@@ -83,9 +84,9 @@ export async function ontologyTab(ctx) {
     const restr = h("div", {}, h("h3", {}, "Restrictions", editable ? button("Add", { class: "sm", onClick: () => restrictionDialog(cls) }) : null),
       (cls.restrictions || []).length ? h("ul", { class: "list small" }, cls.restrictions.map((r, i) => h("li", {}, h("span", {}, `${local(r.property)} ${r.kind} ${typeof r.value === "string" ? local(r.value) : r.value}`), editable ? button("×", { class: "sm ghost", "aria-label": "Remove restriction", onClick: () => { cls.restrictions.splice(i, 1); render(); } }) : null))) : h("p", { class: "muted small" }, "None."));
     return h("div", { class: "card" },
-      h("h2", {}, h("span", {}, local(cls.iri)), editable ? button("Delete class", { class: "sm danger", onClick: () => deleteClass(cls) }) : null),
+      h("h2", {}, h("span", {}, cls.icon ? cls.icon + " " : "", local(cls.iri)), editable ? button("Delete class", { class: "sm danger", onClick: () => deleteClass(cls) }) : null),
       h("div", { class: "muted small mono" }, cls.iri),
-      h("div", { class: "form-row" }, field("Label", label), field("Parents", parents)), field("Description", desc),
+      h("div", { class: "form-row" }, h("div", { class: "row" }, field("Icon", iconIn), h("div", { style: { flex: 1 } }, field("Label", label))), field("Parents", parents)), field("Description", desc),
       h("h3", {}, "Properties", editable ? h("span", { class: "row" }, button("Add attribute", { class: "sm", onClick: () => propertyDialog(null, cls.iri, "attribute") }), button("Add relationship", { class: "sm", onClick: () => propertyDialog(null, cls.iri, "relationship") })) : null),
       props.length ? propTable : h("p", { class: "muted small" }, "No properties yet."),
       restr,
@@ -219,13 +220,22 @@ export async function ontologyTab(ctx) {
       const r = await api.post(`/versions/${vid}/llm/assist`, { instruction: instr.value }); toast("Ontology updated by the assistant", "ok"); onto = r.ontology; render(); } });
   }
 
-  function graphView() {
-    const box = h("div", { class: "graph stage-host tall" });
-    const nodes = onto.classes.map(c => ({ id: c.iri, label: c.label || local(c.iri), type: c.parents?.length ? local(c.parents[0]) : "root" }));
+  let stage = null;
+  function mapView() {
+    const box = h("div", { class: "graph stage-host fill" });
+    const roots = new Set(onto.classes.filter(c => !(c.parents || []).length).map(c => c.iri));
+    const family = (c) => { let cur = c; const seen = new Set(); while (cur && cur.parents?.length && !seen.has(cur.iri)) { seen.add(cur.iri); cur = onto.classes.find(x => x.iri === cur.parents[0]); } return cur ? local(cur.iri) : local(c.iri); };
+    const inherits = onto.classes.some(c => (c.parents || []).length);
+    const nodes = onto.classes.map(c => ({ id: c.iri, label: c.label || local(c.iri), glyph: c.icon || "", type: inherits ? family(c) : "class", size: 5 + Math.min(6, Math.sqrt(propsOf(c.iri).length)) }));
     const edges = [...onto.object_properties.filter(p => p.range).flatMap(p => domainsOf(p).map(d => ({ source: d, target: p.range, label: local(p.iri) }))),
-      ...onto.classes.flatMap(c => (c.parents || []).map(p => ({ source: c.iri, target: p, label: "subclass of" })))];
-    setTimeout(() => renderGraph(box, { nodes, edges, selected, showEdgeLabels: true, onSelect: n => { selected = n.id; }, onExpand: n => { selected = n.id; mode = "list"; render(); } }), 0);
-    return h("div", {}, box, h("p", { class: "muted small" }, "Classes are nodes, relationships are edges (colour = parent class). Click to select, double-click or Enter to edit, arrow keys to move, F to fit."));
+      ...onto.classes.flatMap(c => (c.parents || []).map(p => ({ source: c.iri, target: p, label: "is a", kind: "inheritance" })))];
+    const panel = h("div", { class: "map-panel" });
+    const fillPanel = () => { const cls = onto.classes.find(c => c.iri === selected); panel.replaceChildren(cls ? classDetail(cls) : h("div", { class: "card muted" }, "Click a class on the map to edit it.")); };
+    setTimeout(() => { stage = renderGraph(box, { nodes, edges, selected, showEdgeLabels: true, focusDim: false, legend: inherits, onSelect: n => { selected = n.id; fillPanel(); }, onExpand: n => { selected = n.id; fillPanel(); } }); }, 0);
+    fillPanel();
+    return h("div", { class: "map-layout" }, h("div", {}, box,
+      h("div", { class: "legend-line small muted" }, h("span", { class: "sw solid" }), "relationship", h("span", { class: "sw accent" }), "is a (inheritance)", inherits ? h("span", {}, "colour = class family") : null),
+      h("p", { class: "muted small" }, "Click a class to edit it in the side panel. Arrow keys move between classes, F fits the map.")), panel);
   }
 
   render();

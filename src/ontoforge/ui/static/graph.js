@@ -35,9 +35,9 @@ export function renderGraph(container, opts) {
     if (!graph.hasNode(n.id)) graph.addNode(n.id, { label: withGlyph(n), plain: n.label || n.id, glyph: n.glyph || "", cls: n.type || "?", color: n.color || types.get(n.type || "?") || "#5a6470", size: n.size || 4, x: Math.random(), y: Math.random() });
   }
   for (const e of opts.edges) {
-    if (graph.hasNode(e.source) && graph.hasNode(e.target) && !graph.hasEdge(e.source, e.target)) graph.addEdge(e.source, e.target, { label: e.label || "", size: 1, type: "arrow" });
+    if (graph.hasNode(e.source) && graph.hasNode(e.target) && !graph.hasEdge(e.source, e.target)) graph.addEdge(e.source, e.target, { label: e.label || "", size: e.kind === "inheritance" ? 1.6 : 1, type: "arrow", kind: e.kind || "" });
   }
-  sizeByDegree(graph);
+  if (!opts.nodes.some(n => n.size)) sizeByDegree(graph);
   layout(graph);
 
   let colorBy = opts.colorBy || "type";
@@ -53,6 +53,7 @@ export function renderGraph(container, opts) {
   const backdropColor = () => mix(css("--border-strong") || "#b8bec6", css("--surface") || "#fff", 0.35);
   const ink = () => css("--text") || "#1b2026";
   const dimEdge = () => css("--border") || "#d7dbe0";
+  const edgeBase = (data) => data.kind === "inheritance" ? mix(css("--accent") || "#0b6e4f", css("--surface") || "#fff", 0.35) : dimEdge();
 
   const renderer = new Sigma(graph, stageEl, {
     renderEdgeLabels: !!opts.showEdgeLabels,
@@ -67,7 +68,7 @@ export function renderGraph(container, opts) {
       if (colorBy === "community" && communities && communities[node] !== undefined) d.color = CLASS_COLORS[communities[node] % CLASS_COLORS.length];
       const focus = hovered || selected;
       if (backdrop && !focus && !highlighted.size) { d.color = backdropColor(); d.label = ""; d.size = Math.max(2, data.size * 0.6); return d; }
-      if (focus && node !== focus && !graph.areNeighbors(focus, node)) { d.color = mix(d.color, css("--surface") || "#fff", 0.82); d.label = ""; d.zIndex = 0; }
+      if (focus && node !== focus && !graph.areNeighbors(focus, node) && opts.focusDim !== false) { d.color = mix(d.color, css("--surface") || "#fff", 0.82); d.label = ""; d.zIndex = 0; }
       else d.zIndex = 1;
       if (highlighted.size && !highlighted.has(node) && !focus) { d.color = mix(d.color, css("--surface") || "#fff", 0.75); }
       if (highlighted.has(node)) { d.highlighted = true; d.zIndex = 2; }
@@ -75,13 +76,13 @@ export function renderGraph(container, opts) {
       return d;
     },
     edgeReducer: (edge, data) => {
-      const d = { ...data, color: dimEdge() };
+      const d = { ...data, color: edgeBase(data) };
       if (hideEdges || hidden.has(graph.source(edge)) || hidden.has(graph.target(edge))) { d.hidden = true; return d; }
       if (backdrop && !(hovered || selected) && !highlighted.size) { d.color = mix(dimEdge(), css("--surface") || "#fff", 0.5); d.size = 0.6; return d; }
       const focus = hovered || selected;
       if (focus) {
-        if (graph.hasExtremity(edge, focus)) { d.color = mix(ink(), dimEdge(), 0.35); d.size = 1.6; d.zIndex = 1; }
-        else { d.hidden = graph.order > 60; d.color = mix(dimEdge(), css("--surface") || "#fff", 0.7); }
+        if (graph.hasExtremity(edge, focus)) { d.color = data.kind === "inheritance" ? (css("--accent") || "#0b6e4f") : mix(ink(), dimEdge(), 0.35); d.size = 1.6; d.zIndex = 1; }
+        else if (opts.focusDim !== false) { d.hidden = graph.order > 60; d.color = mix(dimEdge(), css("--surface") || "#fff", 0.7); }
       }
       return d;
     },
@@ -181,6 +182,7 @@ export function renderGraph(container, opts) {
   }
   function renderLegend() {
     legend.replaceChildren();
+    if (opts.legend === false) return;
     if (colorBy === "type") {
       const counts = {};
       graph.forEachNode((n, a) => { counts[a.cls] = (counts[a.cls] || 0) + 1; });
@@ -211,7 +213,7 @@ export function renderGraph(container, opts) {
     if (ev.key === "f") fit();
   });
   let sized = container.clientWidth > 0;
-  const ro = new ResizeObserver(() => { renderer.refresh(); if (!sized && container.clientWidth > 0) { sized = true; fit(); } });
+  const ro = new ResizeObserver(() => { renderer.resize(); renderer.refresh(); if (!sized && container.clientWidth > 0) { sized = true; fit(); } });
   ro.observe(container);
   renderLegend();
   if (colorBy === "community") setColorBy("community");

@@ -15,7 +15,7 @@ const routes = [
   { re: /^#\/d\/([^/]+)(?:\/([^/]+))?(?:\/(.*))?$/, view: (m) => domainView(decodeURIComponent(m[1]), m[2] || "overview", m[3] ? decodeURIComponent(m[3]) : null) },
 ];
 
-export const state = { me: null, domain: null, version: null, progress: null };
+export const state = { me: null, domain: null, version: null, progress: null, config: null };
 
 const THEME_KEY = "of.theme";
 export function applyTheme(t) { const v = t || localStorage.getItem(THEME_KEY) || ""; if (v) document.documentElement.dataset.theme = v; else delete document.documentElement.dataset.theme; }
@@ -28,6 +28,7 @@ function toggleTheme() {
 
 export async function whoami() {
   try { state.me = await api.get("/me"); } catch (e) { state.me = null; if (e.status !== 401) errorToast(e); }
+  try { state.config = await api.get("/auth/config"); } catch { state.config = null; }
   renderTopbar();
   return state.me;
 }
@@ -69,8 +70,9 @@ function renderTopbar() {
   bar.append(
     h("a", { class: "brand", href: "#/domains" }, h("span", { class: "dot", "aria-hidden": "true" }), "ontoforge"),
     crumbs, h("div", { class: "spacer" }),
-    h("a", { href: "#/tasks", class: "topnav" }, iconEl("tasks"), "My tasks"),
-    me?.role === "admin" ? h("a", { href: "#/admin", class: "topnav" }, iconEl("shield"), "Admin") : null,
+    h("a", { href: "#/tasks", class: "topnav", title: "My tasks" }, iconEl("tasks"), h("span", { class: "txt" }, "My tasks")),
+    me?.role === "admin" ? h("a", { href: "#/admin", class: "topnav", title: "Admin" }, iconEl("shield"), h("span", { class: "txt" }, "Admin")) : null,
+    state.config?.source ? h("span", { class: "source-chip", title: "Source warehouse" }, iconEl("table"), state.config.source.kind === "databricks" ? `Databricks · ${state.config.source.catalog || "warehouse"}` : "Postgres") : null,
     button(iconEl(dark ? "sun" : "moon"), { class: "sm ghost", title: dark ? "Switch to light theme" : "Switch to dark theme", "aria-label": "Toggle theme", onClick: toggleTheme }),
     h("div", { class: "identity" },
       me ? h("span", { class: "chip", title: `role: ${me.role}` }, me.name, h("span", { class: "muted" }, me.role)) : h("span", { class: "chip" }, "not signed in"),

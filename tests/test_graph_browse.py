@@ -1,3 +1,4 @@
+import pytest
 """Graph browsing parity: search match modes and fields, an overview subgraph, raw triple paging."""
 from ontoforge.compiler import RDF_TYPE
 from tests.hr_fixture import built_domain, BASE, EX
@@ -36,3 +37,17 @@ def test_triples_paging_and_filters(db):
     contains = store.triples(v.id, text="SMI", limit=100)
     assert contains.total == 1 and contains.rows[0]["object"] == "SMITH"
     assert store.triples(v.id, limit=5, offset=page.total).rows == []
+
+
+def test_triples_sort_by_column_and_direction(db):
+    reg, store, v = built_domain(db)
+    by_obj = store.triples(v.id, limit=200, sort="object", direction="desc").rows
+    objs = [r["object"] for r in by_obj]
+    assert objs == sorted(objs, reverse=True)
+    by_pred = store.triples(v.id, limit=200, sort="predicate").rows
+    preds = [r["predicate"] for r in by_pred]
+    assert preds == sorted(preds)
+    with pytest.raises(ValueError):
+        store.triples(v.id, sort="object; drop table triples")
+    with pytest.raises(ValueError):
+        store.triples(v.id, direction="sideways")

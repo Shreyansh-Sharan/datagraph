@@ -1,6 +1,9 @@
 // Mapping designer: class -> table, attributes -> columns, relationships via FK or link table.
 import { api, local, qs } from "../api.js";
-import { h, button, input, select, field, dialog, toast, errorToast, badge, table, empty, kpis, pct, progress, confirmDialog } from "../ui.js";
+import { h, button, input, select, field, dialog, toast, errorToast, badge, table, empty, kpis, pct, progress, confirmDialog, tabs } from "../ui.js";
+import { renderGraph } from "../graph.js";
+import { state } from "../app.js";
+import { iconEl } from "../icons.js";
 
 export async function mappingTab(ctx) {
   const { version } = ctx; const vid = version.id;
@@ -13,8 +16,10 @@ export async function mappingTab(ctx) {
   const columnsCache = {};
   const columnsOf = async (t) => columnsCache[t] ||= (await api.get(`/catalog/tables/${encodeURIComponent(t)}`)).columns.map(c => c.name);
   let selected = ctx.arg || onto.classes[0]?.iri;
+  let view = "map", panelTab = "status", stage = null;
   const root = h("div", {}), head = h("div", { class: "page-head" }), stats = h("div", {}), body = h("div", {});
   root.append(head, stats, body);
+  const STATE_COLOR = { complete: "#067647", partial: "#b54708", unmapped: "#b42318" };
 
   async function persist(msg = "Mapping saved") {
     try { spec = await api.put(`/versions/${vid}/mapping`, spec); status = await api.get(`/versions/${vid}/mapping/status`); toast(msg, "ok"); render(); }
@@ -35,7 +40,69 @@ export async function mappingTab(ctx) {
         button("Drift", { onClick: showDrift }), button("R2RML", { onClick: () => showText(`/versions/${vid}/mapping/r2rml`, "R2RML (Turtle)") }),
         button("SQL", { onClick: showSql })));
     stats.replaceChildren(kpis([["Completion", pct(status.completion)], ["Classes mapped", `${s.mapped_classes}/${s.classes}`], ["Attributes", `${s.mapped_attributes}/${s.attributes}`], ["Relationships", `${s.mapped_relations}/${s.relations}`], ["Excluded", s.excluded_attributes + s.excluded_relations]]), progress(status.completion));
-    body.replaceChildren(h("div", { class: "split" }, classList(), selected ? classPanel(selected) : h("div", { class: "card muted" }, "Select a class.")));
+    body.replaceChildren(tabs([{ id: "map", label: "Designer" }, { id: "list", label: "Classes" }], view, v => { view = v; render(); }),
+      view === "map" ? designer() : h("div", { class: "split" }, classList(), selected ? classPanel(selected) : h("div", { class: "card muted" }, "Select a class.")));
+  }
+  function designer() {
+    const box = h("div", { class: "graph stage-host designer" });
+    const byState = Object.fromEntries(status.classes.map(c => [c.class_iri, c]));
+    const nodes = onto.classes.map(c => ({ id: c.iri, label: c.label || local(c.iri), glyph: c.icon || "", type: byState[c.iri]?.state || "unmapped", color: STATE_COLOR[byState[c.iri]?.state] || STATE_COLOR.unmapped, size: 7 }));
+    const dom = (p) => (p.domains?.length ? p.domains : (p.domain ? [p.domain] : []));
+    const edges = onto.object_properties.filter(p => p.range).flatMap(p => dom(p).map(d => ({ source: d, target: p.range, label: local(p.iri) })));
+    setTimeout(() => { stage = renderGraph(box, { nodes, edges, selected, showEdgeLabels: true, focusDim: false, onSelect: n => { selected = n.id; fillPanel(); }, onExpand: n => { selected = n.id; fillPanel(); } }); }, 0);
+    const legend = h("div", { class: "legend-line small" }, ...Object.entries(STATE_COLOR).map(([k, c]) => h("span", { class: "row" }, h("i", { class: "dot-sw", style: { background: c } }), k)));
+    const panel = h("div", { class: "designer-panel" });
+    const fillPanel = async () => {
+      const iri = selected; if (!iri) { panel.replaceChildren(h("p", { class: "muted" }, "Click a class on the map.")); return; }
+      const cm = classSpec(iri); const st = byState[iri];
+      const head = h("div", { class: "designer-head" }, h("strong", {}, `${onto.classes.find(c => c.iri === iri)?.icon || ""} ${local(iri)}`), badge(st?.state || "unmapped"),
+        cm ? h("span", { class: "mono small muted" }, cm.table || cm.sql_query) : null,
+        h("span", { class: "spacer" }),
+        editable ? (cm ? button("Change table", { class: "sm", onClick: () => tableDialog(iri, cm) }) : button("Map to a table", { class: "sm primary", onClick: () => tableDialog(iri) })) : null,
+        editable && cm ? button("Unmap", { class: "sm danger", onClick: () => confirmDialog("Unmap class", `Remove the mapping of ${local(iri)}?`, async () => { spec = await api.del(`/versions/${vid}/mapping/classes?class_iri=${encodeURIComponent(iri)}`); status = await api.get(`/versions/${vid}/mapping/status`); render(); }, { danger: true }) }) : null);
+      const tabBar = tabs([{ id: "status", label: "Status" }, { id: "data", label: "Data" }, { id: "sql", label: "SQL" }], panelTab, t => { panelTab = t; fillPanel(); });
+      const content = h("div", { class: "designer-content" }, h("p", { class: "muted" }, "Loading…"));
+      panel.replaceChildren(head, tabBar, content);
+      if (!cm) { content.replaceChildren(h("p", { class: "muted" }, "This class has no table yet. Map it to a table to see its columns here.")); return; }
+      if (panelTab === "status") content.replaceChildren(statusTable(iri, cm));
+      else if (panelTab === "sql") { try { content.replaceChildren(h("pre", {}, await api.text(`/versions/${vid}/mapping/sql?dialect=${encodeURIComponent(sourceDialect())}&class_iri=${encodeURIComponent(iri)}`))); } catch (e) { content.replaceChildren(h("div", { class: "notice error" }, e.detail || e.message)); } }
+      else content.replaceChildren(await dataPanel(iri, cm));
+    };
+    fillPanel();
+    return h("div", { class: "designer-layout" }, box, legend, panel);
+  }
+  const sourceDialect = () => (state.config?.source?.kind || "postgres");
+  function statusTable(iri, cm) {
+    const { attrs, rels } = propsOf(iri); const excluded = new Set(cm.excluded || []);
+    return h("div", { class: "grid" },
+      h("div", {}, h("h3", {}, "Attributes"), table([{ label: "Attribute", render: p => local(p.iri) }, { label: "Column", render: p => { const b = cm.attributes.find(a => a.property_iri === p.iri); return b ? h("span", { class: "mono" }, b.column) : excluded.has(p.iri) ? badge("excluded", "neutral") : badge("unmapped"); } },
+        { label: "", render: p => editable ? h("span", { class: "row" }, button("Bind", { class: "sm", onClick: () => bindDialog(cm, p) }), button(excluded.has(p.iri) ? "Include" : "Exclude", { class: "sm ghost", onClick: async () => { spec = await api.post(`/versions/${vid}/mapping/exclude`, { class_iri: iri, property_iri: p.iri, excluded: !excluded.has(p.iri) }); status = await api.get(`/versions/${vid}/mapping/status`); render(); } })) : null }], attrs)),
+      h("div", {}, h("h3", {}, "Relationships"), table([{ label: "Relationship", render: p => `${local(p.iri)} → ${local(p.range || "")}` },
+        { label: "Mapping", render: p => { const r = spec.relations.find(x => x.property_iri === p.iri && x.source_class === iri); return r ? h("span", { class: "mono small" }, r.table ? `${r.table} (${(r.source_key || []).join(",")} → ${(r.target_key || []).join(",")})` : `FK ${(r.target_key || []).join(",")}`) : excluded.has(p.iri) ? badge("excluded", "neutral") : badge("unmapped"); } },
+        { label: "", render: p => editable ? button("Map", { class: "sm", onClick: () => relationDialog(cm, p) }) : null }], rels)));
+  }
+  async function dataPanel(iri, cm) {
+    if (!cm.table) return h("p", { class: "muted" }, "Data preview is available for table-backed classes.");
+    try {
+      const r = await api.get(`/versions/${vid}/mapping/table-preview${qs({ table: cm.table, limit: 10 })}`);
+      const { attrs } = propsOf(iri);
+      const bound = {}; cm.attributes.forEach(a => { bound[a.column] = a.property_iri; });
+      const cols = r.columns.map(c => ({ label: h("span", { class: "col-head" }, c, cm.key_columns.includes(c) ? badge("ID", "info") : bound[c] ? badge(local(bound[c]), "ok") : null),
+        render: row => h("span", { class: "small" }, row[c] ?? h("span", { class: "muted" }, "null")) }));
+      const hint = h("p", { class: "muted small" }, editable ? "Click a column header to bind it to an attribute." : "Column bindings are shown as badges.");
+      const tbl = table(cols, r.rows);
+      if (editable) [...tbl.querySelectorAll("th")].forEach((th, i) => { th.style.cursor = "pointer"; th.title = "Bind this column"; th.addEventListener("click", () => columnBindDialog(cm, r.columns[i], attrs)); });
+      return h("div", {}, hint, tbl);
+    } catch (e) { return h("div", { class: "notice error" }, e.detail || e.message); }
+  }
+  function columnBindDialog(cm, column, attrs) {
+    const current = cm.attributes.find(a => a.column === column)?.property_iri || "";
+    const sel = select([{ value: "", label: "— not bound —" }, ...attrs.map(p => ({ value: p.iri, label: local(p.iri) }))], { value: current });
+    dialog(`Bind column ${column}`, field("Attribute", sel), { confirm: "Save", onConfirm: async () => {
+      cm.attributes = cm.attributes.filter(a => a.column !== column && a.property_iri !== sel.value);
+      if (sel.value) cm.attributes.push({ property_iri: sel.value, column, datatype: null, language: null });
+      await persist();
+    }});
   }
   function classList() {
     return h("div", { class: "card" }, h("h2", {}, "Classes"), h("ul", { class: "list" }, status.classes.map(c => h("li", { class: c.class_iri === selected ? "selected" : "" },

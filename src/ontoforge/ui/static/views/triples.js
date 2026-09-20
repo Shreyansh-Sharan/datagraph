@@ -16,15 +16,19 @@ export async function triplesTab(ctx) {
   const grid = h("div", {}), pager = h("div", { class: "row" });
   const root = h("div", {}, h("div", { class: "page-head" }, h("div", {}, h("h1", {}, "Triples"), h("p", { class: "muted" }, `${fmtNum(status.triples)} triples · ${fmtNum(status.inferred)} inferred`)),
     h("form", { class: "searchbar", onSubmit: e => { e.preventDefault(); offset = 0; load(); } }, text, pred, subj, inferred, size, button("Apply", { class: "primary", type: "submit" }))), grid, pager);
+  let sort = "subject", direction = "asc";
+  const sortable = (key, label) => h("button", { type: "button", class: "th-sort" + (sort === key ? " active" : ""), "aria-sort": sort === key ? (direction === "asc" ? "ascending" : "descending") : "none",
+    title: `Sort by ${label.toLowerCase()}`, onClick: () => { direction = sort === key && direction === "asc" ? "desc" : "asc"; sort = key; offset = 0; load(); } },
+    label, h("span", { class: "arrow", "aria-hidden": "true" }, sort === key ? (direction === "asc" ? "↑" : "↓") : "↕"));
   async function load() {
     grid.replaceChildren(h("p", { class: "muted" }, "Loading…"));
-    const page = await api.get(`/versions/${vid}/graph/triples${qs({ text: text.value, predicate: pred.value, subject: subj.value, inferred: inferred.value, limit: size.value, offset })}`);
+    const page = await api.get(`/versions/${vid}/graph/triples${qs({ text: text.value, predicate: pred.value, subject: subj.value, inferred: inferred.value, limit: size.value, offset, sort, direction })}`);
     grid.replaceChildren(page.rows.length ? table([
-      { label: "Subject", render: r => h("a", { href: `#/d/${encodeURIComponent(ctx.name)}/explore/${encodeURIComponent(r.subject)}`, class: "mono small" }, r.subject) },
-      { label: "Predicate", render: r => h("span", { class: "mono small", title: r.predicate }, local(r.predicate)) },
-      { label: "Object", render: r => r.object_type === "literal" ? h("span", {}, r.object, r.datatype ? h("span", { class: "muted small" }, ` ^^${local(r.datatype)}`) : null, r.lang ? h("span", { class: "muted small" }, ` @${r.lang}`) : null)
+      { label: sortable("subject", "Subject"), render: r => h("a", { href: `#/d/${encodeURIComponent(ctx.name)}/explore/${encodeURIComponent(r.subject)}`, class: "mono small" }, r.subject) },
+      { label: sortable("predicate", "Predicate"), render: r => h("span", { class: "mono small", title: r.predicate }, local(r.predicate)) },
+      { label: sortable("object", "Object"), render: r => r.object_type === "literal" ? h("span", {}, r.object, r.datatype ? h("span", { class: "muted small" }, ` ^^${local(r.datatype)}`) : null, r.lang ? h("span", { class: "muted small" }, ` @${r.lang}`) : null)
           : h("a", { href: `#/d/${encodeURIComponent(ctx.name)}/explore/${encodeURIComponent(r.object)}`, class: "mono small" }, r.object) },
-      { label: "", render: r => r.inferred ? badge("inferred", "neutral") : null },
+      { label: sortable("inferred", "Inferred"), render: r => r.inferred ? badge("inferred", "neutral") : null },
     ], page.rows) : empty("No triples match", "Loosen the filters."));
     const pages = Math.max(1, Math.ceil(page.total / Number(size.value)));
     const cur = Math.floor(offset / Number(size.value)) + 1;

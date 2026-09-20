@@ -10,6 +10,8 @@ from ontoforge.ontology import Ontology
 
 from .models import Attribute, Edge, Entity, EntityDetail, Relation, Subgraph, TriplePage
 
+_TRIPLE_SORT_COLUMNS = frozenset({"subject", "predicate", "object", "inferred"})
+
 RDFS_LABEL = "http://www.w3.org/2000/01/rdf-schema#label"
 COLUMNS = ("subject", "predicate", "object", "object_type", "datatype", "lang")
 Row = tuple  # (subject, predicate, object, object_type, datatype, lang)
@@ -170,8 +172,14 @@ class TripleStore:
         return Subgraph(nodes=nodes, edges=edges)
 
     def triples(self, version_id: UUID, *, subject: str | None = None, predicate: str | None = None, text: str | None = None,
-                inferred: bool | None = None, limit: int = 100, offset: int = 0) -> TriplePage:
-        """Raw triple rows, filterable and paged, for the triples grid."""
+                inferred: bool | None = None, limit: int = 100, offset: int = 0,
+                sort: str = "subject", direction: str = "asc") -> TriplePage:
+        """Raw triple rows, filterable, sortable and paged, for the triples grid."""
+        if sort not in _TRIPLE_SORT_COLUMNS:
+            raise ValueError(f"Cannot sort triples by {sort!r}; choose from {sorted(_TRIPLE_SORT_COLUMNS)}")
+        if direction not in ("asc", "desc"):
+            raise ValueError(f"Sort direction must be 'asc' or 'desc', not {direction!r}")
+        order = ", ".join(dict.fromkeys([f"{sort} {direction.upper()}", "subject", "predicate", "object"]))
         clauses, params = ["domain_version_id = %s"], [version_id]
         if subject:
             clauses.append("subject = %s"); params.append(subject)
@@ -185,7 +193,7 @@ class TripleStore:
         with self.db.transaction() as cur:
             total = cur.execute(f"SELECT count(*) FROM triples WHERE {where}", params).fetchone()[0]
             rows = cur.execute(f"SELECT subject, predicate, object, object_type, datatype, lang, inferred FROM triples WHERE {where} "
-                               f"ORDER BY subject, predicate, object LIMIT %s OFFSET %s", (*params, limit, offset)).fetchall()
+                               f"ORDER BY {order} LIMIT %s OFFSET %s", (*params, limit, offset)).fetchall()
         cols = ("subject", "predicate", "object", "object_type", "datatype", "lang", "inferred")
         return TriplePage(total=total, rows=[dict(zip(cols, r)) for r in rows])
 

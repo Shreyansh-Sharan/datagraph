@@ -100,3 +100,19 @@ def test_mapping_workflow_endpoints(db):
         st = c.get(f"/versions/{v['id']}/mapping/status").json()
         assert next(x for x in st["classes"] if x["class_iri"] == EX + "Department")["state"] == "unmapped"
         assert EX + "worksIn" in next(x for x in st["classes"] if x["class_iri"] == EX + "Employee")["unmapped_relations"]
+
+
+def test_per_class_sql_and_table_preview_endpoints(db):
+    seed_tables(db)
+    with TestClient(create_app(db=db, settings=ADMIN), headers={"X-Actor": "alice"}) as c:
+        c.post("/domains", json={"name": "hr", "base_iri": BASE})
+        v = c.post("/domains/hr/versions").json()
+        c.put(f"/versions/{v['id']}/ontology", json={"turtle": ontology().to_turtle()})
+        c.put(f"/versions/{v['id']}/mapping", json=mapping().to_dict())
+        r = c.get(f"/versions/{v['id']}/mapping/sql", params={"dialect": "postgres", "class_iri": EX + "Department"})
+        assert r.status_code == 200 and '"departments"' in r.text and '"employees"' not in r.text
+        r = c.get(f"/versions/{v['id']}/mapping/table-preview", params={"table": "departments", "limit": 5})
+        assert r.status_code == 200
+        assert r.json()["columns"] == ["deptno", "dname"] and len(r.json()["rows"]) == 2
+        assert r.json()["rows"][0]["deptno"] == "10"
+        assert c.get(f"/versions/{v['id']}/mapping/table-preview", params={"table": "nope; drop table x"}).status_code == 400

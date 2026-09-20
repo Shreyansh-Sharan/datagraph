@@ -7,6 +7,15 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+
+
+class _NoCacheStatic(StaticFiles):
+    """ES modules are cached aggressively by browsers; force an ETag revalidation on every load."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 from starlette.datastructures import Headers
 
 from ontoforge.ui import STATIC_DIR
@@ -73,7 +82,7 @@ def create_app(db: Database, source_db: Database | None = None, settings: Settin
     app.router.lifespan_context = lifespan
     app.include_router(open_router)
     app.include_router(router)
-    app.mount("/ui", StaticFiles(directory=STATIC_DIR, html=True), name="ui")   # public: the SPA authenticates via the API
+    app.mount("/ui", _NoCacheStatic(directory=STATIC_DIR, html=True), name="ui")   # public: the SPA authenticates via the API
     app.mount("/", _guarded(app, mcp_app))   # serves /mcp (Streamable HTTP); everything else 404s here
 
     for cls, code in _STATUS.items():

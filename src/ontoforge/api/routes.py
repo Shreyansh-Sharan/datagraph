@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import timedelta
+import re
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response
@@ -225,7 +226,8 @@ def root():
 def auth_config(request: Request):
     """How clients should identify themselves (no secrets here)."""
     s = _st(request).settings
-    return {"mode": s.auth_mode, "header": s.auth_header, "default_role": s.auth_default_role}
+    return {"mode": s.auth_mode, "header": s.auth_header, "default_role": s.auth_default_role,
+            "source": {"kind": s.source_kind, "catalog": s.databricks_catalog if s.source_kind == "databricks" else None}}
 
 
 @open_router.get("/health")
@@ -411,12 +413,40 @@ def get_r2rml(version_id: UUID, request: Request):
     return PlainTextResponse(serialize_r2rml(_spec(request, version_id).to_r2rml()), media_type="text/turtle")
 
 
+def _class_triples_maps(spec: MappingSpec, class_iri: str) -> dict:
+    """The triples maps that produce a class's entities: its own map plus relations it is the source of."""
+    r2rml = spec.to_r2rml()
+    subjects = {spec.subject_template(c) for c in spec.classes if c.class_iri == class_iri}
+    return {iri: tm for iri, tm in r2rml.triples_maps.items() if class_iri in tm.classes or tm.subject.template in subjects}
+
+
 @router.get("/versions/{version_id}/mapping/sql")
-def get_sql(version_id: UUID, request: Request, dialect: str = Query(default="postgres")):
+def get_sql(version_id: UUID, request: Request, dialect: str = Query(default="postgres"), class_iri: str | None = None):
     if dialect not in DIALECTS:
         raise ValueError(f"Unknown dialect {dialect!r}; choose from {sorted(DIALECTS)}")
-    compiled = compile_mapping(_spec(request, version_id).to_r2rml(), DIALECTS[dialect]())
-    return PlainTextResponse(compiled.sql, media_type="text/plain")
+    spec = _spec(request, version_id)
+    if class_iri:
+        from ontoforge.r2rml import Mapping
+        maps = _class_triples_maps(spec, class_iri)
+        if not maps:
+            raise NotFound(f"Class {class_iri} has no mapping")
+        mapping = Mapping(maps)
+    else:
+        mapping = spec.to_r2rml()
+    return PlainTextResponse(compile_mapping(mapping, DIALECTS[dialect]()).sql, media_type="text/plain")
+
+
+_TABLE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*){0,2}$")
+
+
+@router.get("/versions/{version_id}/mapping/table-preview")
+def mapping_table_preview(version_id: UUID, request: Request, table: str, limit: int = Query(default=10, ge=1, le=200)):
+    """First rows of a source table, for the assignment designer (columns are bound by clicking headers)."""
+    if not _TABLE_NAME.match(table):
+        raise ValueError(f"Invalid table name {table!r}")
+    st = _st(request)
+    columns, rows = st.source.query(f"SELECT * FROM {st.source.dialect.quote_table(table)}", limit)
+    return {"columns": columns, "rows": [dict(zip(columns, (None if v is None else str(v) for v in r))) for r in rows]}
 
 
 # -- mapping workflow ------------------------------------------------------------
@@ -470,10 +500,7 @@ def mapping_unmap_class(version_id: UUID, request: Request, class_iri: str, me: 
 def mapping_preview(version_id: UUID, request: Request, class_iri: str, limit: int = Query(default=20, ge=1, le=500)):
     st = _st(request)
     spec = _spec(request, version_id)
-    r2rml = spec.to_r2rml()
-    keep = {iri: tm for iri, tm in r2rml.triples_maps.items() if class_iri in tm.classes
-            or any(p.predicates[0].constant and iri.split("/rel/")[0] and tm.subject.template == spec.subject_template(c)
-                   for c in spec.classes if c.class_iri == class_iri for p in tm.predicate_object_maps)}
+    keep = _class_triples_maps(spec, class_iri)
     if not keep:
         raise NotFound(f"Class {class_iri} has no mapping")
     from ontoforge.r2rml import Mapping
@@ -592,9 +619,10 @@ def graph_overview(version_id: UUID, request: Request, limit: int = Query(defaul
 
 @router.get("/versions/{version_id}/graph/triples")
 def graph_triples(version_id: UUID, request: Request, subject: str | None = None, predicate: str | None = None,
-                  text: str | None = None, inferred: bool | None = None,
+                  text: str | None = None, inferred: bool | None = None, sort: str = "subject", direction: str = "asc",
                   limit: int = Query(default=100, ge=1, le=1000), offset: int = Query(default=0, ge=0)):
-    return _st(request).store.triples(version_id, subject=subject, predicate=predicate, text=text, inferred=inferred, limit=limit, offset=offset)
+    return _st(request).store.triples(version_id, subject=subject, predicate=predicate, text=text, inferred=inferred,
+                                      limit=limit, offset=offset, sort=sort, direction=direction)
 
 
 @router.get("/versions/{version_id}/graph/entity")
