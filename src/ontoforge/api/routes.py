@@ -14,6 +14,7 @@ from ontoforge.auth.fastapi import admin, builder, reviewer, viewer
 from ontoforge.attachments import AttachmentError, Attachments
 from ontoforge.autodraft import draft_from_catalog
 from ontoforge.bundle import export_bundle, import_bundle
+from ontoforge.cohorts import Cohort, CohortError
 from ontoforge.compiler import compile_mapping
 from ontoforge.dialects import DIALECTS
 from ontoforge.graphql import build_schema
@@ -717,6 +718,53 @@ def run_quality(version_id: UUID, request: Request, me: Principal = Depends(buil
     st = _st(request)
     report = QualityEngine(st.registry, st.store).run(version_id, include_ontology)
     return {"conforms": report.conforms, "summary": report.summary, "results": report.results}
+
+
+# -- cohorts ---------------------------------------------------------------------
+
+def _validated_cohort(request: Request, version_id: UUID, body: dict, name: str | None = None) -> Cohort:
+    cohort = Cohort.from_dict({**body, "name": name or body.get("name")})
+    onto = _ontology(request, version_id)
+    if cohort.class_iri not in onto.classes:
+        raise CohortError(f"Unknown class {cohort.class_iri}")
+    props = {p.iri for p in onto.all_properties()}
+    for c in cohort.criteria:
+        for prop in (c.property, c.via):
+            if prop and prop not in props:
+                raise CohortError(f"Unknown property {prop}")
+    return cohort
+
+
+@router.post("/versions/{version_id}/cohorts/evaluate")
+def cohort_evaluate(version_id: UUID, body: dict, request: Request, limit: int = Query(default=200, ge=1, le=5000)):
+    return _st(request).cohorts.evaluate(version_id, _validated_cohort(request, version_id, body), limit)
+
+
+@router.get("/versions/{version_id}/cohorts")
+def cohort_list(version_id: UUID, request: Request):
+    return [c.to_dict() for c in _st(request).cohorts.list(version_id)]
+
+
+@router.put("/versions/{version_id}/cohorts/{name}")
+def cohort_put(version_id: UUID, name: str, body: dict, request: Request, me: Principal = Depends(builder)):
+    return _st(request).cohorts.save(version_id, _validated_cohort(request, version_id, body, name), actor=me.name).to_dict()
+
+
+@router.get("/versions/{version_id}/cohorts/{name}/members")
+def cohort_members(version_id: UUID, name: str, request: Request, limit: int = Query(default=200, ge=1, le=5000)):
+    eng = _st(request).cohorts
+    return eng.evaluate(version_id, eng.get(version_id, name), limit)
+
+
+@router.post("/versions/{version_id}/cohorts/{name}/materialise")
+def cohort_materialise(version_id: UUID, name: str, request: Request, me: Principal = Depends(builder)):
+    return _st(request).cohorts.materialise(version_id, name)
+
+
+@router.delete("/versions/{version_id}/cohorts/{name}", status_code=204)
+def cohort_delete(version_id: UUID, name: str, request: Request, me: Principal = Depends(builder)):
+    _st(request).cohorts.delete(version_id, name, actor=me.name)
+    return Response(status_code=204)
 
 
 # -- analytics -------------------------------------------------------------------
