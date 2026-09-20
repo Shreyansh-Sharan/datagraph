@@ -19,6 +19,9 @@ class MappingSpecError(ValueError):
     pass
 
 
+DIRECTIONS = ("forward", "reverse", "bidirectional")
+
+
 @dataclass(frozen=True)
 class AttributeBinding:
     property_iri: str
@@ -35,6 +38,10 @@ class ClassMapping:
     key_columns: tuple[str, ...] = ()
     iri_template: str | None = None
     attributes: tuple[AttributeBinding, ...] = ()
+    excluded: tuple[str, ...] = ()   # property IRIs deliberately left unmapped (don't count as gaps)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "excluded", tuple(sorted(set(self.excluded))))
 
 
 @dataclass(frozen=True)
@@ -46,6 +53,11 @@ class RelationMapping:
     target_key: tuple[str, ...] | None = None  # ... and the target row
     table: str | None = None                   # defaults to the source class's logical table
     sql_query: str | None = None
+    direction: str = "forward"                 # forward: source->target · reverse: target->source · bidirectional: both
+
+    def __post_init__(self) -> None:
+        if self.direction not in DIRECTIONS:
+            raise MappingSpecError(f"{self.property_iri}: direction must be one of {DIRECTIONS}")
 
 
 @dataclass(frozen=True)
@@ -84,11 +96,13 @@ class MappingSpec:
                 raise MappingSpecError(f"{r.property_iri}: source_key and target_key are required on a link table")
             subject = self._rebind(self.subject_template(src), self._key_columns(src), source_key, r.property_iri)
             obj = self._rebind(self.subject_template(tgt), self._key_columns(tgt), target_key, r.property_iri)
-            iri = f"{self.base_iri}mapping/rel/{Ontology.local_name(r.property_iri)}/{i}"
-            mapping.triples_maps[iri] = TriplesMap(
-                iri, self._logical_table(table, query, r.property_iri), TermMap(TermKind.IRI, template=subject),
-                predicate_object_maps=(PredicateObjectMap((TermMap(TermKind.IRI, constant=r.property_iri),),
-                                                          (TermMap(TermKind.IRI, template=obj),)),))
+            pairs = {"forward": [(subject, obj)], "reverse": [(obj, subject)], "bidirectional": [(subject, obj), (obj, subject)]}[r.direction]
+            for j, (s_tpl, o_tpl) in enumerate(pairs):
+                iri = f"{self.base_iri}mapping/rel/{Ontology.local_name(r.property_iri)}/{i}" + ("" if j == 0 else "/rev")
+                mapping.triples_maps[iri] = TriplesMap(
+                    iri, self._logical_table(table, query, r.property_iri), TermMap(TermKind.IRI, template=s_tpl),
+                    predicate_object_maps=(PredicateObjectMap((TermMap(TermKind.IRI, constant=r.property_iri),),
+                                                              (TermMap(TermKind.IRI, template=o_tpl),)),))
         return mapping
 
     def subject_template(self, c: ClassMapping) -> str:
@@ -136,10 +150,10 @@ class MappingSpec:
             classes=tuple(ClassMapping(c["class_iri"], c.get("table"), c.get("sql_query"), tuple(c.get("key_columns", ())),
                                        c.get("iri_template"),
                                        tuple(AttributeBinding(a["property_iri"], a["column"], a.get("datatype"), a.get("language"))
-                                             for a in c.get("attributes", ()))) for c in d.get("classes", ())),
+                                             for a in c.get("attributes", ())), tuple(c.get("excluded", ()))) for c in d.get("classes", ())),
             relations=tuple(RelationMapping(r["property_iri"], r["source_class"], r["target_class"],
                                             _opt_tuple(r.get("source_key")), _opt_tuple(r.get("target_key")),
-                                            r.get("table"), r.get("sql_query")) for r in d.get("relations", ())))
+                                            r.get("table"), r.get("sql_query"), r.get("direction", "forward")) for r in d.get("relations", ())))
 
 
 def _opt_tuple(v) -> tuple[str, ...] | None:

@@ -17,7 +17,7 @@ from ontoforge.compiler import compile_mapping
 from ontoforge.dialects import DIALECTS
 from ontoforge.graphql import build_schema
 from ontoforge.llm import LLMUnavailable, MappingSuggester, OntologyAssistant, OntologyDrafter, describe_tables
-from ontoforge.mapping import MappingSpec
+from ontoforge.mapping import ClassMapping, MappingSpec, mapping_status
 from ontoforge.ontology import Ontology
 from ontoforge.r2rml import serialize_r2rml
 from ontoforge.reasoning import generate_shapes
@@ -111,6 +111,17 @@ class CommunitiesIn(BaseModel):
 
 class CentralitiesIn(BaseModel):
     top_n: int = Field(default=20, ge=1, le=500)
+
+
+class ExcludeIn(BaseModel):
+    class_iri: str
+    property_iri: str
+    excluded: bool = True
+
+
+class TestSqlIn(BaseModel):
+    sql: str
+    limit: int = Field(default=20, ge=1, le=500)
 
 
 class MetadataImportIn(BaseModel):
@@ -282,6 +293,75 @@ def get_sql(version_id: UUID, request: Request, dialect: str = Query(default="po
         raise ValueError(f"Unknown dialect {dialect!r}; choose from {sorted(DIALECTS)}")
     compiled = compile_mapping(_spec(request, version_id).to_r2rml(), DIALECTS[dialect]())
     return PlainTextResponse(compiled.sql, media_type="text/plain")
+
+
+# -- mapping workflow ------------------------------------------------------------
+
+@router.get("/versions/{version_id}/mapping/status")
+def get_mapping_status(version_id: UUID, request: Request):
+    version = _st(request).registry.get_version(version_id)
+    spec = MappingSpec.from_dict(version.mapping) if version.mapping else MappingSpec(base_iri="")
+    return mapping_status(_ontology(request, version_id), spec)
+
+
+def _save_spec(request: Request, version_id: UUID, spec: MappingSpec, actor: str) -> dict:
+    spec.to_r2rml()
+    _st(request).registry.update_content(version_id, actor=actor, mapping=spec.to_dict())
+    return spec.to_dict()
+
+
+@router.post("/versions/{version_id}/mapping/exclude")
+def mapping_exclude(version_id: UUID, body: ExcludeIn, request: Request, me: Principal = Depends(builder)):
+    spec = _spec(request, version_id)
+    classes = []
+    for c in spec.classes:
+        if c.class_iri == body.class_iri:
+            excluded = set(c.excluded) | {body.property_iri} if body.excluded else set(c.excluded) - {body.property_iri}
+            c = ClassMapping(c.class_iri, c.table, c.sql_query, c.key_columns, c.iri_template, c.attributes, tuple(excluded))
+        classes.append(c)
+    if body.class_iri not in {c.class_iri for c in classes}:
+        raise NotFound(f"Class {body.class_iri} has no mapping")
+    return _save_spec(request, version_id, MappingSpec(spec.base_iri, tuple(classes), spec.relations), me.name)
+
+
+@router.post("/versions/{version_id}/mapping/exclude-unmapped")
+def mapping_exclude_unmapped(version_id: UUID, request: Request, me: Principal = Depends(builder)):
+    spec = _spec(request, version_id)
+    status = {c.class_iri: c for c in mapping_status(_ontology(request, version_id), spec).classes}
+    classes = tuple(ClassMapping(c.class_iri, c.table, c.sql_query, c.key_columns, c.iri_template, c.attributes,
+                                 tuple(set(c.excluded) | set(status[c.class_iri].unmapped_attributes) | set(status[c.class_iri].unmapped_relations)))
+                    if c.class_iri in status else c for c in spec.classes)
+    return _save_spec(request, version_id, MappingSpec(spec.base_iri, classes, spec.relations), me.name)
+
+
+@router.delete("/versions/{version_id}/mapping/classes")
+def mapping_unmap_class(version_id: UUID, request: Request, class_iri: str, me: Principal = Depends(builder)):
+    spec = _spec(request, version_id)
+    classes = tuple(c for c in spec.classes if c.class_iri != class_iri)
+    relations = tuple(r for r in spec.relations if class_iri not in (r.source_class, r.target_class))
+    return _save_spec(request, version_id, MappingSpec(spec.base_iri, classes, relations), me.name)
+
+
+@router.get("/versions/{version_id}/mapping/preview")
+def mapping_preview(version_id: UUID, request: Request, class_iri: str, limit: int = Query(default=20, ge=1, le=500)):
+    st = _st(request)
+    spec = _spec(request, version_id)
+    r2rml = spec.to_r2rml()
+    keep = {iri: tm for iri, tm in r2rml.triples_maps.items() if class_iri in tm.classes
+            or any(p.predicates[0].constant and iri.split("/rel/")[0] and tm.subject.template == spec.subject_template(c)
+                   for c in spec.classes if c.class_iri == class_iri for p in tm.predicate_object_maps)}
+    if not keep:
+        raise NotFound(f"Class {class_iri} has no mapping")
+    from ontoforge.r2rml import Mapping
+    compiled = compile_mapping(Mapping(keep), st.source.dialect, column_types=st.source.catalog.resolver())
+    columns, rows = st.source.query(compiled.sql, limit)
+    return {"columns": columns, "rows": [dict(zip(columns, (None if v is None else str(v) for v in r))) for r in rows]}
+
+
+@router.post("/versions/{version_id}/mapping/test-sql")
+def mapping_test_sql(version_id: UUID, body: TestSqlIn, request: Request, me: Principal = Depends(builder)):
+    columns, rows = _st(request).source.query(body.sql, body.limit)
+    return {"columns": columns, "rows": [dict(zip(columns, (None if v is None else str(v) for v in r))) for r in rows]}
 
 
 # -- versions: lifecycle ---------------------------------------------------------

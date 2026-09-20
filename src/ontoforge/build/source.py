@@ -24,6 +24,19 @@ class SourceEngine(ABC):
     def execute(self, sql: str) -> None:
         """Run a DDL/DML statement in the warehouse."""
 
+    @abstractmethod
+    def query(self, sql: str, limit: int = 100) -> tuple[list[str], list[tuple]]:
+        """Run a SELECT with a row cap; returns (column names, rows)."""
+
+    @staticmethod
+    def guard_select(sql: str) -> str:
+        sql = sql.strip().rstrip(";").strip()
+        if ";" in sql or not sql:
+            raise ValueError("Expected a single SELECT statement without ';'")
+        if not sql.lower().startswith(("select", "with")):
+            raise ValueError("Only SELECT queries can be previewed")
+        return sql
+
     def ensure_schema(self, schema: str) -> None:
         self.execute(f"CREATE SCHEMA IF NOT EXISTS {self.dialect.quote_table(schema)}")
 
@@ -48,3 +61,8 @@ class PostgresSource(SourceEngine):
     def execute(self, sql: str) -> None:
         with self.db.transaction() as cur:
             cur.execute(sql)
+
+    def query(self, sql: str, limit: int = 100) -> tuple[list[str], list[tuple]]:
+        with self.db.transaction() as cur:
+            cur.execute(f"SELECT * FROM ({self.guard_select(sql)}) preview LIMIT {int(limit)}")
+            return [d.name for d in cur.description], cur.fetchall()
