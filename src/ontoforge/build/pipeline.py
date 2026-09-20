@@ -7,7 +7,9 @@ triples untouched (the load itself is one transaction, so a cancel during it is 
 from __future__ import annotations
 
 import logging
+import re
 import time
+from dataclasses import dataclass
 from typing import Callable
 from uuid import UUID
 
@@ -15,9 +17,24 @@ from ontoforge.compiler import compile_mapping
 from ontoforge.mapping import MappingSpec
 from ontoforge.r2rml import parse_r2rml, serialize_r2rml
 from ontoforge.registry import BuildRun, Registry
-from ontoforge.store import TripleStore
+from ontoforge.store import COLUMNS, TripleStore
 
 from .source import PostgresSource, SourceEngine
+
+
+@dataclass(frozen=True)
+class PublishConfig:
+    """Where (and whether) to publish the triple view/table inside the source warehouse."""
+    target_schema: str                  # e.g. "main.kg" on Databricks, "kg" on Postgres
+    materialization: str = "view"       # "none" | "view" | "table"
+
+    def __post_init__(self) -> None:
+        if self.materialization not in ("none", "view", "table"):
+            raise ValueError(f"materialization must be none|view|table, not {self.materialization!r}")
+
+    @property
+    def enabled(self) -> bool:
+        return self.materialization != "none"
 
 
 log = logging.getLogger("ontoforge.build")
@@ -32,8 +49,10 @@ class BuildCancelled(Exception):
 
 
 class BuildPipeline:
-    def __init__(self, registry: Registry, store: TripleStore, source: SourceEngine) -> None:
+    def __init__(self, registry: Registry, store: TripleStore, source: SourceEngine,
+                 publish: PublishConfig | None = None) -> None:
         self.registry, self.store, self.source = registry, store, source
+        self.publish = publish if publish and publish.enabled else None
 
     def run(self, version_id: UUID, *, actor: str | None = None, run: BuildRun | None = None,
             cancel_check: Callable[[], bool] | None = None) -> BuildRun:
@@ -62,8 +81,14 @@ class BuildPipeline:
                 steps[-1]["detail"] = {"selects": len(compiled.selects)}
             with step("prepare"):
                 self._prepare()
+            load_sql = compiled.sql
+            if self.publish:
+                with step("publish"):
+                    published = self._publish(version, compiled.sql)
+                    steps[-1]["detail"] = published
+                    load_sql = f"SELECT {', '.join(COLUMNS)} FROM {self._quote(published['table'] or published['view'])}"
             with step("load"):
-                count = self._load(version_id, compiled.sql)
+                count = self._load(version_id, load_sql)
                 steps[-1]["detail"] = {"triples": count}
             with step("finalize"):
                 counted = self.store.count(version_id)
@@ -81,6 +106,22 @@ class BuildPipeline:
     def _prepare(self) -> None:
         self.source.prepare()
 
+    def _publish(self, version, sql: str) -> dict:
+        """CREATE OR REPLACE VIEW <schema>.<domain>_v<n>_triples; optionally snapshot it into a TABLE."""
+        cfg = self.publish
+        domain = self.registry.get_domain_by_id(version.domain_id)
+        base = f"{cfg.target_schema}.{safe_identifier(domain.name)}_v{version.version}_triples"
+        view, table = base, (base + "_mat" if cfg.materialization == "table" else None)
+        self.source.ensure_schema(cfg.target_schema)
+        self.source.execute(f"CREATE OR REPLACE VIEW {self._quote(view)} AS\n{sql}")
+        if table:
+            for stmt in self.source.dialect.create_table_as(self._quote(table), f"SELECT * FROM {self._quote(view)}"):
+                self.source.execute(stmt)
+        return {"view": view, "table": table, "materialization": cfg.materialization}
+
+    def _quote(self, dotted: str) -> str:
+        return self.source.dialect.quote_table(dotted)
+
     def _load(self, version_id: UUID, sql: str) -> int:
         if isinstance(self.source, PostgresSource) and self.source.db is self.store.db:
             return self.store.replace_from_sql(version_id, sql)
@@ -93,6 +134,13 @@ class BuildPipeline:
         if version.r2rml_ttl:
             return parse_r2rml(version.r2rml_ttl)
         raise BuildError("Version has neither a mapping spec nor an R2RML document")
+
+
+def safe_identifier(name: str) -> str:
+    ident = re.sub(r"[^A-Za-z0-9_]+", "_", name).strip("_").lower()
+    if not ident or ident[0].isdigit():
+        ident = "d_" + ident
+    return ident
 
 
 class _step:

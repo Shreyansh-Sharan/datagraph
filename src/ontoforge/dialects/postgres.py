@@ -29,6 +29,9 @@ class PostgresDialect(SqlDialect):
     def iri_encode(self, expr: str) -> str:
         return f"ontoforge_iri_encode({expr})"
 
+    def create_table_as(self, table_sql: str, select_sql: str) -> list[str]:
+        return [f"DROP TABLE IF EXISTS {table_sql}", f"CREATE TABLE {table_sql} AS {select_sql}"]
+
     def setup_sql(self) -> str:
         """DDL the source database needs before compiled SQL can run (idempotent)."""
         return _IRI_ENCODE_SQL.read_text()

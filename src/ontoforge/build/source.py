@@ -20,6 +20,13 @@ class SourceEngine(ABC):
     def stream(self, sql: str, batch: int = 10_000) -> Iterator[tuple]:
         """Execute a SELECT and yield rows."""
 
+    @abstractmethod
+    def execute(self, sql: str) -> None:
+        """Run a DDL/DML statement in the warehouse."""
+
+    def ensure_schema(self, schema: str) -> None:
+        self.execute(f"CREATE SCHEMA IF NOT EXISTS {self.dialect.quote_table(schema)}")
+
 
 class PostgresSource(SourceEngine):
     def __init__(self, db: Database, default_schema: str | None = None) -> None:
@@ -37,3 +44,7 @@ class PostgresSource(SourceEngine):
                 cur.itersize = batch
                 cur.execute(sql)
                 yield from cur
+
+    def execute(self, sql: str) -> None:
+        with self.db.transaction() as cur:
+            cur.execute(sql)

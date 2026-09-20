@@ -37,6 +37,14 @@ class DatabricksSource(SourceEngine):
         finally:
             conn.close()
 
+    def execute(self, sql: str) -> None:
+        conn = self.connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+        finally:
+            conn.close()
+
     def _run_query(self, sql: str, params: tuple) -> list[tuple]:
         conn = self.connect()
         try:

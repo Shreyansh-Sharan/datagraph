@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     databricks_catalog: str | None = None
     databricks_schema: str | None = None
 
+    warehouse_target_schema: str | None = None   # where to publish triple views/tables (e.g. "main.kg")
+    warehouse_materialization: str = "none"      # "none" | "view" | "table"
+
     llm_provider: str = "none"          # "none" | "anthropic"
     llm_model: str = "claude-opus-5"
 

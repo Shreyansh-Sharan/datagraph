@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from ontoforge.auth import AuthError, Forbidden, Principals
-from ontoforge.build import BuildPipeline, BuildScheduler, DatabricksSource, PostgresSource, SourceEngine, databricks_connect_factory
+from ontoforge.build import BuildPipeline, BuildScheduler, DatabricksSource, PublishConfig, PostgresSource, SourceEngine, databricks_connect_factory
 from ontoforge.compiler import CompileError, IdentifierError
 from ontoforge.config import Settings, load_settings
 from ontoforge.db import Database, run_migrations
@@ -37,7 +37,9 @@ def create_app(db: Database, source_db: Database | None = None, settings: Settin
     app.state.principals = Principals(db)
     app.state.store = TripleStore(db)
     app.state.source = _source_engine(settings, source_db or db)
-    app.state.pipeline = BuildPipeline(app.state.registry, app.state.store, app.state.source)
+    publish = PublishConfig(settings.warehouse_target_schema, settings.warehouse_materialization) \
+        if settings.warehouse_target_schema else None
+    app.state.pipeline = BuildPipeline(app.state.registry, app.state.store, app.state.source, publish=publish)
     app.state.scheduler = BuildScheduler(app.state.pipeline, app.state.registry, workers=settings.build_workers)
     app.state.reasoner = Reasoner(app.state.registry, app.state.store)
     app.state.llm = llm

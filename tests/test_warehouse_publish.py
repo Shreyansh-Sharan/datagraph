@@ -46,7 +46,7 @@ def test_postgres_table_publish_snapshots_and_loads_from_table(db):
     assert publish["detail"]["table"] == f"{db.schema}.hr_v1_triples_mat"
     with db.transaction() as cur:
         n_table = cur.execute(f'SELECT count(*) FROM "{db.schema}"."hr_v1_triples_mat"').fetchone()[0]
-        cur.execute("DELETE FROM employees")           # the snapshot must not follow source changes
+        cur.execute("DELETE FROM collaborations")      # the snapshot must not follow source changes
         n_after = cur.execute(f'SELECT count(*) FROM "{db.schema}"."hr_v1_triples_mat"').fetchone()[0]
         n_view = cur.execute(f'SELECT count(*) FROM "{db.schema}"."hr_v1_triples"').fetchone()[0]
     assert n_table == n_after == run.triple_count and n_view < n_table
@@ -75,7 +75,21 @@ def test_domain_names_become_safe_identifiers(db):
 def test_databricks_publish_issues_ddl_then_streams_from_table(db):
     reg, store, v = prepared(db)
     rows = [("http://d/hr/Employee/1", "http://www.w3.org/1999/02/22-rdf-syntax-ns#type", "http://d/hr#Employee", "iri", None, None)]
-    conn = FakeConnection(rows)
+
+    class RoutingConnection(FakeConnection):
+        def cursor(self):
+            c = super().cursor()
+            c.rows = []  # metadata / DDL cursors return nothing ...
+            original = c.execute
+
+            def execute(sql, params=None):
+                original(sql, params)
+                c.rows = list(rows) if sql.startswith("SELECT subject") else []   # ... only the triple read yields rows
+                return c
+            c.execute = execute
+            return c
+
+    conn = RoutingConnection(rows)
     src = DatabricksSource(lambda: conn, default_catalog="main", default_schema="hr")
     run = BuildPipeline(reg, store, src, publish=PublishConfig(target_schema="main.kg", materialization="table")).run(v.id)
     assert run.status == "succeeded", run.error

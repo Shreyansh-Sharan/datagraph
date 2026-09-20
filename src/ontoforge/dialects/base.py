@@ -29,6 +29,10 @@ class SqlDialect(ABC):
     def iri_encode(self, expr: str) -> str:
         """Percent-encode a text expression for safe use inside an IRI template (R2RML §7.3)."""
 
+    def create_table_as(self, table_sql: str, select_sql: str) -> list[str]:
+        """Statements that (re)create a snapshot table from a query."""
+        return [f"CREATE OR REPLACE TABLE {table_sql} AS {select_sql}"]
+
     def null_text(self) -> str:
         """A NULL that is typed as text, so UNION ALL branches agree on the column type."""
         return "NULL"
