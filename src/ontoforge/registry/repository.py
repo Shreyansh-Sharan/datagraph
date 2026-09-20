@@ -204,6 +204,25 @@ class Registry:
             self._audit(cur, row["domain_version_id"], row["actor"], f"build.{status}", {"run": str(run_id), "triples": triple_count})
             return BuildRun(**row)
 
+    def update_build_steps(self, run_id: UUID, steps: list) -> None:
+        with self._cur() as cur:
+            cur.execute("UPDATE build_runs SET steps = %s WHERE id = %s", (Jsonb(steps), run_id))
+
+    def running_build(self, version_id: UUID) -> BuildRun | None:
+        with self._cur() as cur:
+            row = cur.execute("SELECT * FROM build_runs WHERE domain_version_id = %s AND status = 'running' "
+                              "ORDER BY started_at DESC LIMIT 1", (version_id,)).fetchone()
+        return BuildRun(**row) if row else None
+
+    def fail_stale_builds(self, reason: str = "process restarted") -> list[BuildRun]:
+        """Mark every 'running' run as failed: called at startup, when no worker can still own one."""
+        with self._cur() as cur:
+            rows = cur.execute("UPDATE build_runs SET status = 'failed', finished_at = now(), error = %s "
+                               "WHERE status = 'running' RETURNING *", (reason,)).fetchall()
+            for r in rows:
+                self._audit(cur, r["domain_version_id"], None, "build.failed", {"run": str(r["id"]), "reason": reason})
+            return [BuildRun(**r) for r in rows]
+
     def get_build(self, run_id: UUID) -> BuildRun:
         with self._cur() as cur:
             row = cur.execute("SELECT * FROM build_runs WHERE id = %s", (run_id,)).fetchone()

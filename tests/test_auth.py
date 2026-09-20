@@ -43,8 +43,8 @@ def test_role_matrix(db):
         assert c.put(f"/versions/{v['id']}/ontology", json={"turtle": ontology().to_turtle()}, headers=alice).status_code == 200
         assert c.put(f"/versions/{v['id']}/mapping", json=mapping().to_dict(), headers=alice).status_code == 200
         assert c.put(f"/versions/{v['id']}/mapping", json=mapping().to_dict(), headers=eve).status_code == 403
-        assert c.post(f"/versions/{v['id']}/builds", headers=eve).status_code == 403
-        assert c.post(f"/versions/{v['id']}/builds", headers=alice).json()["status"] == "succeeded"
+        assert c.post(f"/versions/{v['id']}/builds", headers=eve, params={"wait": "true"}).status_code == 403
+        assert c.post(f"/versions/{v['id']}/builds", headers=alice, params={"wait": "true"}).json()["status"] == "succeeded"
         # reviewers review; builders don't
         assert c.post(f"/versions/{v['id']}/transition", json={"to": "in_review"}, headers=alice).status_code == 200
         assert c.post(f"/versions/{v['id']}/reviews", json={"approved": True}, headers=alice).status_code == 403

@@ -70,7 +70,7 @@ def test_lease_conflict_returns_423(client):
 def test_build_and_explore(client):
     d = make_domain(client)
     v = make_draft(client, d)
-    run = client.post(f"/versions/{v['id']}/builds").json()
+    run = client.post(f"/versions/{v['id']}/builds", params={"wait": "true"}).json()
     assert run["status"] == "succeeded", run
     assert client.get(f"/versions/{v['id']}/builds").json()[0]["id"] == run["id"]
     status = client.get(f"/versions/{v['id']}/graph/status").json()
@@ -96,7 +96,7 @@ def test_compiled_sql_preview_and_r2rml(client):
 def test_reasoning_endpoints(client):
     d = make_domain(client)
     v = make_draft(client, d)
-    client.post(f"/versions/{v['id']}/builds")
+    client.post(f"/versions/{v['id']}/builds", params={"wait": "true"})
     report = client.post(f"/versions/{v['id']}/reasoning/validate").json()
     assert report["conforms"] is False and report["results"][0]["focus"].startswith(BASE)
     inf = client.post(f"/versions/{v['id']}/reasoning/infer").json()
@@ -108,7 +108,7 @@ def test_reasoning_endpoints(client):
 def test_graphql_endpoint(client):
     d = make_domain(client)
     v = make_draft(client, d)
-    client.post(f"/versions/{v['id']}/builds")
+    client.post(f"/versions/{v['id']}/builds", params={"wait": "true"})
     r = client.post(f"/versions/{v['id']}/graphql", json={"query": '{ employees(search: "SMITH") { name worksIn { name } } }'})
     assert r.status_code == 200, r.text
     assert r.json()["data"]["employees"] == [{"name": "SMITH", "worksIn": [{"name": "SALES"}]}]
@@ -125,4 +125,4 @@ def test_catalog_and_autodraft(client):
     r = client.post(f"/versions/{v['id']}/autodraft", json={"ontology_iri": "http://d/hr"})
     assert r.status_code == 200 and r.json()["classes"] >= 3
     assert client.get(f"/versions/{v['id']}").json()["has_mapping"]
-    assert client.post(f"/versions/{v['id']}/builds").json()["status"] == "succeeded"
+    assert client.post(f"/versions/{v['id']}/builds", params={"wait": "true"}).json()["status"] == "succeeded"

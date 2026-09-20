@@ -21,7 +21,7 @@ from ontoforge.mapping import MappingSpec
 from ontoforge.ontology import Ontology
 from ontoforge.r2rml import serialize_r2rml
 from ontoforge.reasoning import generate_shapes
-from ontoforge.registry import DomainVersion, NotFound, Status
+from ontoforge.registry import DomainVersion, LifecycleError, NotFound, Status
 
 router = APIRouter(dependencies=[Depends(viewer)])   # every route needs an authenticated caller
 open_router = APIRouter()                                # /health only
@@ -288,9 +288,23 @@ def release_lease(version_id: UUID, request: Request, me: Principal = Depends(bu
 
 # -- builds ----------------------------------------------------------------------
 
-@router.post("/versions/{version_id}/builds", status_code=200)
-def build(version_id: UUID, request: Request, me: Principal = Depends(builder)):
-    return _st(request).pipeline.run(version_id, actor=me.name)
+@router.post("/versions/{version_id}/builds", status_code=202)
+def build(version_id: UUID, request: Request, response: Response, me: Principal = Depends(builder),
+          wait: bool = Query(default=False, description="block until the build finishes")):
+    """Starts a build in the background (202 + running run). ``?wait=true`` returns the finished run (200)."""
+    sched = _st(request).scheduler
+    run = sched.submit(version_id, actor=me.name)
+    if wait:
+        response.status_code = 200
+        return sched.wait(run.id)
+    return run
+
+
+@router.post("/builds/{run_id}/cancel")
+def cancel_build(run_id: UUID, request: Request, me: Principal = Depends(builder)):
+    if not _st(request).scheduler.cancel(run_id):
+        raise LifecycleError("Build is not running")
+    return {"id": run_id, "cancelling": True}
 
 
 @router.get("/versions/{version_id}/builds")

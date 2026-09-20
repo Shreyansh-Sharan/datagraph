@@ -160,7 +160,7 @@ def test_api_llm_endpoints(db):
         r = c.post(f"/versions/{v['id']}/llm/suggest-mapping", json={})
         assert r.status_code == 200, r.text
         assert r.json()["relations"] == 1
-        assert c.post(f"/versions/{v['id']}/builds").json()["status"] == "succeeded"
+        assert c.post(f"/versions/{v['id']}/builds", params={"wait": "true"}).json()["status"] == "succeeded"
 
 
 def test_api_without_llm_configured_returns_503(db):

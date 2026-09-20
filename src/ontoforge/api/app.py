@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from ontoforge.auth import AuthError, Forbidden, Principals
-from ontoforge.build import BuildPipeline, DatabricksSource, PostgresSource, SourceEngine, databricks_connect_factory
+from ontoforge.build import BuildPipeline, BuildScheduler, DatabricksSource, PostgresSource, SourceEngine, databricks_connect_factory
 from ontoforge.compiler import CompileError, IdentifierError
 from ontoforge.config import Settings, load_settings
 from ontoforge.db import Database, run_migrations
@@ -35,8 +35,16 @@ def create_app(db: Database, source_db: Database | None = None, settings: Settin
     app.state.store = TripleStore(db)
     app.state.source = _source_engine(settings, source_db or db)
     app.state.pipeline = BuildPipeline(app.state.registry, app.state.store, app.state.source)
+    app.state.scheduler = BuildScheduler(app.state.pipeline, app.state.registry, workers=settings.build_workers)
     app.state.reasoner = Reasoner(app.state.registry, app.state.store)
     app.state.llm = llm
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        app.state.registry.fail_stale_builds()   # no worker survives a restart
+        yield
+        app.state.scheduler.shutdown(wait=False)
+
+    app.router.lifespan_context = lifespan
     app.include_router(open_router)
     app.include_router(router)
 
@@ -68,13 +76,16 @@ def create_app_from_settings() -> FastAPI:
     settings = load_settings()
     db = Database(settings.database_url, schema=settings.database_schema)
 
+    llm = AnthropicProvider(model=settings.llm_model) if settings.llm_provider == "anthropic" else None
+    run_migrations(db)
+    app = create_app(db, settings=settings, llm=llm)
+    inner = app.router.lifespan_context
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        run_migrations(db)
-        yield
+        async with inner(app):
+            yield
         db.close()
 
-    llm = AnthropicProvider(model=settings.llm_model) if settings.llm_provider == "anthropic" else None
-    app = create_app(db, settings=settings, llm=llm)
     app.router.lifespan_context = lifespan
     return app
