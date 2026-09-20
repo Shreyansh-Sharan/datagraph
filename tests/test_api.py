@@ -126,3 +126,16 @@ def test_catalog_and_autodraft(client):
     assert r.status_code == 200 and r.json()["classes"] >= 3
     assert client.get(f"/versions/{v['id']}").json()["has_mapping"]
     assert client.post(f"/versions/{v['id']}/builds", params={"wait": "true"}).json()["status"] == "succeeded"
+
+
+def test_ontology_json_roundtrip_endpoint(client):
+    d = make_domain(client)
+    v = make_draft(client, d)
+    body = client.get(f"/versions/{v['id']}/ontology").json()
+    body["classes"].append({"iri": EX + "Contractor", "label": "Contractor", "parents": [EX + "Person"]})
+    r = client.put(f"/versions/{v['id']}/ontology/json", json=body)
+    assert r.status_code == 200, r.text
+    assert r.json()["classes"] == len(body["classes"]) and any(i["code"] == "missing-domain" for i in r.json()["issues"])
+    again = client.get(f"/versions/{v['id']}/ontology").json()
+    assert any(c["iri"] == EX + "Contractor" for c in again["classes"])
+    assert client.put(f"/versions/{v['id']}/ontology/json", json={"iri": "x", "classes": [{"iri": EX + "A", "restrictions": [{"property": EX + "p", "kind": "weird", "value": 1}]}]}).status_code == 400

@@ -92,6 +92,16 @@ One shared table, keyed by domain version:
   catalog; `GET /versions/{id}/mapping/drift` lists dropped/renamed/retyped columns the mapping relies on.
 - **Logs** — `ONTOFORGE_LOG_FORMAT=json` for one JSON object per line; every response carries `X-Request-ID`.
 
+## UI
+
+`/ui/` serves a dependency-free single-page app (ES modules, no build step) covering the whole
+workflow: domains and versions with the review lifecycle, metadata snapshots, the ontology editor
+(classes, properties, restrictions, checks, import, AI assist, graph view), the mapping designer
+with completeness and previews, rules, data-quality constraints and validation, builds with live
+progress, graph exploration with entity detail and neighbourhood graph, analytics, and domain
+settings (MCP policy, attachments, cohorts, GraphQL console). Identity is chosen in-app for header
+mode or by pasting an API key in token mode.
+
 ## Deploy
 
 `docker build -t ontoforge .` (migrations run at startup) or Databricks Apps via `deploy/app.yaml` —

@@ -214,6 +214,19 @@ def revoke_api_key(key_id: UUID, request: Request, me: Principal = Depends(admin
 
 # -- health / domains ------------------------------------------------------------
 
+@open_router.get("/", include_in_schema=False)
+def root():
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse("/ui/", status_code=307)
+
+
+@open_router.get("/auth/config")
+def auth_config(request: Request):
+    """How clients should identify themselves (no secrets here)."""
+    s = _st(request).settings
+    return {"mode": s.auth_mode, "header": s.auth_header, "default_role": s.auth_default_role}
+
+
 @open_router.get("/health")
 def health(request: Request):
     with _st(request).db.transaction() as cur:
@@ -352,6 +365,17 @@ def import_ontology(version_id: UUID, body: OntologyImportIn, request: Request, 
                                     "properties_added": len(list(incoming.all_properties())), "properties_skipped": 0}
     st.registry.update_content(version_id, actor=me.name, ontology_ttl=merged.to_turtle())
     return {**_ontology_summary_json(merged), "report": report}
+
+
+@router.put("/versions/{version_id}/ontology/json")
+def put_ontology_json(version_id: UUID, body: dict, request: Request, me: Principal = Depends(builder)):
+    """Save the ontology from its JSON form (what the editor holds); stored as Turtle like every other path."""
+    try:
+        onto = Ontology.from_dict(body)
+    except (KeyError, ValueError, TypeError) as exc:
+        raise ValueError(f"Invalid ontology document: {exc}") from None
+    _st(request).registry.update_content(version_id, actor=me.name, ontology_ttl=onto.to_turtle())
+    return _ontology_summary_json(onto)
 
 
 @router.get("/versions/{version_id}/ontology")

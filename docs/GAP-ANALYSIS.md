@@ -19,7 +19,7 @@ Legend: ✅ have · 🟡 partial · ❌ missing · ➖ not planned (UI-only or D
 | Industry ontologies: FIBO, CDISC, IOF, HL7 FHIR | ✅ | catalogue with licences; import by source/url/data, merge or replace; CDISC gated |
 | LLM ontology wizard (metadata + guidelines templates + document enrichment) | 🟡 | draft from metadata + description; no templates, no PDF/DOCX enrichment |
 | LLM ontology assistant (NL edits) | ✅ | |
-| Auto icon assignment, dashboard mapping, OntoViz canvas, D3 designer | ➖ | UI / Databricks dashboards |
+| Auto icon assignment, dashboard mapping, OntoViz canvas, D3 designer | 🟡 | own SPA: form-based class/property editor + canvas graph view; no drag-and-drop canvas editing, no icons/dashboards |
 
 ## 2. Metadata & mapping
 | Capability | Status | Note |
@@ -63,7 +63,7 @@ Legend: ✅ have · 🟡 partial · ❌ missing · ➖ not planned (UI-only or D
 | Bridges (cross-domain links) | ✅ | key-matched counterparts, in REST + MCP |
 | Datasets (link a table/view to a class, preview rows) | ✅ | |
 | Class actions / virtual attributes (SQL functions on an entity) | ✅ | any SELECT with `:key` placeholders; MCP invoke/compute |
-| Sigma.js viewer, cluster collapse, dashboards embedding | ➖ | UI |
+| Sigma.js viewer, cluster collapse, dashboards embedding | 🟡 | own canvas graph (pan/zoom/select/keyboard); no cluster collapse or dashboards |
 
 ## 5. Reasoning & data quality
 | Capability | Status | Note |
@@ -80,7 +80,7 @@ Legend: ✅ have · 🟡 partial · ❌ missing · ➖ not planned (UI-only or D
 |---|---|---|
 | GraphQL auto-schema, nested traversal, SDL | ✅ | |
 | Pagination (offset), configurable depth, batch resolution (N+1), schema cache invalidation | 🟡 | limit only; per-request rebuild; N+1 resolvers |
-| GraphiQL playground | ➖ | UI |
+| GraphiQL playground | 🟡 | simple GraphQL console under Settings |
 | MCP: list_domains, describe_ontology, search, describe_entity, graph_status, GraphQL tools | ✅ | |
 | MCP: select_domain session, list_domain_versions, get_design_status, get_entity_context, invoke_entity_action | ✅ | 14 tools |
 | MCP: per-domain tool policy (Preferred / Normal / Disabled), hot switch | ✅ | exposed flag + disabled tools, checked per call |
@@ -103,7 +103,7 @@ Legend: ✅ have · 🟡 partial · ❌ missing · ➖ not planned (UI-only or D
 | Databricks Apps / DAB packaging, Dockerfile | ✅ | `Dockerfile`, `deploy/app.yaml` (image build verified; app deploy not run) |
 
 ## Rough coverage
-Backend-only surface (excluding UI and Databricks-proprietary items): **~95%** as of 2026-09-21 (remaining: Neo4j, D2KLab pitfalls, conditional SHACL, `.swrl` import, union/intersection axioms). Including UI: ~60%.
+Backend-only surface (excluding UI and Databricks-proprietary items): **~95%** as of 2026-09-21 (remaining: Neo4j, D2KLab pitfalls, conditional SHACL, `.swrl` import, union/intersection axioms). Including UI: ~80% (own SPA at /ui, verified in a real browser).
 
 ## Recommended order
 **P1 — foundations the rest depends on:** ~~auth + roles · async builds · structured logging · run the Delta view/table DDL in Databricks · metadata snapshot + drift detection~~ — **done 2026-09-20**.

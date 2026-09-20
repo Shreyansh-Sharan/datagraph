@@ -151,7 +151,8 @@ def _label(iri: str, attrs) -> str:
     if RDFS_LABEL in by_pred:
         return by_pred[RDFS_LABEL]
     for p, v in by_pred.items():
-        if Ontology.local_name(p).lower() in ("name", "label", "title", "fullname", "displayname"):
+        ln = Ontology.local_name(p).lower()
+        if ln in ("name", "label", "title", "fullname", "displayname") or ln.endswith(("name", "_label", "title")):
             return v
     return fallback_label(iri)
 
