@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ontoforge.api import create_app
+from ontoforge.config import Settings
 from ontoforge.build import BuildPipeline, PostgresSource
 from ontoforge.catalog import PostgresCatalog
 from ontoforge.llm import (
@@ -13,6 +14,7 @@ from ontoforge.llm import (
 )
 from ontoforge.registry import Registry
 from ontoforge.store import TripleStore
+ADMIN = Settings(auth_default_role="admin")
 from tests.hr_fixture import seed_tables, ontology, EX, BASE
 
 ONTO_IRI = "http://d/hr"
@@ -148,7 +150,7 @@ def test_anthropic_provider_uses_structured_output_and_adaptive_thinking():
 
 def test_api_llm_endpoints(db):
     seed_tables(db)
-    app = create_app(db=db, llm=FakeProvider([DRAFT, MAPPING]))
+    app = create_app(db=db, settings=ADMIN, llm=FakeProvider([DRAFT, MAPPING]))
     with TestClient(app, headers={"X-Actor": "alice"}) as c:
         c.post("/domains", json={"name": "hr", "base_iri": BASE})
         v = c.post("/domains/hr/versions").json()
@@ -162,7 +164,7 @@ def test_api_llm_endpoints(db):
 
 
 def test_api_without_llm_configured_returns_503(db):
-    with TestClient(create_app(db=db)) as c:
+    with TestClient(create_app(db=db, settings=ADMIN), headers={"X-Actor": "alice"}) as c:
         c.post("/domains", json={"name": "hr", "base_iri": BASE})
         v = c.post("/domains/hr/versions").json()
         assert c.post(f"/versions/{v['id']}/llm/draft-ontology", json={"ontology_iri": ONTO_IRI}).status_code == 503

@@ -4,11 +4,13 @@ from dataclasses import asdict
 from datetime import timedelta
 from uuid import UUID
 
-from fastapi import APIRouter, Header, Query, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import PlainTextResponse
 from graphql import graphql_sync, print_schema
 from pydantic import BaseModel, Field
 
+from ontoforge.auth import Principal, Role
+from ontoforge.auth.fastapi import admin, builder, reviewer, viewer
 from ontoforge.autodraft import draft_from_catalog
 from ontoforge.bundle import export_bundle, import_bundle
 from ontoforge.compiler import compile_mapping
@@ -21,11 +23,8 @@ from ontoforge.r2rml import serialize_r2rml
 from ontoforge.reasoning import generate_shapes
 from ontoforge.registry import DomainVersion, NotFound, Status
 
-router = APIRouter()
-
-
-def actor(x_actor: str = Header(default="anonymous", alias="X-Actor")) -> str:
-    return x_actor
+router = APIRouter(dependencies=[Depends(viewer)])   # every route needs an authenticated caller
+open_router = APIRouter()                                # /health only
 
 
 def _st(request: Request):
@@ -94,9 +93,59 @@ class AutodraftIn(BaseModel):
     schema_name: str | None = None
 
 
+# -- identity & administration ---------------------------------------------------
+
+class RoleIn(BaseModel):
+    role: Role
+
+
+class ApiKeyIn(BaseModel):
+    name: str
+    principal: str
+    role: Role
+
+
+@router.get("/me")
+def me(me: Principal = Depends(viewer)):
+    return {"name": me.name, "role": me.role.value}
+
+
+@router.get("/admin/principals")
+def list_principals(request: Request, me: Principal = Depends(admin)):
+    return _st(request).principals.list_roles()
+
+
+@router.put("/admin/principals/{name}")
+def set_principal_role(name: str, body: RoleIn, request: Request, me: Principal = Depends(admin)):
+    _st(request).principals.set_role(name, body.role)
+    return {"name": name, "role": body.role.value}
+
+
+@router.delete("/admin/principals/{name}", status_code=204)
+def delete_principal(name: str, request: Request, me: Principal = Depends(admin)):
+    _st(request).principals.delete(name)
+    return Response(status_code=204)
+
+
+@router.post("/admin/api-keys", status_code=201)
+def create_api_key(body: ApiKeyIn, request: Request, me: Principal = Depends(admin)):
+    return _st(request).principals.create_api_key(body.name, principal=body.principal, role=body.role)
+
+
+@router.get("/admin/api-keys")
+def list_api_keys(request: Request, me: Principal = Depends(admin)):
+    return [{k: v for k, v in asdict(key).items() if k != "secret"} for key in _st(request).principals.list_api_keys()]
+
+
+@router.delete("/admin/api-keys/{key_id}", status_code=204)
+def revoke_api_key(key_id: UUID, request: Request, me: Principal = Depends(admin)):
+    _st(request).principals.revoke_api_key(key_id)
+    return Response(status_code=204)
+
+
 # -- health / domains ------------------------------------------------------------
 
-@router.get("/health")
+@open_router.get("/health")
 def health(request: Request):
     with _st(request).db.transaction() as cur:
         cur.execute("SELECT 1")
@@ -109,7 +158,7 @@ def list_domains(request: Request):
 
 
 @router.post("/domains", status_code=201)
-def create_domain(body: DomainIn, request: Request):
+def create_domain(body: DomainIn, request: Request, me: Principal = Depends(builder)):
     return _st(request).registry.create_domain(body.name, body.description, base_iri=body.base_iri, review_quorum=body.review_quorum)
 
 
@@ -119,7 +168,7 @@ def get_domain(name: str, request: Request):
 
 
 @router.delete("/domains/{name}", status_code=204)
-def delete_domain(name: str, request: Request):
+def delete_domain(name: str, request: Request, me: Principal = Depends(admin)):
     reg = _st(request).registry
     reg.delete_domain(reg.get_domain(name).id)
     return Response(status_code=204)
@@ -131,8 +180,8 @@ def export_domain(name: str, request: Request, version_id: UUID | None = None):
 
 
 @router.post("/domains/import", status_code=201)
-def import_domain(body: dict, request: Request, who: str = Header(default="anonymous", alias="X-Actor")):
-    return _version_json(import_bundle(_st(request).registry, body, actor=who, name=body.get("name")))
+def import_domain(body: dict, request: Request, me: Principal = Depends(builder)):
+    return _version_json(import_bundle(_st(request).registry, body, actor=me.name, name=body.get("name")))
 
 
 @router.get("/domains/{name}/versions")
@@ -142,9 +191,9 @@ def list_versions(name: str, request: Request):
 
 
 @router.post("/domains/{name}/versions", status_code=201)
-def create_version(name: str, request: Request, who: str = Header(default="anonymous", alias="X-Actor")):
+def create_version(name: str, request: Request, me: Principal = Depends(builder)):
     reg = _st(request).registry
-    return _version_json(reg.create_version(reg.get_domain(name).id, actor=who))
+    return _version_json(reg.create_version(reg.get_domain(name).id, actor=me.name))
 
 
 # -- versions: content -----------------------------------------------------------
@@ -155,9 +204,9 @@ def get_version(version_id: UUID, request: Request):
 
 
 @router.put("/versions/{version_id}/ontology")
-def put_ontology(version_id: UUID, body: OntologyIn, request: Request, who: str = Header(default="anonymous", alias="X-Actor")):
+def put_ontology(version_id: UUID, body: OntologyIn, request: Request, me: Principal = Depends(builder)):
     Ontology.from_turtle(body.turtle)  # validate before storing
-    return _version_json(_st(request).registry.update_content(version_id, actor=who, ontology_ttl=body.turtle))
+    return _version_json(_st(request).registry.update_content(version_id, actor=me.name, ontology_ttl=body.turtle))
 
 
 @router.get("/versions/{version_id}/ontology")
@@ -176,10 +225,10 @@ def ontology_checks(version_id: UUID, request: Request):
 
 
 @router.put("/versions/{version_id}/mapping")
-def put_mapping(version_id: UUID, body: dict, request: Request, who: str = Header(default="anonymous", alias="X-Actor")):
+def put_mapping(version_id: UUID, body: dict, request: Request, me: Principal = Depends(builder)):
     spec = MappingSpec.from_dict(body)
     spec.to_r2rml()  # validate before storing
-    return _version_json(_st(request).registry.update_content(version_id, actor=who, mapping=spec.to_dict()))
+    return _version_json(_st(request).registry.update_content(version_id, actor=me.name, mapping=spec.to_dict()))
 
 
 @router.get("/versions/{version_id}/mapping")
@@ -203,13 +252,15 @@ def get_sql(version_id: UUID, request: Request, dialect: str = Query(default="po
 # -- versions: lifecycle ---------------------------------------------------------
 
 @router.post("/versions/{version_id}/transition")
-def transition(version_id: UUID, body: TransitionIn, request: Request, who: str = Header(default="anonymous", alias="X-Actor")):
-    return _version_json(_st(request).registry.transition(version_id, body.to, actor=who))
+def transition(version_id: UUID, body: TransitionIn, request: Request, me: Principal = Depends(builder)):
+    me.require({Status.IN_REVIEW: Role.BUILDER, Status.DRAFT: Role.REVIEWER, Status.PUBLISHED: Role.REVIEWER,
+                Status.ARCHIVED: Role.ADMIN}[body.to])
+    return _version_json(_st(request).registry.transition(version_id, body.to, actor=me.name))
 
 
 @router.post("/versions/{version_id}/reviews", status_code=201)
-def add_review(version_id: UUID, body: ReviewIn, request: Request, who: str = Header(default="anonymous", alias="X-Actor")):
-    return _st(request).registry.add_review(version_id, reviewer=who, approved=body.approved, comment=body.comment)
+def add_review(version_id: UUID, body: ReviewIn, request: Request, me: Principal = Depends(reviewer)):
+    return _st(request).registry.add_review(version_id, reviewer=me.name, approved=body.approved, comment=body.comment)
 
 
 @router.get("/versions/{version_id}/reviews")
@@ -223,21 +274,23 @@ def audit(version_id: UUID, request: Request):
 
 
 @router.post("/versions/{version_id}/lease")
-def acquire_lease(version_id: UUID, body: LeaseIn, request: Request, who: str = Header(default="anonymous", alias="X-Actor")):
-    return _version_json(_st(request).registry.acquire_lease(version_id, editor=who, ttl=timedelta(seconds=body.ttl_seconds), force=body.force))
+def acquire_lease(version_id: UUID, body: LeaseIn, request: Request, me: Principal = Depends(builder)):
+    if body.force:
+        me.require(Role.ADMIN)
+    return _version_json(_st(request).registry.acquire_lease(version_id, editor=me.name, ttl=timedelta(seconds=body.ttl_seconds), force=body.force))
 
 
 @router.delete("/versions/{version_id}/lease", status_code=204)
-def release_lease(version_id: UUID, request: Request, who: str = Header(default="anonymous", alias="X-Actor")):
-    _st(request).registry.release_lease(version_id, editor=who)
+def release_lease(version_id: UUID, request: Request, me: Principal = Depends(builder)):
+    _st(request).registry.release_lease(version_id, editor=me.name)
     return Response(status_code=204)
 
 
 # -- builds ----------------------------------------------------------------------
 
 @router.post("/versions/{version_id}/builds", status_code=200)
-def build(version_id: UUID, request: Request, who: str = Header(default="anonymous", alias="X-Actor")):
-    return _st(request).pipeline.run(version_id, actor=who)
+def build(version_id: UUID, request: Request, me: Principal = Depends(builder)):
+    return _st(request).pipeline.run(version_id, actor=me.name)
 
 
 @router.get("/versions/{version_id}/builds")
@@ -284,12 +337,12 @@ def graph_neighbourhood(version_id: UUID, request: Request, iri: str, depth: int
 # -- reasoning -------------------------------------------------------------------
 
 @router.post("/versions/{version_id}/reasoning/infer")
-def infer(version_id: UUID, request: Request):
+def infer(version_id: UUID, request: Request, me: Principal = Depends(builder)):
     return _st(request).reasoner.owl_rl(version_id)
 
 
 @router.post("/versions/{version_id}/reasoning/validate")
-def validate(version_id: UUID, request: Request):
+def validate(version_id: UUID, request: Request, me: Principal = Depends(builder)):
     return _st(request).reasoner.validate(version_id)
 
 
@@ -332,13 +385,13 @@ def catalog_table(table: str, request: Request):
 
 
 @router.post("/versions/{version_id}/autodraft")
-def autodraft(version_id: UUID, body: AutodraftIn, request: Request, who: str = Header(default="anonymous", alias="X-Actor")):
+def autodraft(version_id: UUID, body: AutodraftIn, request: Request, me: Principal = Depends(builder)):
     st = _st(request)
     version = st.registry.get_version(version_id)
     domain = st.registry.get_domain_by_id(version.domain_id)
     onto, spec = draft_from_catalog(st.source.catalog, ontology_iri=body.ontology_iri, base_iri=domain.base_iri,
                                     tables=body.tables, schema=body.schema_name)
-    st.registry.update_content(version_id, actor=who, ontology_ttl=onto.to_turtle(), mapping=spec.to_dict())
+    st.registry.update_content(version_id, actor=me.name, ontology_ttl=onto.to_turtle(), mapping=spec.to_dict())
     return {"classes": len(onto.classes), "properties": len(onto.datatype_properties) + len(onto.object_properties),
             "relations": len(spec.relations), "issues": onto.check()}
 
@@ -366,26 +419,26 @@ def _samples(request: Request, table: str, n: int = 3) -> list[tuple]:
 
 
 @router.post("/versions/{version_id}/llm/draft-ontology")
-def llm_draft_ontology(version_id: UUID, body: DraftOntologyIn, request: Request, who: str = Header(default="anonymous", alias="X-Actor")):
+def llm_draft_ontology(version_id: UUID, body: DraftOntologyIn, request: Request, me: Principal = Depends(builder)):
     onto = OntologyDrafter(_llm(request)).draft(body.ontology_iri, _tables(request, body.tables, body.schema_name), body.description)
-    _st(request).registry.update_content(version_id, actor=who, ontology_ttl=onto.to_turtle())
+    _st(request).registry.update_content(version_id, actor=me.name, ontology_ttl=onto.to_turtle())
     return _ontology_summary_json(onto)
 
 
 @router.post("/versions/{version_id}/llm/suggest-mapping")
-def llm_suggest_mapping(version_id: UUID, body: SuggestMappingIn, request: Request, who: str = Header(default="anonymous", alias="X-Actor")):
+def llm_suggest_mapping(version_id: UUID, body: SuggestMappingIn, request: Request, me: Principal = Depends(builder)):
     st = _st(request)
     version = st.registry.get_version(version_id)
     domain = st.registry.get_domain_by_id(version.domain_id)
     spec = MappingSuggester(_llm(request)).suggest(_ontology(request, version_id), _tables(request, body.tables, body.schema_name), domain.base_iri)
-    st.registry.update_content(version_id, actor=who, mapping=spec.to_dict())
+    st.registry.update_content(version_id, actor=me.name, mapping=spec.to_dict())
     return {"classes": len(spec.classes), "relations": len(spec.relations), "mapping": spec.to_dict()}
 
 
 @router.post("/versions/{version_id}/llm/assist")
-def llm_assist(version_id: UUID, body: AssistIn, request: Request, who: str = Header(default="anonymous", alias="X-Actor")):
+def llm_assist(version_id: UUID, body: AssistIn, request: Request, me: Principal = Depends(builder)):
     onto = OntologyAssistant(_llm(request)).edit(_ontology(request, version_id), body.instruction)
-    _st(request).registry.update_content(version_id, actor=who, ontology_ttl=onto.to_turtle())
+    _st(request).registry.update_content(version_id, actor=me.name, ontology_ttl=onto.to_turtle())
     return _ontology_summary_json(onto)
 
 

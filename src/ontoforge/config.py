@@ -10,6 +10,10 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://ontoforge:ontoforge@localhost:5439/ontoforge"
     database_schema: str | None = None
     base_iri: str = "http://ontoforge.local/"
+
+    auth_mode: str = "header"           # "header" (trusted proxy / dev) | "token" (API keys)
+    auth_header: str = "X-Actor"        # identity header in header mode (Databricks Apps: X-Forwarded-Email)
+    auth_default_role: str = "viewer"   # role for principals without an explicit one
     source_kind: str = "postgres"       # "postgres" (registry database) | "databricks"
     databricks_host: str | None = None
     databricks_http_path: str | None = None

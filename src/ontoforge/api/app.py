@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from ontoforge.auth import AuthError, Forbidden, Principals
 from ontoforge.build import BuildPipeline, DatabricksSource, PostgresSource, SourceEngine, databricks_connect_factory
 from ontoforge.compiler import CompileError, IdentifierError
 from ontoforge.config import Settings, load_settings
@@ -17,9 +18,9 @@ from ontoforge.reasoning import Reasoner
 from ontoforge.registry import LifecycleError, LockedError, NotFound, Registry
 from ontoforge.store import TripleStore
 
-from .routes import router
+from .routes import open_router, router
 
-_STATUS = {NotFound: 404, LifecycleError: 409, LockedError: 423, LLMUnavailable: 503, LLMOutputError: 502,
+_STATUS = {AuthError: 401, Forbidden: 403, NotFound: 404, LifecycleError: 409, LockedError: 423, LLMUnavailable: 503, LLMOutputError: 502,
            MappingSpecError: 400, MappingError: 400, CompileError: 400, IdentifierError: 400, ValueError: 400}
 
 
@@ -30,11 +31,13 @@ def create_app(db: Database, source_db: Database | None = None, settings: Settin
     app.state.settings = settings
     app.state.db = db
     app.state.registry = Registry(db)
+    app.state.principals = Principals(db)
     app.state.store = TripleStore(db)
     app.state.source = _source_engine(settings, source_db or db)
     app.state.pipeline = BuildPipeline(app.state.registry, app.state.store, app.state.source)
     app.state.reasoner = Reasoner(app.state.registry, app.state.store)
     app.state.llm = llm
+    app.include_router(open_router)
     app.include_router(router)
 
     for cls, code in _STATUS.items():

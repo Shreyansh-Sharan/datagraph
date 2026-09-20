@@ -9,6 +9,7 @@ from ontoforge.bundle import export_bundle, import_bundle
 from ontoforge.build import DatabricksSource, PostgresSource
 from ontoforge.config import Settings
 from ontoforge.registry import Registry, Status
+ADMIN = Settings(auth_default_role="admin")
 from tests.hr_fixture import built_domain, BASE
 
 
@@ -40,7 +41,7 @@ def test_import_rejects_unknown_format(db):
 
 def test_bundle_endpoints(db):
     reg, store, v = built_domain(db)
-    with TestClient(create_app(db=db), headers={"X-Actor": "alice"}) as c:
+    with TestClient(create_app(db=db, settings=ADMIN), headers={"X-Actor": "alice"}) as c:
         r = c.get("/domains/hr/export")
         assert r.status_code == 200 and r.json()["format"] == "ontoforge-bundle/1"
         r = c.post("/domains/import", json={**r.json(), "name": "hr2"})
@@ -49,7 +50,7 @@ def test_bundle_endpoints(db):
 
 
 def test_source_engine_from_settings_defaults_to_postgres(db):
-    app = create_app(db=db, settings=Settings(source_kind="postgres"))
+    app = create_app(db=db, settings=Settings(source_kind="postgres", auth_default_role="admin"))
     assert isinstance(app.state.source, PostgresSource)
 
 

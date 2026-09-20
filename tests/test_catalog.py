@@ -52,3 +52,14 @@ def test_malicious_table_name_never_reaches_the_warehouse():
     with pytest.raises(IdentifierError):
         DatabricksCatalog(runner).column_types("emp' OR 1=1 --")
     assert runner.calls == []
+
+
+def test_every_migration_table_is_excluded_from_catalog_listing(db):
+    """Guard: a new migration table must be added to INTERNAL_TABLES or it would be offered as a mapping source."""
+    from ontoforge.catalog import PostgresCatalog
+    from ontoforge.catalog.postgres import INTERNAL_TABLES
+    with db.transaction() as cur:
+        created = {r[0] for r in cur.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'")}
+    assert created <= INTERNAL_TABLES, created - INTERNAL_TABLES
+    assert PostgresCatalog(db).list_tables() == []

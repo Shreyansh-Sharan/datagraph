@@ -3,13 +3,15 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ontoforge.api import create_app
+from ontoforge.config import Settings
+ADMIN = Settings(auth_default_role="admin")
 from tests.hr_fixture import seed_tables, ontology, mapping, BASE, EX
 
 
 @pytest.fixture
 def client(db):
     seed_tables(db)
-    app = create_app(db=db, source_db=db)
+    app = create_app(db=db, source_db=db, settings=ADMIN)
     with TestClient(app, headers={"X-Actor": "alice"}) as c:
         yield c
 
