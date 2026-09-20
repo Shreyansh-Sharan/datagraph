@@ -25,15 +25,15 @@ Legend: ✅ have · 🟡 partial · ❌ missing · ➖ not planned (UI-only or D
 | Capability | Status | Note |
 |---|---|---|
 | Catalog introspection (tables, columns, types, PK, FK) | ✅ | Postgres live; Databricks via information_schema (fakes only) |
-| Metadata snapshot: import, refresh with change review, comment editing, source removal with dependency check | ❌ | we read the catalog live; no stored snapshot |
-| Schema-drift detection (renamed/dropped columns vs stored mapping) | ❌ | needs the snapshot above |
+| Metadata snapshot: import, refresh with change review, comment editing, source removal with dependency check | ✅ | `metadata.py` (2026-09-20) |
+| Schema-drift detection (renamed/dropped columns vs stored mapping) | ✅ | `/mapping/drift`, recorded as a build step |
 | Class→table / attribute→column mapping, key columns, IRI templates | ✅ | `MappingSpec` |
 | Relationship via FK, link table, self-reference | ✅ | join-free compile |
 | Relationship direction: reverse / bidirectional | ❌ | forward only |
 | Per-attribute include/exclude, completion %, partial-mapping status, gap report | ❌ | |
 | SQL query test / preview with row limit | ❌ | easy: compile one class, `LIMIT n` |
 | LLM auto-map | 🟡 | single-shot suggest; no batch progress, cancel, agent log, re-assign-missing |
-| Metadata quality warning (missing comments) | ❌ | |
+| Metadata quality warning (missing comments) | 🟡 | comments are captured; no warning surfaced yet |
 | R2RML generation | ✅ | |
 | R2RML import into the mapping spec | 🟡 | raw R2RML builds, but isn't lifted into `MappingSpec` |
 | Rule-based autodraft from PK/FK (no LLM) | ✅ | **not in OntoBricks** |
@@ -42,10 +42,10 @@ Legend: ✅ have · 🟡 partial · ❌ missing · ➖ not planned (UI-only or D
 | Capability | Status | Note |
 |---|---|---|
 | Build pipeline with per-step timings, run history, failure rollback | ✅ | |
-| Async builds (background task, progress, cancel, navigate away) | ❌ | builds run inside the request |
+| Async builds (background task, progress, cancel, navigate away) | ✅ | `BuildScheduler` |
 | Postgres triple store | ✅ | |
-| Delta view / table in the warehouse (two-layer model) | 🟡 | compiler emits the DDL; pipeline never runs it in Databricks |
-| Materialization modes (TABLE vs VIEW), Liquid Clustering / OPTIMIZE | ❌ | |
+| Delta view / table in the warehouse (two-layer model) | ✅ | `PublishConfig`; Databricks path verified with a fake connection only |
+| Materialization modes (TABLE vs VIEW), Liquid Clustering / OPTIMIZE | 🟡 | view/table modes; no clustering/OPTIMIZE |
 | Neo4j backend | ❌ | |
 | Lakebase `managed_synced`, Lakeflow jobs, UC Volumes storage | ➖ | Databricks-proprietary |
 | Freshness / last-updated indicator | 🟡 | build-run timestamps only |
@@ -94,19 +94,19 @@ Legend: ✅ have · 🟡 partial · ❌ missing · ➖ not planned (UI-only or D
 | Comments / discussion on a version | ❌ | |
 | My Tasks cross-domain worklist, readiness cockpit | ❌ | readiness is computable today |
 | Admin lock view, force unlock endpoint | 🟡 | `force=True` exists; no admin listing |
-| Authentication & roles (Builder / Reviewer / Admin) | ❌ | `X-Actor` is trusted — **must fix before any deployment** |
+| Authentication & roles (Builder / Reviewer / Admin) | ✅ | header or API-key modes; viewer/builder/reviewer/admin |
 | CSRF / secure cookies | ❌ | |
 | Global settings store (warehouse, TTL, branding, connections) | ❌ | env-only |
 | Lakehouse health / permission diagnostics | ❌ | |
 | OBX export/import: multi-version modes, conflict resolution | 🟡 | one version, rename only |
-| Structured JSON logging, request timing | ❌ | |
+| Structured JSON logging, request timing | ✅ | |
 | Databricks Apps / DAB packaging, Dockerfile | ❌ | |
 
 ## Rough coverage
 Backend-only surface (excluding UI and Databricks-proprietary items): roughly **half** done. Including UI: ~40%.
 
 ## Recommended order
-**P1 — foundations the rest depends on:** auth + roles · async builds · structured logging · run the Delta view/table DDL in Databricks · metadata snapshot + drift detection.
+**P1 — foundations the rest depends on:** ~~auth + roles · async builds · structured logging · run the Delta view/table DDL in Databricks · metadata snapshot + drift detection~~ — **done 2026-09-20**.
 **P2 — parity on the core:** property characteristics & axioms → OWL RL · SWRL (parse + compile to SQL on the existing compiler) · user-authored SHACL compiled to SQL · quality checks · community detection + centralities · relationship direction · mapping completeness/exclusions · MCP parity + HTTP transport · comments · active-version pinning.
 **P3 — ecosystem:** industry ontologies (licence check each) · Neo4j · cohorts · bridges · datasets · SQL-function actions/virtual attributes · D2KLab pitfalls · AI interpretation · richer bundles · Databricks Apps packaging.
 **Skip:** OntoViz/sigma UI (own UI later), dashboards, Lakebase sync, Lakeflow analytics, UC Volumes, branding.

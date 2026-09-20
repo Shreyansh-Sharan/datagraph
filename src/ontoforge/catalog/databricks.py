@@ -17,13 +17,25 @@ _COLUMNS_SQL = (
 )
 
 
+_DETAILS_SQL = (
+    "SELECT column_name, full_data_type, comment FROM system.information_schema.columns "
+    "WHERE table_catalog = ? AND table_schema = ? AND table_name = ? ORDER BY ordinal_position"
+)
+
+
 class DatabricksCatalog(CatalogAdapter):
     def __init__(self, run_query: QueryRunner, default_catalog: str | None = None,
                  default_schema: str | None = None) -> None:
         self.run_query = run_query
         self.default_catalog, self.default_schema = default_catalog, default_schema
 
+    def column_details(self, table: str) -> list[dict]:
+        return [{"name": n, "type": t, "comment": c} for n, t, c in self.run_query(_DETAILS_SQL, self._parts(table))]
+
     def column_types(self, table: str) -> dict[str, str]:
+        return {name: sql_type for name, sql_type in self.run_query(_COLUMNS_SQL, self._parts(table))}
+
+    def _parts(self, table: str) -> tuple:
         parts = list(validate_table(table))
         if len(parts) == 1:
             parts = [self.default_schema, *parts]
@@ -31,4 +43,4 @@ class DatabricksCatalog(CatalogAdapter):
             parts = [self.default_catalog, *parts]
         if any(p is None for p in parts):
             raise IdentifierError(f"{table!r} needs catalog and schema (none configured as defaults)")
-        return {name: sql_type for name, sql_type in self.run_query(_COLUMNS_SQL, tuple(parts))}
+        return tuple(parts)

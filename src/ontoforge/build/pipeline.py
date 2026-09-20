@@ -50,9 +50,10 @@ class BuildCancelled(Exception):
 
 class BuildPipeline:
     def __init__(self, registry: Registry, store: TripleStore, source: SourceEngine,
-                 publish: PublishConfig | None = None) -> None:
+                 publish: PublishConfig | None = None, metadata=None) -> None:
         self.registry, self.store, self.source = registry, store, source
         self.publish = publish if publish and publish.enabled else None
+        self.metadata = metadata  # MetadataService, optional: adds a non-blocking drift step
 
     def run(self, version_id: UUID, *, actor: str | None = None, run: BuildRun | None = None,
             cancel_check: Callable[[], bool] | None = None) -> BuildRun:
@@ -79,6 +80,13 @@ class BuildPipeline:
                 compiled = compile_mapping(r2rml, self.source.dialect, column_types=self.source.catalog.resolver())
                 self.registry.store_r2rml(version_id, serialize_r2rml(r2rml))
                 steps[-1]["detail"] = {"selects": len(compiled.selects)}
+            if self.metadata is not None:
+                with step("drift"):
+                    from dataclasses import asdict
+                    issues = [asdict(i) for i in self.metadata.drift(version_id)]
+                    steps[-1]["detail"] = {"issues": issues}
+                    if issues:
+                        log.warning("schema drift: %d issue(s)", len(issues), extra={"event": "build.drift", "issues": issues, **ctx})
             with step("prepare"):
                 self._prepare()
             load_sql = compiled.sql

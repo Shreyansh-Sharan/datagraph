@@ -18,13 +18,21 @@ TableMeta = dict
 
 
 def describe_tables(catalog: CatalogAdapter, tables: list[str] | None = None, schema: str | None = None,
-                    sample_rows: Callable[[str], list[tuple]] | None = None) -> list[TableMeta]:
-    """Catalog metadata in the shape the prompts expect."""
+                    sample_rows: Callable[[str], list[tuple]] | None = None, snapshots: dict | None = None) -> list[TableMeta]:
+    """Catalog metadata in the shape the prompts expect. A version's snapshots win over the live
+    catalog when present: they carry the comments users wrote."""
     out = []
-    for t in (tables if tables is not None else catalog.list_tables(schema)):
+    snapshots = snapshots or {}
+    for t in (tables if tables is not None else (list(snapshots) or catalog.list_tables(schema))):
+        snap = snapshots.get(t)
+        if snap is not None:
+            out.append({"table": t, "comment": snap.comment, "columns": snap.columns, "primary_key": snap.primary_key,
+                        "foreign_keys": snap.foreign_keys, "samples": [list(r) for r in (sample_rows(t) if sample_rows else [])]})
+            continue
         out.append({
             "table": t,
-            "columns": [{"name": n, "type": ty} for n, ty in catalog.column_types(t).items()],
+            "comment": catalog.table_comment(t),
+            "columns": catalog.column_details(t),
             "primary_key": list(catalog.primary_key(t)),
             "foreign_keys": [{"columns": list(c), "references": r, "referenced_columns": list(rc)} for c, r, rc in catalog.foreign_keys(t)],
             "samples": [list(r) for r in (sample_rows(t) if sample_rows else [])],

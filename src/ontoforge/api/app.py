@@ -13,6 +13,7 @@ from ontoforge.config import Settings, load_settings
 from ontoforge.db import Database, run_migrations
 from ontoforge.llm import AnthropicProvider, LLMOutputError, LLMProvider, LLMUnavailable
 from ontoforge.mapping import MappingSpecError
+from ontoforge.metadata import MetadataError, MetadataService
 from ontoforge.observability import RequestLoggingMiddleware, configure_logging
 from ontoforge.r2rml import MappingError
 from ontoforge.reasoning import Reasoner
@@ -22,7 +23,7 @@ from ontoforge.store import TripleStore
 from .routes import open_router, router
 
 _STATUS = {AuthError: 401, Forbidden: 403, NotFound: 404, LifecycleError: 409, LockedError: 423, LLMUnavailable: 503, LLMOutputError: 502,
-           MappingSpecError: 400, MappingError: 400, CompileError: 400, IdentifierError: 400, ValueError: 400}
+           MetadataError: 409, MappingSpecError: 400, MappingError: 400, CompileError: 400, IdentifierError: 400, ValueError: 400}
 
 
 def create_app(db: Database, source_db: Database | None = None, settings: Settings | None = None,
@@ -39,7 +40,9 @@ def create_app(db: Database, source_db: Database | None = None, settings: Settin
     app.state.source = _source_engine(settings, source_db or db)
     publish = PublishConfig(settings.warehouse_target_schema, settings.warehouse_materialization) \
         if settings.warehouse_target_schema else None
-    app.state.pipeline = BuildPipeline(app.state.registry, app.state.store, app.state.source, publish=publish)
+    app.state.metadata = MetadataService(app.state.registry, app.state.source.catalog, db)
+    app.state.pipeline = BuildPipeline(app.state.registry, app.state.store, app.state.source, publish=publish,
+                                       metadata=app.state.metadata)
     app.state.scheduler = BuildScheduler(app.state.pipeline, app.state.registry, workers=settings.build_workers)
     app.state.reasoner = Reasoner(app.state.registry, app.state.store)
     app.state.llm = llm

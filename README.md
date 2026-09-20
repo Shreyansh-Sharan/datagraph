@@ -42,9 +42,12 @@ catalog metadata ──autodraft / LLM──▶ Ontology (OWL 2) ──▶ Mappi
 | `llm/` | `LLMProvider` port (Anthropic first); draft ontology, suggest mapping, NL edits; output validated | ADR 0004 |
 | `registry/` | Domains, versions, DRAFT→IN_REVIEW→PUBLISHED, editor lease, reviews with quorum, build runs, audit log | — |
 | `store/` | Triple store on Postgres: COPY / INSERT-SELECT loads, search, describe, N-hop neighbourhood, inventories, inferred layer | — |
-| `build/` | `SourceEngine` port (Postgres, Databricks) + build pipeline with per-step timings and rollback on failure | — |
+| `build/` | `SourceEngine` port (Postgres, Databricks); pipeline with live step progress, drift check, optional publish of the triple view/table into the warehouse; background scheduler with cancellation | — |
 | `reasoning/` | OWL 2 RL closure (`owlrl`), SHACL validation (`pyshacl`) with shapes generated from the ontology | W3C OWL 2 RL, SHACL |
 | `graphql/` | GraphQL schema generated from the ontology, resolved against the store (`graphql-core`) | GraphQL spec |
+| `metadata.py` | Per-version snapshots of source tables (columns, keys, comments), refresh diffs, schema-drift detection | — |
+| `auth/` | Header or API-key authentication; roles viewer < builder < reviewer < admin | — |
+| `observability.py` | JSON/text logging, request ids, request timing, build events | — |
 | `api/` | FastAPI REST surface for all of the above | — |
 | `mcp/` | MCP server: `list_domains`, `describe_ontology`, `graph_status`, `search_entities`, `describe_entity`, `get_graphql_schema`, `query_graphql` | MCP spec |
 
@@ -68,10 +71,26 @@ One shared table, keyed by domain version:
 `/graphql` (+ `/graphql/schema`), `/catalog/tables`, `/autodraft`, `/llm/draft-ontology`,
 `/llm/suggest-mapping`, `/llm/assist`. Interactive docs at `/docs` when serving.
 
+## Operations
+
+- **Auth** — `ONTOFORGE_AUTH_MODE=header` trusts an identity header (default `X-Actor`; on Databricks
+  Apps use `X-Forwarded-Email`); `token` requires `Authorization: Bearer <key>` from `/admin/api-keys`.
+  Unknown principals get `ONTOFORGE_AUTH_DEFAULT_ROLE` (`viewer`). Roles: viewer < builder < reviewer < admin.
+- **Builds** run in the background: `POST /versions/{id}/builds` → 202, poll `GET /builds/{id}`,
+  `POST /builds/{id}/cancel`; `?wait=true` blocks. Steps (`compile`, `drift`, `prepare`, `publish`,
+  `load`, `finalize`) are recorded live.
+- **Publish into the warehouse** — `ONTOFORGE_WAREHOUSE_TARGET_SCHEMA=main.kg` +
+  `ONTOFORGE_WAREHOUSE_MATERIALIZATION=view|table` creates `<schema>.<domain>_v<n>_triples`
+  (and a `_mat` snapshot table) in the source warehouse before loading the store from it.
+- **Metadata** — `POST /versions/{id}/metadata/import` snapshots source tables; `/refresh` diffs the
+  catalog; `GET /versions/{id}/mapping/drift` lists dropped/renamed/retyped columns the mapping relies on.
+- **Logs** — `ONTOFORGE_LOG_FORMAT=json` for one JSON object per line; every response carries `X-Request-ID`.
+
 ## Not yet
 
-Named graphs (`rr:graphMap`), `rr:inverseExpression`, relative-IRI templates; asynchronous builds
-(builds run inside the request today); community detection / cohorts; a UI.
+Named graphs (`rr:graphMap`), `rr:inverseExpression`, relative-IRI templates; SWRL, OWL property
+characteristics/axioms, user-authored SHACL; community detection / centralities / cohorts; a UI.
+See [docs/GAP-ANALYSIS.md](docs/GAP-ANALYSIS.md).
 
 ## Provenance
 

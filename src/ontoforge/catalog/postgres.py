@@ -30,7 +30,15 @@ ORDER BY con.contype, con.conname
 
 # ontoforge's own tables are never mapping sources, even when registry and data share a schema.
 INTERNAL_TABLES = frozenset({"schema_migrations", "domains", "domain_versions", "reviews", "build_runs", "audit_log", "triples",
-                             "principals", "api_keys"})
+                             "principals", "api_keys", "metadata_snapshots"})
+
+_DETAILS_SQL = """
+SELECT c.column_name, c.data_type,
+       col_description(format('%%I.%%I', c.table_schema, c.table_name)::regclass, c.ordinal_position)
+FROM information_schema.columns c
+WHERE c.table_schema = coalesce(%s::text, current_schema()) AND c.table_name = %s::text
+ORDER BY c.ordinal_position
+"""
 
 
 class PostgresCatalog(CatalogAdapter):
@@ -44,6 +52,24 @@ class PostgresCatalog(CatalogAdapter):
         schema, name = (parts if len(parts) == 2 else (self.default_schema, parts[0]))
         with self.db.transaction() as cur:
             return {col: typ for col, typ in cur.execute(_COLUMNS_SQL, (schema, name))}
+
+    def column_details(self, table: str) -> list[dict]:
+        schema, name = self._split(table)
+        with self.db.transaction() as cur:
+            return [{"name": n, "type": t, "comment": c} for n, t, c in cur.execute(_DETAILS_SQL, (schema, name))]
+
+    def table_comment(self, table: str) -> str | None:
+        schema, name = self._split(table)
+        with self.db.transaction() as cur:
+            row = cur.execute("SELECT obj_description(format('%%I.%%I', coalesce(%s::text, current_schema()), %s::text)::regclass, 'pg_class')",
+                              (schema, name)).fetchone()
+        return row[0] if row else None
+
+    def _split(self, table: str) -> tuple[str | None, str]:
+        parts = validate_table(table)
+        if len(parts) == 3:
+            raise IdentifierError(f"{table!r}: Postgres tables are schema.table (database is the connection)")
+        return parts if len(parts) == 2 else (self.default_schema, parts[0])
 
     def primary_key(self, table: str) -> tuple[str, ...]:
         return next((tuple(cols) for t, _, cols, *_ in self._keys(table) if t == "p"), ())

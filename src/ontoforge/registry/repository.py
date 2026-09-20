@@ -116,6 +116,15 @@ class Registry:
             self._audit(cur, version_id, actor, "content.updated", {"fields": changed})
             return _version(row)
 
+    def assert_editable(self, version_id: UUID, actor: str) -> DomainVersion:
+        """Raise unless the version is a draft the actor may edit (status + lease rules)."""
+        with self._cur() as cur:
+            row = self._lock_version(cur, version_id, lock=False)
+            if row["status"] != Status.DRAFT.value:
+                raise LifecycleError("Only draft versions can be edited")
+            self._check_lease(row, actor)
+            return _version(row)
+
     def store_r2rml(self, version_id: UUID, r2rml_ttl: str) -> None:
         """Persist the compiled R2RML (derived data; allowed in any status, not an edit)."""
         with self._cur() as cur:

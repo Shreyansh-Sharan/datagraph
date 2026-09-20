@@ -87,6 +87,15 @@ class AssistIn(BaseModel):
     instruction: str
 
 
+class MetadataImportIn(BaseModel):
+    tables: list[str]
+    schema_name: str | None = None
+
+
+class CommentIn(BaseModel):
+    comment: str | None
+
+
 class AutodraftIn(BaseModel):
     ontology_iri: str
     tables: list[str] | None = None
@@ -410,6 +419,46 @@ def autodraft(version_id: UUID, body: AutodraftIn, request: Request, me: Princip
             "relations": len(spec.relations), "issues": onto.check()}
 
 
+# -- metadata --------------------------------------------------------------------
+
+@router.post("/versions/{version_id}/metadata/import")
+def metadata_import(version_id: UUID, body: MetadataImportIn, request: Request, me: Principal = Depends(builder)):
+    _st(request).metadata.import_tables(version_id, body.tables, actor=me.name, schema=body.schema_name)
+    return _st(request).metadata.list(version_id)
+
+
+@router.get("/versions/{version_id}/metadata")
+def metadata_list(version_id: UUID, request: Request):
+    return _st(request).metadata.list(version_id)
+
+
+@router.post("/versions/{version_id}/metadata/refresh")
+def metadata_refresh(version_id: UUID, request: Request, me: Principal = Depends(builder)):
+    return _st(request).metadata.refresh(version_id, actor=me.name)
+
+
+@router.put("/versions/{version_id}/metadata/{table}/columns/{column}")
+def metadata_column_comment(version_id: UUID, table: str, column: str, body: CommentIn, request: Request,
+                            me: Principal = Depends(builder)):
+    return _st(request).metadata.set_comment(version_id, table, column, body.comment, actor=me.name)
+
+
+@router.put("/versions/{version_id}/metadata/{table}")
+def metadata_table_comment(version_id: UUID, table: str, body: CommentIn, request: Request, me: Principal = Depends(builder)):
+    return _st(request).metadata.set_comment(version_id, table, None, body.comment, actor=me.name)
+
+
+@router.delete("/versions/{version_id}/metadata/{table}", status_code=204)
+def metadata_remove(version_id: UUID, table: str, request: Request, me: Principal = Depends(builder)):
+    _st(request).metadata.remove(version_id, table, actor=me.name)
+    return Response(status_code=204)
+
+
+@router.get("/versions/{version_id}/mapping/drift")
+def mapping_drift(version_id: UUID, request: Request):
+    return _st(request).metadata.drift(version_id)
+
+
 # -- llm -------------------------------------------------------------------------
 
 def _llm(request: Request):
@@ -419,9 +468,10 @@ def _llm(request: Request):
     return llm
 
 
-def _tables(request: Request, tables: list[str] | None, schema: str | None) -> list[dict]:
-    cat = _st(request).source.catalog
-    return describe_tables(cat, tables, schema, sample_rows=lambda t: _samples(request, t))
+def _tables(request: Request, tables: list[str] | None, schema: str | None, version_id: UUID | None = None) -> list[dict]:
+    st = _st(request)
+    snapshots = {s.table: s for s in st.metadata.list(version_id)} if version_id else {}
+    return describe_tables(st.source.catalog, tables, schema, sample_rows=lambda t: _samples(request, t), snapshots=snapshots)
 
 
 def _samples(request: Request, table: str, n: int = 3) -> list[tuple]:
@@ -434,7 +484,7 @@ def _samples(request: Request, table: str, n: int = 3) -> list[tuple]:
 
 @router.post("/versions/{version_id}/llm/draft-ontology")
 def llm_draft_ontology(version_id: UUID, body: DraftOntologyIn, request: Request, me: Principal = Depends(builder)):
-    onto = OntologyDrafter(_llm(request)).draft(body.ontology_iri, _tables(request, body.tables, body.schema_name), body.description)
+    onto = OntologyDrafter(_llm(request)).draft(body.ontology_iri, _tables(request, body.tables, body.schema_name, version_id), body.description)
     _st(request).registry.update_content(version_id, actor=me.name, ontology_ttl=onto.to_turtle())
     return _ontology_summary_json(onto)
 
@@ -444,7 +494,7 @@ def llm_suggest_mapping(version_id: UUID, body: SuggestMappingIn, request: Reque
     st = _st(request)
     version = st.registry.get_version(version_id)
     domain = st.registry.get_domain_by_id(version.domain_id)
-    spec = MappingSuggester(_llm(request)).suggest(_ontology(request, version_id), _tables(request, body.tables, body.schema_name), domain.base_iri)
+    spec = MappingSuggester(_llm(request)).suggest(_ontology(request, version_id), _tables(request, body.tables, body.schema_name, version_id), domain.base_iri)
     st.registry.update_content(version_id, actor=me.name, mapping=spec.to_dict())
     return {"classes": len(spec.classes), "relations": len(spec.relations), "mapping": spec.to_dict()}
 
