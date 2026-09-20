@@ -147,9 +147,10 @@ dialog h2 { margin-top: 0; }
 .stage-legend .swatch { display: inline-flex; align-items: center; gap: 6px; }
 .stage-legend .swatch i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 .stage-status { position: absolute; right: var(--s2); bottom: var(--s2); font-size: 12px; color: var(--muted); z-index: 2; }
-.explore .searchbar { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; }
-.explore .searchbar input[type="search"] { min-width: 260px; }
-.explore .searchbar select { width: auto; }
+.searchbar { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; }
+.searchbar input[type="search"], .searchbar input[type="text"] { min-width: 220px; flex: 1; }
+.searchbar select { width: auto; }
+.page-head .searchbar { justify-content: flex-end; }
 .explore .results { margin-bottom: var(--s3); }
 .hits { list-style: none; margin: 0; padding: 0; display: flex; gap: var(--s2); flex-wrap: wrap; }
 .hit { border: 1px solid var(--border); background: var(--surface); border-radius: 999px; padding: 4px 10px; font-size: 13px; gap: 8px; }
@@ -193,5 +194,4 @@ dialog h2 { margin-top: 0; }
 .chips .chip { cursor: pointer; }
 .chips .chip.collapsed { border-style: dashed; opacity: .8; }
 .chips .chip i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
-.explore .searchbar .check { gap: 4px; }
-.explore .searchbar select { width: auto; }
+.searchbar .check { gap: 4px; }

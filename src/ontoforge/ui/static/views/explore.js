@@ -109,6 +109,6 @@ export async function exploreTab(ctx) {
   async function bridges(iri) { try { const b = await api.get(`/versions/${vid}/graph/entity/bridges${qs({ iri })}`);
     dialog("Bridges", table([{ label: "Domain", key: "domain" }, { label: "Entity", render: x => x.error ? badge(x.error, "error") : h("a", { href: `#/d/${encodeURIComponent(x.domain)}/explore/${encodeURIComponent(x.iri)}` }, x.label || local(x.iri)) }, { label: "Exists", render: x => x.exists ? badge("yes", "ok") : badge("no", "neutral") }], b), { confirm: "Close", cancel: "Dismiss" }); } catch (e) { errorToast(e); } }
 
-  if (current) show(current); else { overview(); search(true); }
+  if (current) show(current); else overview();
   return root;
 }
