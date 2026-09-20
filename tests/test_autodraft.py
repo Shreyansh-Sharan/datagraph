@@ -1,0 +1,47 @@
+"""Draft an ontology + mapping from catalog metadata alone (PK/FK heuristics, no LLM)."""
+from ontoforge.autodraft import draft_from_catalog
+from ontoforge.build import BuildPipeline, PostgresSource
+from ontoforge.catalog import PostgresCatalog
+from ontoforge.registry import Registry
+from ontoforge.store import TripleStore
+from tests.hr_fixture import seed_tables
+
+
+def test_catalog_exposes_keys(db):
+    seed_tables(db)
+    cat = PostgresCatalog(db)
+    assert cat.primary_key("employees") == ("empno",)
+    fks = cat.foreign_keys("employees")
+    assert (("deptno",), "departments", ("deptno",)) in fks and (("manager",), "employees", ("empno",)) in fks
+    assert set(cat.list_tables()) == {"departments", "employees", "employee_skills", "collaborations"}
+
+
+def test_draft_builds_classes_properties_and_relations(db):
+    seed_tables(db)
+    onto, spec = draft_from_catalog(PostgresCatalog(db), ontology_iri="http://d/hr", base_iri="http://d/hr/")
+    names = {onto.local_name(c) for c in onto.classes}
+    assert names == {"Department", "Employee", "EmployeeSkill"}          # collaborations is a pure link table
+    emp = "http://d/hr#Employee"
+    dprops = {onto.local_name(p.iri): p.range for p in onto.datatype_properties.values() if p.domain == emp}
+    assert dprops["ename"].endswith("#string") and dprops["sal"].endswith("#decimal") and dprops["hired"].endswith("#date")
+    assert "deptno" not in dprops and "manager" not in dprops                # FK columns become relations, not attributes
+    oprops = {onto.local_name(p.iri): (p.domain, p.range) for p in onto.object_properties.values()}
+    assert oprops["department"] == (emp, "http://d/hr#Department")
+    assert oprops["manager"] == (emp, emp)
+    assert oprops.get("collaboration") == (emp, emp)
+    rel_props = {onto.local_name(r.property_iri) for r in spec.relations}
+    assert {"department", "manager", "employee"} <= rel_props           # employee_skills -> employees FK too
+
+
+def test_draft_is_buildable_end_to_end(db):
+    seed_tables(db)
+    onto, spec = draft_from_catalog(PostgresCatalog(db), ontology_iri="http://d/hr", base_iri="http://d/hr/")
+    assert not [i for i in onto.check() if i.severity == "error"]
+    reg = Registry(db)
+    v = reg.create_version(reg.create_domain("hr", base_iri="http://d/hr/").id, actor="a")
+    reg.update_content(v.id, actor="a", ontology_ttl=onto.to_turtle(), mapping=spec.to_dict())
+    store = TripleStore(db)
+    run = BuildPipeline(reg, store, PostgresSource(db)).run(v.id)
+    assert run.status == "succeeded", run.error
+    inv = dict(store.type_inventory(v.id))
+    assert inv["http://d/hr#Employee"] == 4 and inv["http://d/hr#Department"] == 2 and inv["http://d/hr#EmployeeSkill"] == 3

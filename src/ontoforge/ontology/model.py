@@ -102,8 +102,11 @@ class Ontology:
     def descendants(self, class_iri: str) -> tuple[str, ...]:
         return tuple(c.iri for c in self.classes.values() if class_iri in self.ancestors(c.iri))
 
-    def properties_of(self, class_iri: str) -> list[ObjectProperty | DatatypeProperty]:
+    def properties_of(self, class_iri: str, include_global: bool = True) -> list[ObjectProperty | DatatypeProperty]:
+        """Properties whose domain is the class or an ancestor; domain-less properties apply everywhere."""
         scope = {class_iri, *self.ancestors(class_iri)}
+        if include_global:
+            scope.add(None)
         return [p for p in (*self.object_properties.values(), *self.datatype_properties.values()) if p.domain in scope]
 
     def all_properties(self) -> Iterator[ObjectProperty | DatatypeProperty]:

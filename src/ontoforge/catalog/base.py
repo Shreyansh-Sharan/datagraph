@@ -16,6 +16,16 @@ class CatalogAdapter(ABC):
     def column_types(self, table: str) -> dict[str, str]:
         """Column name -> SQL type name for a (possibly dotted) table name."""
 
+    def list_tables(self, schema: str | None = None) -> list[str]:
+        return []
+
+    def primary_key(self, table: str) -> tuple[str, ...]:
+        return ()
+
+    def foreign_keys(self, table: str) -> list[tuple[tuple[str, ...], str, tuple[str, ...]]]:
+        """[(local columns, referenced table, referenced columns)]."""
+        return []
+
     def resolver(self) -> ColumnTypeResolver:
         cache: dict[str, dict[str, str]] = {}
 

@@ -116,6 +116,12 @@ class Registry:
             self._audit(cur, version_id, actor, "content.updated", {"fields": changed})
             return _version(row)
 
+    def store_r2rml(self, version_id: UUID, r2rml_ttl: str) -> None:
+        """Persist the compiled R2RML (derived data; allowed in any status, not an edit)."""
+        with self._cur() as cur:
+            self._lock_version(cur, version_id)
+            cur.execute("UPDATE domain_versions SET r2rml_ttl = %s WHERE id = %s", (r2rml_ttl, version_id))
+
     # -- lease ---------------------------------------------------------------
 
     def acquire_lease(self, version_id: UUID, *, editor: str, ttl: timedelta, force: bool = False) -> DomainVersion:
