@@ -57,6 +57,7 @@ class DomainVersion:
     ontology_ttl: str | None
     mapping: dict | None
     r2rml_ttl: str | None
+    rules: dict | None
     editor: str | None
     lease_expires_at: datetime | None
     created_at: datetime

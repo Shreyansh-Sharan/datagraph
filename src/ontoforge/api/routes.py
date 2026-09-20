@@ -21,6 +21,7 @@ from ontoforge.mapping import MappingSpec
 from ontoforge.ontology import Ontology
 from ontoforge.r2rml import serialize_r2rml
 from ontoforge.reasoning import generate_shapes
+from ontoforge.rules import Rule, RuleEngine, RuleError, RuleSet
 from ontoforge.registry import DomainVersion, LifecycleError, NotFound, Status
 
 router = APIRouter(dependencies=[Depends(viewer)])   # every route needs an authenticated caller
@@ -34,7 +35,8 @@ def _st(request: Request):
 def _version_json(v: DomainVersion) -> dict:
     d = asdict(v)
     d["has_ontology"], d["has_mapping"], d["has_r2rml"] = bool(v.ontology_ttl), bool(v.mapping), bool(v.r2rml_ttl)
-    for k in ("ontology_ttl", "mapping", "r2rml_ttl"):
+    d["rule_count"] = len((v.rules or {}).get("rules", []))
+    for k in ("ontology_ttl", "mapping", "r2rml_ttl", "rules"):
         d.pop(k)
     return d
 
@@ -85,6 +87,17 @@ class SuggestMappingIn(BaseModel):
 
 class AssistIn(BaseModel):
     instruction: str
+
+
+class RuleIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    text: str
+    mode: str = "materialize"
+    enabled: bool = True
+
+
+class RulesIn(BaseModel):
+    rules: list[RuleIn]
 
 
 class MetadataImportIn(BaseModel):
@@ -417,6 +430,37 @@ def autodraft(version_id: UUID, body: AutodraftIn, request: Request, me: Princip
     st.registry.update_content(version_id, actor=me.name, ontology_ttl=onto.to_turtle(), mapping=spec.to_dict())
     return {"classes": len(onto.classes), "properties": len(onto.datatype_properties) + len(onto.object_properties),
             "relations": len(spec.relations), "issues": onto.check()}
+
+
+# -- rules -----------------------------------------------------------------------
+
+@router.put("/versions/{version_id}/rules")
+def put_rules(version_id: UUID, body: RulesIn, request: Request, me: Principal = Depends(builder)):
+    onto = _ontology(request, version_id)
+    rs = RuleSet(Rule.from_text(r.text, onto, r.name, r.mode, r.enabled) for r in body.rules)
+    _st(request).registry.update_content(version_id, actor=me.name, rules=rs.to_dict())
+    return rs.to_dict()
+
+
+@router.get("/versions/{version_id}/rules")
+def get_rules(version_id: UUID, request: Request):
+    return _st(request).registry.get_version(version_id).rules or {"rules": []}
+
+
+@router.get("/versions/{version_id}/rules/sql")
+def rules_sql(version_id: UUID, request: Request):
+    rs = RuleSet.from_dict(_st(request).registry.get_version(version_id).rules)
+    parts = []
+    for r in rs.rules:
+        parts.append(f"-- {r.name} ({r.mode}{'' if r.enabled else ', disabled'})\n" +
+                     ("\n".join(RuleEngine.compile_insert(r, version_id)) if r.mode == "materialize" else RuleEngine.compile_select(r, version_id)))
+    return PlainTextResponse("\n\n".join(parts), media_type="text/plain")
+
+
+@router.post("/versions/{version_id}/reasoning/rules")
+def run_rules(version_id: UUID, request: Request, me: Principal = Depends(builder)):
+    st = _st(request)
+    return RuleEngine(st.registry, st.store).run(version_id)
 
 
 # -- metadata --------------------------------------------------------------------
