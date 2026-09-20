@@ -28,6 +28,10 @@ class SourceEngine(ABC):
     def query(self, sql: str, limit: int = 100) -> tuple[list[str], list[tuple]]:
         """Run a SELECT with a row cap; returns (column names, rows)."""
 
+    @abstractmethod
+    def query_params(self, sql: str, params: dict, limit: int = 100) -> tuple[list[str], list[tuple]]:
+        """Run a SELECT with ``:name`` placeholders bound from ``params`` and a row cap."""
+
     @staticmethod
     def guard_select(sql: str) -> str:
         sql = sql.strip().rstrip(";").strip()
@@ -65,4 +69,11 @@ class PostgresSource(SourceEngine):
     def query(self, sql: str, limit: int = 100) -> tuple[list[str], list[tuple]]:
         with self.db.transaction() as cur:
             cur.execute(f"SELECT * FROM ({self.guard_select(sql)}) preview LIMIT {int(limit)}")
+            return [d.name for d in cur.description], cur.fetchall()
+
+    def query_params(self, sql: str, params: dict, limit: int = 100) -> tuple[list[str], list[tuple]]:
+        import re
+        bound = re.sub(r"(?<![:\w]):([A-Za-z_]\w*)", r"%(\1)s", self.guard_select(sql))
+        with self.db.transaction() as cur:
+            cur.execute(f"SELECT * FROM ({bound}) preview LIMIT {int(limit)}", params)
             return [d.name for d in cur.description], cur.fetchall()

@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from ontoforge.auth import Principal, Role
 from ontoforge.auth.fastapi import admin, builder, reviewer, viewer
+from ontoforge.attachments import AttachmentError, Attachments
 from ontoforge.autodraft import draft_from_catalog
 from ontoforge.bundle import export_bundle, import_bundle
 from ontoforge.compiler import compile_mapping
@@ -507,10 +508,53 @@ def graph_search(version_id: UUID, request: Request, q: str = Query(default=""),
 
 @router.get("/versions/{version_id}/graph/entity")
 def graph_entity(version_id: UUID, request: Request, iri: str):
-    detail = _st(request).store.describe(version_id, iri)
+    st = _st(request)
+    detail = st.store.describe(version_id, iri)
     if detail is None:
         raise NotFound(f"Entity {iri}")
-    return detail
+    summary = {"datasets": [], "actions": [], "virtual_attributes": []}
+    for t in detail.types:
+        info = st.attachments.for_class(version_id, t)
+        summary["datasets"] += [d["table"] for d in info["datasets"]]
+        summary["actions"] += [a["name"] for a in info["actions"]]
+        summary["virtual_attributes"] += info["virtual_attributes"]
+    return {**asdict(detail), "attachments": {k: sorted(v) for k, v in summary.items()}}
+
+
+@router.get("/versions/{version_id}/graph/entity/virtual")
+def entity_virtual(version_id: UUID, request: Request, iri: str):
+    return _st(request).attachments.compute_virtual(version_id, iri)
+
+
+@router.post("/versions/{version_id}/graph/entity/actions/{name}")
+def entity_action(version_id: UUID, name: str, request: Request, iri: str, me: Principal = Depends(viewer)):
+    try:
+        return _st(request).attachments.invoke(version_id, iri, name)
+    except AttachmentError as exc:
+        if "no action" in str(exc):
+            raise NotFound(str(exc))
+        raise
+
+
+@router.get("/versions/{version_id}/graph/entity/datasets")
+def entity_datasets(version_id: UUID, request: Request, iri: str, limit: int = Query(default=50, ge=1, le=500)):
+    return _st(request).attachments.dataset_rows(version_id, iri, limit)
+
+
+@router.put("/versions/{version_id}/attachments")
+def put_attachments(version_id: UUID, body: dict, request: Request, me: Principal = Depends(builder)):
+    att = Attachments.from_dict(body)
+    onto = _ontology(request, version_id)
+    unknown = [c for c in att.classes() if c not in onto.classes]
+    if unknown:
+        raise AttachmentError(f"Unknown class(es): {', '.join(sorted(unknown))}")
+    _st(request).registry.update_content(version_id, actor=me.name, attachments=att.to_dict())
+    return att.to_dict()
+
+
+@router.get("/versions/{version_id}/attachments")
+def get_attachments(version_id: UUID, request: Request):
+    return _st(request).registry.get_version(version_id).attachments or Attachments().to_dict()
 
 
 @router.get("/versions/{version_id}/graph/neighbourhood")

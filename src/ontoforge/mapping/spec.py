@@ -8,7 +8,9 @@ plain projection instead of a join.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, asdict
+from urllib.parse import unquote
 
 from ontoforge.compiler.template import ColumnRef, parse_template
 from ontoforge.ontology.model import Ontology
@@ -104,6 +106,21 @@ class MappingSpec:
                     predicate_object_maps=(PredicateObjectMap((TermMap(TermKind.IRI, constant=r.property_iri),),
                                                               (TermMap(TermKind.IRI, template=o_tpl),)),))
         return mapping
+
+    def key_values_from_iri(self, class_iri: str, iri: str) -> dict[str, str] | None:
+        """Invert a class's subject template: entity IRI -> {key column: value}, or None if no match."""
+        cm = next((c for c in self.classes if c.class_iri == class_iri), None)
+        if cm is None:
+            return None
+        pattern, names = "^", []
+        for part in parse_template(self.subject_template(cm)):
+            if isinstance(part, ColumnRef):
+                pattern += "(.+?)"
+                names.append(part.name)
+            else:
+                pattern += re.escape(part)
+        m = re.match(pattern + "$", iri)
+        return {n: unquote(v) for n, v in zip(names, m.groups())} if m else None
 
     def subject_template(self, c: ClassMapping) -> str:
         if c.iri_template:

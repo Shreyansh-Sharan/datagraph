@@ -90,10 +90,10 @@ Legend: ✅ have · 🟡 partial · ❌ missing · ➖ not planned (UI-only or D
 | Capability | Status | Note |
 |---|---|---|
 | Versions, DRAFT→IN_REVIEW→PUBLISHED, quorum, lease, audit | ✅ | |
-| Active-version pinning (which version API/MCP serve) | ❌ | we serve latest published |
-| Comments / discussion on a version | ❌ | |
-| My Tasks cross-domain worklist, readiness cockpit | ❌ | readiness is computable today |
-| Admin lock view, force unlock endpoint | 🟡 | `force=True` exists; no admin listing |
+| Active-version pinning (which version API/MCP serve) | ✅ | `/domains/{name}/active` |
+| Comments / discussion on a version | ✅ | |
+| My Tasks cross-domain worklist, readiness cockpit | ✅ | `/tasks`, MCP `get_design_status` |
+| Admin lock view, force unlock endpoint | ✅ | `/admin/locks` |
 | Authentication & roles (Builder / Reviewer / Admin) | ✅ | header or API-key modes; viewer/builder/reviewer/admin |
 | CSRF / secure cookies | ❌ | |
 | Global settings store (warehouse, TTL, branding, connections) | ❌ | env-only |
@@ -107,6 +107,6 @@ Backend-only surface (excluding UI and Databricks-proprietary items): roughly **
 
 ## Recommended order
 **P1 — foundations the rest depends on:** ~~auth + roles · async builds · structured logging · run the Delta view/table DDL in Databricks · metadata snapshot + drift detection~~ — **done 2026-09-20**.
-**P2 — parity on the core:** property characteristics & axioms → OWL RL · SWRL (parse + compile to SQL on the existing compiler) · user-authored SHACL compiled to SQL · quality checks · community detection + centralities · relationship direction · mapping completeness/exclusions · MCP parity + HTTP transport · comments · active-version pinning.
+**P2 — parity on the core:** ~~property characteristics & axioms → OWL RL · SWRL · user-authored SHACL compiled to SQL · quality checks · community detection + centralities · relationship direction · mapping completeness/exclusions · MCP parity + HTTP transport · comments · active-version pinning~~ — **done 2026-09-20**.
 **P3 — ecosystem:** industry ontologies (licence check each) · Neo4j · cohorts · bridges · datasets · SQL-function actions/virtual attributes · D2KLab pitfalls · AI interpretation · richer bundles · Databricks Apps packaging.
 **Skip:** OntoViz/sigma UI (own UI later), dashboards, Lakebase sync, Lakeflow analytics, UC Volumes, branding.

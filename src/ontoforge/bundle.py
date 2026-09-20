@@ -19,7 +19,7 @@ def export_bundle(registry: Registry, domain_name: str, version_id: UUID | None 
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "domain": {"name": d.name, "description": d.description, "base_iri": d.base_iri, "review_quorum": d.review_quorum},
         "version": {"number": v.version, "status": v.status.value, "ontology_ttl": v.ontology_ttl,
-                    "mapping": v.mapping, "r2rml_ttl": v.r2rml_ttl, "rules": v.rules, "quality": v.quality},
+                    "mapping": v.mapping, "r2rml_ttl": v.r2rml_ttl, "rules": v.rules, "quality": v.quality, "attachments": v.attachments},
     }
 
 
@@ -36,4 +36,4 @@ def import_bundle(registry: Registry, bundle: dict, *, actor: str, name: str | N
                                         review_quorum=meta.get("review_quorum", 1))
     version = registry.create_version(domain.id, actor=actor)
     return registry.update_content(version.id, actor=actor, ontology_ttl=content.get("ontology_ttl"),
-                                   mapping=content.get("mapping"), r2rml_ttl=content.get("r2rml_ttl"), rules=content.get("rules"), quality=content.get("quality"))
+                                   mapping=content.get("mapping"), r2rml_ttl=content.get("r2rml_ttl"), rules=content.get("rules"), quality=content.get("quality"), attachments=content.get("attachments"))

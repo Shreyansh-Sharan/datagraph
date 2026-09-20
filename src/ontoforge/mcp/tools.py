@@ -20,8 +20,8 @@ from ontoforge.store import TripleStore
 
 
 class GraphTools:
-    def __init__(self, registry: Registry, store: TripleStore, metadata=None) -> None:
-        self.registry, self.store, self.metadata = registry, store, metadata
+    def __init__(self, registry: Registry, store: TripleStore, metadata=None, attachments=None) -> None:
+        self.registry, self.store, self.metadata, self.attachments = registry, store, metadata, attachments
         self.current: str | None = None   # domain selected with select_domain (per server instance)
 
     # -- domain resolution ------------------------------------------------------
@@ -153,7 +153,33 @@ class GraphTools:
                 "types": [{"type": t, "name": o.local_name(t), "instances": n} for t, n in self.store.type_inventory(v.id)],
                 "predicates": [{"predicate": p, "name": o.local_name(p), "triples": n} for p, n in self.store.predicate_inventory(v.id)]}
 
-    def get_entity_context(self, domain: str | None, entity: str) -> dict:
+    def compute_virtual_attributes(self, domain: str | None, entity: str) -> dict:
+        if msg := self._disabled("compute_virtual_attributes", domain):
+            return {"error": msg}
+        v = self._version(domain)
+        if v is None:
+            return {"error": self._unknown(domain)}
+        if self.attachments is None:
+            return {"error": "Attachments are not configured on this server"}
+        try:
+            return self.attachments.compute_virtual(v.id, entity)
+        except Exception as exc:  # noqa: BLE001 - surface to the LLM
+            return {"error": str(exc)}
+
+    def invoke_entity_action(self, domain: str | None, entity: str, action: str) -> dict:
+        if msg := self._disabled("invoke_entity_action", domain):
+            return {"error": msg}
+        v = self._version(domain)
+        if v is None:
+            return {"error": self._unknown(domain)}
+        if self.attachments is None:
+            return {"error": "Attachments are not configured on this server"}
+        try:
+            return self.attachments.invoke(v.id, entity, action)
+        except Exception as exc:  # noqa: BLE001
+            return {"error": str(exc)}
+
+    def get_entity_context(self, domain: str | None, entity: str, compute_virtual_attributes: bool = False) -> dict:
         if msg := self._disabled("get_entity_context", domain):
             return {"error": msg}
         v = self._version(domain)
@@ -172,11 +198,27 @@ class GraphTools:
             if cm:
                 source = {"table": cm.table, "sql_query": cm.sql_query, "key_columns": list(cm.key_columns),
                           "columns": {a.property_iri: a.column for a in cm.attributes}}
-        return {"iri": detail.iri, "label": detail.label, "types": list(detail.types), "source": source,
-                "degree": {"outgoing": len(detail.outgoing), "incoming": len(detail.incoming)},
-                "attributes": {a.predicate: a.value for a in detail.attributes},
-                "predicates_out": sorted({r.predicate for r in detail.outgoing}),
-                "predicates_in": sorted({r.predicate for r in detail.incoming})}
+        ctx = {"iri": detail.iri, "label": detail.label, "types": list(detail.types), "source": source,
+               "degree": {"outgoing": len(detail.outgoing), "incoming": len(detail.incoming)},
+               "attributes": {a.predicate: a.value for a in detail.attributes},
+               "predicates_out": sorted({r.predicate for r in detail.outgoing}),
+               "predicates_in": sorted({r.predicate for r in detail.incoming}),
+               "datasets": [], "actions": [], "virtual_attributes": []}
+        if self.attachments is not None:
+            for t in detail.types:
+                info = self.attachments.for_class(v.id, t)
+                ctx["actions"] += info["actions"]
+                ctx["virtual_attributes"] += info["virtual_attributes"]
+            try:
+                ctx["datasets"] = self.attachments.dataset_rows(v.id, detail.iri, limit=20)
+            except Exception:  # noqa: BLE001 - unmapped entity: no datasets
+                ctx["datasets"] = []
+            if compute_virtual_attributes and ctx["virtual_attributes"]:
+                try:
+                    ctx["virtual_attributes"] = self.attachments.compute_virtual(v.id, detail.iri)
+                except Exception as exc:  # noqa: BLE001
+                    ctx["virtual_attributes_error"] = str(exc)
+        return ctx
 
     def search_entities(self, domain: str | None, query: str, entity_type: str | None = None, limit: int = 10) -> list[dict]:
         if msg := self._disabled("search_entities", domain):

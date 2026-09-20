@@ -54,6 +54,15 @@ class DatabricksSource(SourceEngine):
         finally:
             conn.close()
 
+    def query_params(self, sql: str, params: dict, limit: int = 100) -> tuple[list[str], list[tuple]]:
+        conn = self.connect()   # databricks-sql-connector binds :name markers natively
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT * FROM ({self.guard_select(sql)}) preview LIMIT {int(limit)}", params)
+                return [d[0] for d in cur.description], [tuple(r) for r in cur.fetchall()]
+        finally:
+            conn.close()
+
     def _run_query(self, sql: str, params: tuple) -> list[tuple]:
         conn = self.connect()
         try:

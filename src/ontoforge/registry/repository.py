@@ -111,12 +111,13 @@ class Registry:
                 raise LifecycleError("A draft already exists for this domain")
             src = latest or {}
             row = cur.execute(
-                "INSERT INTO domain_versions (domain_id, version, status, ontology_ttl, mapping, r2rml_ttl, rules, quality) "
-                "VALUES (%s, %s, 'draft', %s, %s, %s, %s, %s) RETURNING *",
+                "INSERT INTO domain_versions (domain_id, version, status, ontology_ttl, mapping, r2rml_ttl, rules, quality, attachments) "
+                "VALUES (%s, %s, 'draft', %s, %s, %s, %s, %s, %s) RETURNING *",
                 (domain_id, (latest["version"] + 1) if latest else 1, src.get("ontology_ttl"),
                  Jsonb(src["mapping"]) if src.get("mapping") is not None else None, src.get("r2rml_ttl"),
                  Jsonb(src["rules"]) if src.get("rules") is not None else None,
-                 Jsonb(src["quality"]) if src.get("quality") is not None else None)).fetchone()
+                 Jsonb(src["quality"]) if src.get("quality") is not None else None,
+                 Jsonb(src["attachments"]) if src.get("attachments") is not None else None)).fetchone()
             self._audit(cur, row["id"], actor, "version.created", {"version": row["version"]})
             return _version(row)
 
@@ -139,7 +140,7 @@ class Registry:
 
     def update_content(self, version_id: UUID, *, actor: str, ontology_ttl: str | None = None,
                        mapping: dict | None = None, r2rml_ttl: str | None = None, rules: dict | None = None,
-                       quality: dict | None = None) -> DomainVersion:
+                       quality: dict | None = None, attachments: dict | None = None) -> DomainVersion:
         with self._cur() as cur:
             row = self._lock_version(cur, version_id)
             if row["status"] != Status.DRAFT.value:
@@ -147,10 +148,10 @@ class Registry:
             self._check_lease(row, actor)
             sets, params, changed = [], [], []
             for col, val in (("ontology_ttl", ontology_ttl), ("mapping", mapping), ("r2rml_ttl", r2rml_ttl), ("rules", rules),
-                             ("quality", quality)):
+                             ("quality", quality), ("attachments", attachments)):
                 if val is not None:
                     sets.append(f"{col} = %s")
-                    params.append(Jsonb(val) if col in ("mapping", "rules", "quality") else val)
+                    params.append(Jsonb(val) if col in ("mapping", "rules", "quality", "attachments") else val)
                     changed.append(col)
             if not sets:
                 return _version(row)

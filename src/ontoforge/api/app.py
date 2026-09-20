@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from starlette.datastructures import Headers
 
 from ontoforge.analytics import AnalyticsError, GraphAnalytics
+from ontoforge.attachments import AttachmentError, AttachmentService
 from ontoforge.auth import AuthError, Forbidden, Principals
 from ontoforge.auth.fastapi import principal_from_headers
 from ontoforge.build import BuildPipeline, BuildScheduler, DatabricksSource, PublishConfig, PostgresSource, SourceEngine, databricks_connect_factory
@@ -30,7 +31,7 @@ from ontoforge.store import TripleStore
 from .routes import open_router, router
 
 _STATUS = {AuthError: 401, Forbidden: 403, NotFound: 404, LifecycleError: 409, LockedError: 423, LLMUnavailable: 503, LLMOutputError: 502,
-           MetadataError: 409, RuleError: 400, QualityError: 400, AnalyticsError: 400, MappingSpecError: 400, MappingError: 400, CompileError: 400, IdentifierError: 400, ValueError: 400}
+           MetadataError: 409, RuleError: 400, QualityError: 400, AnalyticsError: 400, AttachmentError: 400, MappingSpecError: 400, MappingError: 400, CompileError: 400, IdentifierError: 400, ValueError: 400}
 
 
 def create_app(db: Database, source_db: Database | None = None, settings: Settings | None = None,
@@ -53,6 +54,7 @@ def create_app(db: Database, source_db: Database | None = None, settings: Settin
     app.state.scheduler = BuildScheduler(app.state.pipeline, app.state.registry, workers=settings.build_workers)
     app.state.reasoner = Reasoner(app.state.registry, app.state.store)
     app.state.analytics = GraphAnalytics(app.state.registry, app.state.store)
+    app.state.attachments = AttachmentService(app.state.registry, app.state.source)
     app.state.llm = llm
     mcp_app = _mcp_mount(app)
 
@@ -75,7 +77,7 @@ def create_app(db: Database, source_db: Database | None = None, settings: Settin
 
 def _mcp_mount(app: FastAPI):
     from mcp.server.transport_security import TransportSecuritySettings
-    tools = GraphTools(app.state.registry, app.state.store, app.state.metadata)
+    tools = GraphTools(app.state.registry, app.state.store, app.state.metadata, app.state.attachments)
     server = create_mcp_server(tools)
     app.state.mcp_server = server
     return server.streamable_http_app(streamable_http_path="/mcp", json_response=True, stateless_http=True,

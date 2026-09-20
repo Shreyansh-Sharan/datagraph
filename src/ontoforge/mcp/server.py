@@ -51,9 +51,18 @@ def create_mcp_server(tools: GraphTools, name: str = "ontoforge") -> MCPServer:
     def describe_entity(entity: str, domain: str | None = None, depth: int = 1) -> str:
         return tools.describe_entity(domain, entity, depth)
 
-    @server.tool(description="An entity's context: its source table and columns, degree, and predicate usage.")
-    def get_entity_context(entity: str, domain: str | None = None) -> dict:
-        return tools.get_entity_context(domain, entity)
+    @server.tool(description="An entity's context: source table, degree, linked datasets (with rows), the actions declared on "
+                             "its class and its virtual attributes (values when compute_virtual_attributes=true).")
+    def get_entity_context(entity: str, domain: str | None = None, compute_virtual_attributes: bool = False) -> dict:
+        return tools.get_entity_context(domain, entity, compute_virtual_attributes)
+
+    @server.tool(description="Compute an entity's virtual attributes live from the source (they are never stored in the graph).")
+    def compute_virtual_attributes(entity: str, domain: str | None = None) -> dict:
+        return tools.compute_virtual_attributes(domain, entity)
+
+    @server.tool(description="Run one of the actions declared on the entity's class; the entity id is the only input.")
+    def invoke_entity_action(entity: str, action: str, domain: str | None = None) -> dict:
+        return tools.invoke_entity_action(domain, entity, action)
 
     @server.tool(description="The GraphQL schema (SDL) generated from the domain's ontology.")
     def get_graphql_schema(domain: str | None = None) -> str:
