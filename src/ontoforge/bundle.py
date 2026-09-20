@@ -11,8 +11,7 @@ FORMAT = "ontoforge-bundle/1"
 
 def export_bundle(registry: Registry, domain_name: str, version_id: UUID | None = None) -> dict:
     d = registry.get_domain(domain_name)
-    v = registry.get_version(version_id) if version_id else \
-        registry.latest_version(d.id, status=Status.PUBLISHED) or registry.latest_version(d.id)
+    v = registry.get_version(version_id) if version_id else registry.served_version(d.id)
     if v is None:
         raise ValueError(f"Domain {domain_name!r} has no versions to export")
     return {

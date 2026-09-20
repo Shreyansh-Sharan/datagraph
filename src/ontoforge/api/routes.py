@@ -124,6 +124,14 @@ class TestSqlIn(BaseModel):
     limit: int = Field(default=20, ge=1, le=500)
 
 
+class VersionCommentIn(BaseModel):
+    body: str = Field(min_length=1)
+
+
+class ActiveIn(BaseModel):
+    version_id: UUID | None = None
+
+
 class McpPolicyIn(BaseModel):
     exposed: bool = True
     disabled_tools: list[str] = Field(default_factory=list)
@@ -222,6 +230,28 @@ def get_domain(name: str, request: Request):
 def delete_domain(name: str, request: Request, me: Principal = Depends(admin)):
     reg = _st(request).registry
     reg.delete_domain(reg.get_domain(name).id)
+    return Response(status_code=204)
+
+
+@router.post("/domains/{name}/active")
+def set_active(name: str, body: ActiveIn, request: Request, me: Principal = Depends(reviewer)):
+    reg = _st(request).registry
+    return reg.set_active_version(reg.get_domain(name).id, body.version_id, actor=me.name)
+
+
+@router.get("/tasks")
+def my_tasks(request: Request, me: Principal = Depends(viewer)):
+    return _st(request).registry.tasks_for(me.name)
+
+
+@router.get("/admin/locks")
+def admin_locks(request: Request, me: Principal = Depends(admin)):
+    return _st(request).registry.list_locks()
+
+
+@router.delete("/admin/locks/{version_id}", status_code=204)
+def admin_force_unlock(version_id: UUID, request: Request, me: Principal = Depends(admin)):
+    _st(request).registry.force_release(version_id, actor=me.name)
     return Response(status_code=204)
 
 
@@ -397,6 +427,16 @@ def add_review(version_id: UUID, body: ReviewIn, request: Request, me: Principal
 @router.get("/versions/{version_id}/reviews")
 def list_reviews(version_id: UUID, request: Request):
     return _st(request).registry.list_reviews(version_id)
+
+
+@router.post("/versions/{version_id}/comments", status_code=201)
+def add_comment(version_id: UUID, body: VersionCommentIn, request: Request, me: Principal = Depends(viewer)):
+    return _st(request).registry.add_comment(version_id, author=me.name, body=body.body)
+
+
+@router.get("/versions/{version_id}/comments")
+def list_comments(version_id: UUID, request: Request):
+    return _st(request).registry.list_comments(version_id)
 
 
 @router.get("/versions/{version_id}/audit")

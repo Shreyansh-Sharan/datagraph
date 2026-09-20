@@ -47,6 +47,7 @@ class Domain:
     review_quorum: int
     created_at: datetime
     mcp_policy: dict = field(default_factory=lambda: {"exposed": True})
+    active_version_id: UUID | None = None
 
     @property
     def mcp_exposed(self) -> bool:
@@ -95,6 +96,37 @@ class BuildRun:
     triple_count: int | None
     error: str | None
     steps: list
+
+
+@dataclass(frozen=True)
+class Comment:
+    id: int
+    domain_version_id: UUID
+    author: str
+    body: str
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class Task:
+    domain: str
+    version_id: UUID
+    version: int
+    status: Status
+    editor: str | None = None
+    approvals: int = 0
+    quorum: int = 1
+
+
+@dataclass(frozen=True)
+class Lock:
+    domain: str
+    version_id: UUID
+    version: int
+    status: Status
+    editor: str
+    lease_expires_at: datetime | None
+    stale: bool
 
 
 @dataclass(frozen=True)

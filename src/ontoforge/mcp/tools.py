@@ -40,7 +40,7 @@ class GraphTools:
         d = self._domain(domain)
         if d is None:
             return None
-        return self.registry.latest_version(d.id, status=Status.PUBLISHED) or self.registry.latest_version(d.id)
+        return self.registry.served_version(d.id)
 
     def _disabled(self, tool: str, domain: str | None) -> str | None:
         d = self._domain(domain)
@@ -100,8 +100,8 @@ class GraphTools:
         for d in self.registry.list_domains():
             if not d.mcp_exposed:
                 continue
-            published = self.registry.latest_version(d.id, status=Status.PUBLISHED)
-            v = published or self.registry.latest_version(d.id)
+            v = self.registry.served_version(d.id)
+            published = v if v and v.status is Status.PUBLISHED else None
             out.append({"name": d.name, "description": d.description, "base_iri": d.base_iri,
                         "published_version": published.version if published else None,
                         "version": v.version if v else None, "status": v.status.value if v else None,

@@ -12,7 +12,7 @@ from ontoforge.constants import MCP_REGISTRY_TOOLS, MCP_TOOLS
 from ontoforge.db import Database
 
 from .models import (
-    TRANSITIONS, AnalyticsRun, AuditEntry, BuildRun, Domain, DomainVersion, LifecycleError, LockedError, NotFound, Review, Status,
+    TRANSITIONS, AnalyticsRun, AuditEntry, Comment, Lock, Task, BuildRun, Domain, DomainVersion, LifecycleError, LockedError, NotFound, Review, Status,
 )
 
 
@@ -70,6 +70,29 @@ class Registry:
                 raise NotFound(f"Domain {domain_id}")
             self._audit(cur, None, None, "mcp_policy.updated", {"domain": str(domain_id), **clean})
             return Domain(**row)
+
+    def set_active_version(self, domain_id: UUID, version_id: UUID | None, *, actor: str | None = None) -> Domain:
+        with self._cur() as cur:
+            if version_id is not None:
+                row = self._lock_version(cur, version_id, lock=False)
+                if row["domain_id"] != domain_id:
+                    raise LifecycleError("Version belongs to another domain")
+                if row["status"] != Status.PUBLISHED.value:
+                    raise LifecycleError("Only published versions can be set active")
+            d = cur.execute("UPDATE domains SET active_version_id = %s WHERE id = %s RETURNING *", (version_id, domain_id)).fetchone()
+            if d is None:
+                raise NotFound(f"Domain {domain_id}")
+            self._audit(cur, version_id, actor, "version.activated" if version_id else "version.deactivated", {"domain": str(domain_id)})
+            return Domain(**d)
+
+    def served_version(self, domain_id: UUID) -> DomainVersion | None:
+        """What API/MCP serve: the pinned active version, else latest published, else latest of any status."""
+        d = self.get_domain_by_id(domain_id)
+        if d.active_version_id:
+            v = self.get_version(d.active_version_id)
+            if v.status is Status.PUBLISHED:
+                return v
+        return self.latest_version(domain_id, status=Status.PUBLISHED) or self.latest_version(domain_id)
 
     def delete_domain(self, domain_id: UUID) -> None:
         with self._cur() as cur:
@@ -192,6 +215,9 @@ class Registry:
                     raise LifecycleError("Another draft exists for this domain")
             row = cur.execute("UPDATE domain_versions SET status = %s, updated_at = now() WHERE id = %s RETURNING *",
                               (to.value, version_id)).fetchone()
+            if to is Status.ARCHIVED:
+                cur.execute("UPDATE domains SET active_version_id = NULL WHERE id = %s AND active_version_id = %s",
+                            (row["domain_id"], version_id))
             self._audit(cur, version_id, actor, f"status.{to.value}", {"from": current.value})
             return _version(row)
 
@@ -270,6 +296,62 @@ class Registry:
         with self._cur() as cur:
             return [BuildRun(**r) for r in cur.execute(
                 "SELECT * FROM build_runs WHERE domain_version_id = %s ORDER BY started_at DESC", (version_id,))]
+
+    # -- comments ------------------------------------------------------------
+
+    def add_comment(self, version_id: UUID, *, author: str, body: str) -> Comment:
+        if not body or not body.strip():
+            raise ValueError("Comment body is empty")
+        with self._cur() as cur:
+            self._lock_version(cur, version_id, lock=False)
+            row = cur.execute("INSERT INTO comments (domain_version_id, author, body) VALUES (%s, %s, %s) RETURNING *",
+                              (version_id, author, body.strip())).fetchone()
+            self._audit(cur, version_id, author, "comment.added", {"comment": row["id"]})
+            return Comment(**row)
+
+    def list_comments(self, version_id: UUID) -> list[Comment]:
+        with self._cur() as cur:
+            return [Comment(**r) for r in cur.execute("SELECT * FROM comments WHERE domain_version_id = %s ORDER BY id", (version_id,))]
+
+    # -- worklist & locks ----------------------------------------------------
+
+    def tasks_for(self, actor: str) -> dict[str, list[Task]]:
+        with self._cur() as cur:
+            rows = cur.execute(
+                "SELECT v.*, d.name AS domain, d.review_quorum FROM domain_versions v JOIN domains d ON d.id = v.domain_id "
+                "WHERE v.status IN ('draft', 'in_review') ORDER BY d.name, v.version").fetchall()
+            out: dict[str, list[Task]] = {"drafts": [], "to_review": [], "publishable": []}
+            for r in rows:
+                task = Task(r["domain"], r["id"], r["version"], Status(r["status"]), r["editor"], quorum=r["review_quorum"])
+                if r["status"] == Status.DRAFT.value:
+                    out["drafts"].append(task)
+                    continue
+                rnd = self._review_round(cur, r["id"])
+                reviewers = {x["reviewer"]: x["approved"] for x in cur.execute(
+                    "SELECT reviewer, approved FROM reviews WHERE domain_version_id = %s AND review_round = %s ORDER BY id",
+                    (r["id"], rnd))}
+                approvals = sum(1 for ok in reviewers.values() if ok)
+                task = Task(r["domain"], r["id"], r["version"], Status.IN_REVIEW, r["editor"], approvals, r["review_quorum"])
+                if actor not in reviewers:
+                    out["to_review"].append(task)
+                if approvals >= r["review_quorum"]:
+                    out["publishable"].append(task)
+            return out
+
+    def list_locks(self) -> list[Lock]:
+        with self._cur() as cur:
+            rows = cur.execute(
+                "SELECT v.id, v.version, v.status, v.editor, v.lease_expires_at, d.name AS domain FROM domain_versions v "
+                "JOIN domains d ON d.id = v.domain_id WHERE v.editor IS NOT NULL ORDER BY d.name, v.version").fetchall()
+        now = _now()
+        return [Lock(r["domain"], r["id"], r["version"], Status(r["status"]), r["editor"], r["lease_expires_at"],
+                     stale=bool(r["lease_expires_at"] and r["lease_expires_at"] <= now)) for r in rows]
+
+    def force_release(self, version_id: UUID, *, actor: str) -> None:
+        with self._cur() as cur:
+            row = self._lock_version(cur, version_id)
+            cur.execute("UPDATE domain_versions SET editor = NULL, lease_expires_at = NULL WHERE id = %s", (version_id,))
+            self._audit(cur, version_id, actor, "lease.released", {"forced": True, "previous": row["editor"]})
 
     # -- analytics runs ------------------------------------------------------
 
