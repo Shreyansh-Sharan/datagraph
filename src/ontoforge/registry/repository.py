@@ -11,7 +11,7 @@ from psycopg.types.json import Jsonb
 from ontoforge.db import Database
 
 from .models import (
-    TRANSITIONS, AuditEntry, BuildRun, Domain, DomainVersion, LifecycleError, LockedError, NotFound, Review, Status,
+    TRANSITIONS, AnalyticsRun, AuditEntry, BuildRun, Domain, DomainVersion, LifecycleError, LockedError, NotFound, Review, Status,
 )
 
 
@@ -253,6 +253,40 @@ class Registry:
         with self._cur() as cur:
             return [BuildRun(**r) for r in cur.execute(
                 "SELECT * FROM build_runs WHERE domain_version_id = %s ORDER BY started_at DESC", (version_id,))]
+
+    # -- analytics runs ------------------------------------------------------
+
+    def start_analytics(self, version_id: UUID, scope: str, *, actor: str | None = None) -> AnalyticsRun:
+        with self._cur() as cur:
+            self._lock_version(cur, version_id, lock=False)
+            row = cur.execute("INSERT INTO analytics_runs (domain_version_id, scope, status, actor) VALUES (%s, %s, 'running', %s) RETURNING *",
+                              (version_id, scope, actor)).fetchone()
+            return AnalyticsRun(**row)
+
+    def finish_analytics(self, run_id: UUID, *, status: str, nodes: int | None = None, edges: int | None = None,
+                         components: int | None = None, avg_degree: float | None = None, density: float | None = None,
+                         duration: float | None = None, error: str | None = None, results: dict | None = None) -> AnalyticsRun:
+        with self._cur() as cur:
+            row = cur.execute(
+                "UPDATE analytics_runs SET status = %s, finished_at = now(), nodes = %s, edges = %s, components = %s, avg_degree = %s, "
+                "density = %s, duration_seconds = %s, error = %s, results = %s WHERE id = %s RETURNING *",
+                (status, nodes, edges, components, avg_degree, density, duration, error,
+                 Jsonb(results) if results is not None else None, run_id)).fetchone()
+            if row is None:
+                raise NotFound(f"Analytics run {run_id}")
+            return AnalyticsRun(**row)
+
+    def get_analytics(self, run_id: UUID) -> AnalyticsRun:
+        with self._cur() as cur:
+            row = cur.execute("SELECT * FROM analytics_runs WHERE id = %s", (run_id,)).fetchone()
+        if row is None:
+            raise NotFound(f"Analytics run {run_id}")
+        return AnalyticsRun(**row)
+
+    def list_analytics(self, version_id: UUID) -> list[AnalyticsRun]:
+        with self._cur() as cur:
+            return [AnalyticsRun(**r) for r in cur.execute(
+                "SELECT * FROM analytics_runs WHERE domain_version_id = %s ORDER BY started_at DESC", (version_id,))]
 
     # -- audit ---------------------------------------------------------------
 

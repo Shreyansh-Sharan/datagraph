@@ -102,6 +102,17 @@ class RulesIn(BaseModel):
     rules: list[RuleIn]
 
 
+class CommunitiesIn(BaseModel):
+    algorithm: str = "louvain"
+    resolution: float = 1.0
+    seed: int = 42
+    persist: bool = False
+
+
+class CentralitiesIn(BaseModel):
+    top_n: int = Field(default=20, ge=1, le=500)
+
+
 class MetadataImportIn(BaseModel):
     tables: list[str]
     schema_name: str | None = None
@@ -515,6 +526,36 @@ def run_quality(version_id: UUID, request: Request, me: Principal = Depends(buil
     st = _st(request)
     report = QualityEngine(st.registry, st.store).run(version_id, include_ontology)
     return {"conforms": report.conforms, "summary": report.summary, "results": report.results}
+
+
+# -- analytics -------------------------------------------------------------------
+
+@router.post("/versions/{version_id}/analytics/communities")
+def analytics_communities(version_id: UUID, body: CommunitiesIn, request: Request, me: Principal = Depends(builder)):
+    r = _st(request).analytics.communities(version_id, body.algorithm, body.resolution, body.seed, body.persist, actor=me.name)
+    return {"run_id": r.run_id, "algorithm": r.algorithm, "resolution": r.resolution, "count": r.count,
+            "communities": r.communities, "persisted": r.persisted}
+
+
+@router.post("/versions/{version_id}/analytics/centralities")
+def analytics_centralities(version_id: UUID, body: CentralitiesIn, request: Request, me: Principal = Depends(builder)):
+    r = _st(request).analytics.centralities(version_id, body.top_n, actor=me.name)
+    return {"run_id": r.run_id, "kpis": r.kpis, "histograms": r.histograms, "top": r.top, "estimated": r.estimated}
+
+
+@router.get("/versions/{version_id}/analytics/health")
+def analytics_health(version_id: UUID, request: Request):
+    return _st(request).analytics.health(version_id)
+
+
+@router.get("/versions/{version_id}/analytics/runs")
+def analytics_runs(version_id: UUID, request: Request):
+    return _st(request).registry.list_analytics(version_id)
+
+
+@router.get("/analytics/runs/{run_id}")
+def analytics_run(run_id: UUID, request: Request):
+    return _st(request).registry.get_analytics(run_id)
 
 
 # -- metadata --------------------------------------------------------------------

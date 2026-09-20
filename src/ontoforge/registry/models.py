@@ -90,6 +90,25 @@ class BuildRun:
 
 
 @dataclass(frozen=True)
+class AnalyticsRun:
+    id: UUID
+    domain_version_id: UUID
+    scope: str
+    status: str
+    actor: str | None
+    started_at: datetime
+    finished_at: datetime | None
+    nodes: int | None
+    edges: int | None
+    components: int | None
+    avg_degree: float | None
+    density: float | None
+    duration_seconds: float | None
+    error: str | None
+    results: dict | None
+
+
+@dataclass(frozen=True)
 class AuditEntry:
     id: int
     domain_version_id: UUID | None
