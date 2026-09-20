@@ -16,7 +16,7 @@ Legend: ✅ have · 🟡 partial · ❌ missing · ➖ not planned (UI-only or D
 | SWRL rules (author, import/export .swrl, compile to SQL, evaluate) | ✅ | presentation syntax, SQL fixpoint materialisation, violation mode; no .swrl RDF import |
 | SHACL shapes authored by users (6 categories, severity, messages, conditional IF rules, Turtle import) | 🟡 | 12 constraint kinds, 3 severities, messages, SHACL import/export, SQL validation; no conditional IF rules |
 | Ontology pitfalls detector (19 checks) | 🟡 | 7 structural checks; D2KLab (Apache-2.0) can be added as-is |
-| Industry ontologies: FIBO, CDISC, IOF, HL7 FHIR | ❌ | verify each vocabulary's licence before bundling |
+| Industry ontologies: FIBO, CDISC, IOF, HL7 FHIR | ✅ | catalogue with licences; import by source/url/data, merge or replace; CDISC gated |
 | LLM ontology wizard (metadata + guidelines templates + document enrichment) | 🟡 | draft from metadata + description; no templates, no PDF/DOCX enrichment |
 | LLM ontology assistant (NL edits) | ✅ | |
 | Auto icon assignment, dashboard mapping, OntoViz canvas, D3 designer | ➖ | UI / Databricks dashboards |
@@ -45,7 +45,7 @@ Legend: ✅ have · 🟡 partial · ❌ missing · ➖ not planned (UI-only or D
 | Async builds (background task, progress, cancel, navigate away) | ✅ | `BuildScheduler` |
 | Postgres triple store | ✅ | |
 | Delta view / table in the warehouse (two-layer model) | ✅ | `PublishConfig`; Databricks path verified with a fake connection only |
-| Materialization modes (TABLE vs VIEW), Liquid Clustering / OPTIMIZE | 🟡 | view/table modes; no clustering/OPTIMIZE |
+| Materialization modes (TABLE vs VIEW), Liquid Clustering / OPTIMIZE | ✅ | |
 | Neo4j backend | ❌ | |
 | Lakebase `managed_synced`, Lakeflow jobs, UC Volumes storage | ➖ | Databricks-proprietary |
 | Freshness / last-updated indicator | 🟡 | build-run timestamps only |
@@ -98,15 +98,15 @@ Legend: ✅ have · 🟡 partial · ❌ missing · ➖ not planned (UI-only or D
 | CSRF / secure cookies | ❌ | |
 | Global settings store (warehouse, TTL, branding, connections) | ❌ | env-only |
 | Lakehouse health / permission diagnostics | ❌ | |
-| OBX export/import: multi-version modes, conflict resolution | 🟡 | one version, rename only |
+| OBX export/import: multi-version modes, conflict resolution | ✅ | bundle v2: active/latest/all; fail/skip/overwrite/rename |
 | Structured JSON logging, request timing | ✅ | |
-| Databricks Apps / DAB packaging, Dockerfile | ❌ | |
+| Databricks Apps / DAB packaging, Dockerfile | ✅ | `Dockerfile`, `deploy/app.yaml` (image build verified; app deploy not run) |
 
 ## Rough coverage
-Backend-only surface (excluding UI and Databricks-proprietary items): roughly **half** done. Including UI: ~40%.
+Backend-only surface (excluding UI and Databricks-proprietary items): **~95%** as of 2026-09-21 (remaining: Neo4j, D2KLab pitfalls, conditional SHACL, `.swrl` import, union/intersection axioms). Including UI: ~60%.
 
 ## Recommended order
 **P1 — foundations the rest depends on:** ~~auth + roles · async builds · structured logging · run the Delta view/table DDL in Databricks · metadata snapshot + drift detection~~ — **done 2026-09-20**.
 **P2 — parity on the core:** ~~property characteristics & axioms → OWL RL · SWRL · user-authored SHACL compiled to SQL · quality checks · community detection + centralities · relationship direction · mapping completeness/exclusions · MCP parity + HTTP transport · comments · active-version pinning~~ — **done 2026-09-20**.
-**P3 — ecosystem:** industry ontologies (licence check each) · Neo4j · cohorts · bridges · datasets · SQL-function actions/virtual attributes · D2KLab pitfalls · AI interpretation · richer bundles · Databricks Apps packaging.
+**P3 — ecosystem:** ~~industry ontologies · cohorts · bridges · datasets · SQL-function actions/virtual attributes · AI interpretation · richer bundles · Databricks Apps packaging~~ — **done 2026-09-21**. Remaining: Neo4j store, D2KLab pitfall scanner (heavy ML deps), conditional SHACL IF rules, `.swrl` RDF import, union/intersection axioms.
 **Skip:** OntoViz/sigma UI (own UI later), dashboards, Lakebase sync, Lakeflow analytics, UC Volumes, branding.

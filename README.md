@@ -46,6 +46,12 @@ catalog metadata ──autodraft / LLM──▶ Ontology (OWL 2) ──▶ Mappi
 | `reasoning/` | OWL 2 RL closure (`owlrl`), SHACL validation (`pyshacl`) with shapes generated from the ontology | W3C OWL 2 RL, SHACL |
 | `graphql/` | GraphQL schema generated from the ontology, resolved against the store (`graphql-core`) | GraphQL spec |
 | `metadata.py` | Per-version snapshots of source tables (columns, keys, comments), refresh diffs, schema-drift detection | — |
+| `rules/` | SWRL rules: presentation-syntax parser, SQL compilation over the triple table, fixpoint materialisation, violation mode | W3C SWRL submission |
+| `quality/` | Data-quality constraints (14 kinds, 3 severities), SHACL import/export, constraints derived from the ontology, SQL validation | W3C SHACL |
+| `analytics.py` | Communities (Louvain / label propagation / greedy modularity), centralities, health flags, AI interpretation, recorded runs | networkx |
+| `attachments.py` | Datasets, class actions, virtual attributes (live SQL bound to entity keys), cross-domain bridges | — |
+| `cohorts.py` | Explainable entity groups from criteria; materialisable as triples | — |
+| `bundle.py` | Multi-version domain export/import with conflict modes | — |
 | `auth/` | Header or API-key authentication; roles viewer < builder < reviewer < admin | — |
 | `observability.py` | JSON/text logging, request ids, request timing, build events | — |
 | `api/` | FastAPI REST surface for all of the above | — |
@@ -86,10 +92,16 @@ One shared table, keyed by domain version:
   catalog; `GET /versions/{id}/mapping/drift` lists dropped/renamed/retyped columns the mapping relies on.
 - **Logs** — `ONTOFORGE_LOG_FORMAT=json` for one JSON object per line; every response carries `X-Request-ID`.
 
+## Deploy
+
+`docker build -t ontoforge .` (migrations run at startup) or Databricks Apps via `deploy/app.yaml` —
+see [deploy/README.md](deploy/README.md).
+
 ## Not yet
 
-Named graphs (`rr:graphMap`), `rr:inverseExpression`, relative-IRI templates; SWRL, OWL property
-characteristics/axioms, user-authored SHACL; community detection / centralities / cohorts; a UI.
+Named graphs (`rr:graphMap`), `rr:inverseExpression`, relative-IRI templates; OWL union/intersection
+class expressions; conditional (IF-guarded) SHACL rules; `.swrl` RDF import; Neo4j as a graph
+store; the D2KLab pitfall scanner (Apache-2.0, heavy ML dependencies); a UI.
 See [docs/GAP-ANALYSIS.md](docs/GAP-ANALYSIS.md).
 
 ## Provenance
