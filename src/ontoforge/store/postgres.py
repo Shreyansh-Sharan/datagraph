@@ -76,7 +76,7 @@ class TripleStore:
     def type_inventory(self, version_id: UUID) -> list[tuple[str, int]]:
         with self.db.transaction() as cur:
             return cur.execute("SELECT object, count(*) FROM triples WHERE domain_version_id = %s AND predicate = %s "
-                               "GROUP BY 1 ORDER BY 2 DESC, 1", (version_id, RDF_TYPE)).fetchall()
+                               "AND subject NOT LIKE '\\_:%%' GROUP BY 1 ORDER BY 2 DESC, 1", (version_id, RDF_TYPE)).fetchall()
 
     def predicate_inventory(self, version_id: UUID) -> list[tuple[str, int]]:
         with self.db.transaction() as cur:
@@ -84,15 +84,21 @@ class TripleStore:
                                "GROUP BY 1 ORDER BY 2 DESC, 1", (version_id,)).fetchall()
 
     def search(self, version_id: UUID, text: str, type_iri: str | None = None, limit: int = 20) -> list[Entity]:
-        pattern = f"%{text}%"
+        """Entities whose literal values or IRI contain ``text``; exact label matches first, then prefix, then contains."""
+        pattern, q = f"%{text}%", text.lower()
         with self.db.transaction() as cur:
-            iris = [r[0] for r in cur.execute(
-                "SELECT DISTINCT t.subject FROM triples t WHERE t.domain_version_id = %s "
+            rows = cur.execute(
+                "SELECT t.subject, min(CASE WHEN lower(t.object) = %s THEN 0 WHEN lower(t.object) LIKE %s THEN 1 "
+                "                          WHEN t.object_type = 'literal' THEN 2 ELSE 3 END) AS rank, min(length(t.object)) AS len "
+                "FROM triples t WHERE t.domain_version_id = %s AND t.subject NOT LIKE '\\_:%%' "
                 "AND ((t.object_type = 'literal' AND t.object ILIKE %s) OR t.subject ILIKE %s) "
                 "AND (%s::text IS NULL OR EXISTS (SELECT 1 FROM triples ty WHERE ty.domain_version_id = t.domain_version_id "
                 "     AND ty.subject = t.subject AND ty.predicate = %s AND ty.object = %s)) "
-                "ORDER BY 1 LIMIT %s", (version_id, pattern, pattern, type_iri, RDF_TYPE, type_iri, limit))]
-            return self._entities(cur, version_id, iris)
+                "GROUP BY t.subject ORDER BY rank, len, t.subject LIMIT %s",
+                (q, q + "%", version_id, pattern, pattern, type_iri, RDF_TYPE, type_iri, limit)).fetchall()
+            iris = [r[0] for r in rows]
+            order = {iri: i for i, iri in enumerate(iris)}
+            return sorted(self._entities(cur, version_id, iris), key=lambda e: order[e.iri])
 
     def describe(self, version_id: UUID, iri: str) -> EntityDetail | None:
         with self.db.transaction() as cur:

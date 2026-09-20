@@ -47,3 +47,11 @@ def test_shacl_passes_after_inference_types_the_missing_department(db):
     r = Reasoner(reg, store)
     r.owl_rl(v.id)
     assert r.validate(v.id).conforms is True
+
+
+def test_inferred_triples_never_have_blank_node_subjects(db):
+    reg, store, v = built_domain(db)
+    from tests.test_ontology_axioms import rich
+    reg.update_content(v.id, actor="alice", ontology_ttl=rich().to_turtle())   # restrictions introduce blank nodes in the TBox
+    Reasoner(reg, store).owl_rl(v.id)
+    assert not [r for r in store.iter_triples(v.id, inferred=True) if r[0].startswith("_:")]

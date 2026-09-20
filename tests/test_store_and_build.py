@@ -117,3 +117,25 @@ def test_inferred_triples_are_separable(env):
     assert store.count(v.id) == base
     pipeline.run(v.id, actor="alice")
     assert store.count(v.id, inferred=True) == 0  # a rebuild drops stale inferences
+
+
+def test_search_and_inventory_ignore_blank_node_subjects(env):
+    _, store, pipeline, v = env
+    pipeline.run(v.id, actor="alice")
+    store.add_inferred(v.id, [("_:b1", EX + "name", "SMITHY", "literal", None, None), ("_:b1", RDF_TYPE, EX + "Employee", "iri", None, None)])
+    assert [h.iri for h in store.search(v.id, "smith")] == [BASE + "Employee/1"]
+    assert dict(store.type_inventory(v.id))[EX + "Employee"] == 3
+
+
+def test_search_ranks_exact_then_prefix_then_contains(env):
+    _, store, pipeline, v = env
+    pipeline.run(v.id, actor="alice")
+    store.add_inferred(v.id, [
+        (BASE + "Department/50", EX + "name", "Cola", "literal", None, None),
+        (BASE + "Department/51", EX + "name", "Cola Zero Sugar", "literal", None, None),
+        (BASE + "Department/52", EX + "name", "Online Commerce (Coca-Cola)", "literal", None, None),
+        (BASE + "Department/30", EX + "name", "Vanilla", "literal", None, None),
+    ])
+    hits = store.search(v.id, "cola")
+    assert [h.label for h in hits][:3] == ["Cola", "Cola Zero Sugar", "Online Commerce (Coca-Cola)"]
+    assert store.search(v.id, "col")[0].label == "Cola"

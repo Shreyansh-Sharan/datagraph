@@ -7,7 +7,7 @@ from uuid import UUID
 
 import pyshacl
 from owlrl import DeductiveClosure, OWLRL_Semantics
-from rdflib import Graph, Literal, Namespace, URIRef
+from rdflib import BNode, Graph, Literal, Namespace, URIRef
 from rdflib.namespace import OWL, RDF, RDFS
 
 from ontoforge.ontology import Ontology
@@ -53,8 +53,8 @@ def infer_triples(tbox: Graph, data: Graph) -> list[tuple]:
 
 def _keep(t, tbox_terms: set) -> bool:
     s, p, o = t
-    if isinstance(s, Literal) or s in tbox_terms or p in _NOISE_PREDICATES:
-        return False
+    if isinstance(s, (Literal, BNode)) or s in tbox_terms or p in _NOISE_PREDICATES:
+        return False   # blank-node subjects are TBox structure or owlrl bookkeeping, never entities
     if Ontology.local_name(str(p)) == "error":   # owlrl's inconsistency notes; we report owl:Nothing instead
         return False
     if p == RDF.type and o in _NOISE_TYPES:

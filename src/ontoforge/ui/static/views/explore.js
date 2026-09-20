@@ -1,6 +1,6 @@
-// Explore: search entities, inspect one (attributes, relations, actions, virtual attributes, datasets, bridges), expand neighbourhood.
+// Explore: a full-width graph stage with a search bar above and an entity drawer beside it.
 import { api, local, qs } from "../api.js";
-import { h, button, input, select, field, dialog, toast, errorToast, badge, table, empty, skeleton, fmtNum } from "../ui.js";
+import { h, append, button, input, select, field, dialog, toast, errorToast, badge, table, empty, skeleton } from "../ui.js";
 import { renderGraph, palette } from "../graph.js";
 
 export async function exploreTab(ctx) {
@@ -8,48 +8,73 @@ export async function exploreTab(ctx) {
   const status = await api.get(`/versions/${vid}/graph/status`);
   if (!status.triples) return empty("The graph is empty", "Build the knowledge graph first.", h("a", { class: "btn", href: `#/d/${encodeURIComponent(ctx.name)}/build` }, "Go to build"));
   const types = Object.keys(status.types);
-  const colors = palette(types);
-  const root = h("div", {});
-  const q = input({ type: "search", placeholder: "Search entities by name or IRI", "aria-label": "Search entities" });
-  const typeSel = select([{ value: "", label: "All types" }, ...types.map(t => ({ value: t, label: `${local(t)} (${status.types[t]})` }))], {});
-  const depth = select(["1", "2", "3"], { value: "1" });
-  const results = h("div", {}), detail = h("div", { class: "card muted" }, "Search for an entity, or pick one from the results."), graphBox = h("div", { class: "graph" });
-  let current = ctx.arg || null, graph = null;
-  root.append(h("h1", {}, "Explore"),
-    h("div", { class: "card" }, h("div", { class: "inline-form" }, field("Search", q), field("Type", typeSel), field("Depth", depth), button("Search", { class: "primary", onClick: search })), results),
-    h("div", { class: "split" }, detail, h("div", {}, graphBox, h("div", { class: "legend" }, types.map(t => h("span", { style: { "--c": colors.get(t) } }, local(t)))))));
-  q.addEventListener("keydown", e => { if (e.key === "Enter") search(); });
-  async function search() {
-    results.replaceChildren(skeleton(3));
-    try { const hits = await api.get(`/versions/${vid}/graph/search${qs({ q: q.value, type: typeSel.value, limit: 25 })}`);
-      results.replaceChildren(hits.length ? table([{ label: "Entity", render: e => h("a", { href: "#", onClick: ev => { ev.preventDefault(); show(e.iri); } }, e.label) }, { label: "Types", render: e => e.types.map(t => badge(local(t), "neutral")) }, { label: "IRI", render: e => h("span", { class: "mono small" }, e.iri) }], hits) : h("p", { class: "muted" }, "No entities match.")); }
-    catch (e) { errorToast(e); results.replaceChildren(); }
+  const root = h("div", { class: "explore" });
+  const q = input({ type: "search", placeholder: "Search by name, label or IRI", "aria-label": "Search entities" });
+  const typeSel = select([{ value: "", label: "All types" }, ...types.map(t => ({ value: t, label: `${local(t)} (${status.types[t].toLocaleString()})` }))], { "aria-label": "Entity type" });
+  const depth = select(["1", "2", "3"], { value: "1", "aria-label": "Neighbourhood depth" });
+  const results = h("div", { class: "results", role: "region", "aria-label": "Search results" });
+  const stage = h("div", { class: "graph stage-host" });
+  const drawer = h("aside", { class: "drawer", "aria-label": "Entity detail" }, h("p", { class: "muted" }, "Search for an entity, or click a node."));
+  let graph = null, current = ctx.arg || null;
+
+  root.append(
+    h("div", { class: "page-head" }, h("div", {}, h("h1", {}, "Explore"), h("p", { class: "muted" }, `${status.triples.toLocaleString()} triples · ${types.length} types`)),
+      h("div", { class: "actions" }, h("form", { class: "searchbar", onSubmit: e => { e.preventDefault(); search(); } }, q, typeSel, depth, button("Search", { class: "primary", type: "submit" })))),
+    results,
+    h("div", { class: "explore-body" }, stage, drawer));
+
+  async function search(initial = false) {
+    results.replaceChildren(skeleton(2));
+    try {
+      const hits = await api.get(`/versions/${vid}/graph/search${qs({ q: q.value, type: typeSel.value, limit: 30 })}`);
+      results.replaceChildren(hits.length
+        ? h("ul", { class: "hits" }, hits.map(e => h("li", {}, h("button", { type: "button", class: "hit", onClick: () => show(e.iri) },
+            h("span", { class: "hit-label" }, e.label), h("span", { class: "hit-type" }, e.types.map(local).join(", "))))))
+        : h("p", { class: "muted small" }, "No entities match."));
+      if (hits.length && !initial) show(hits[0].iri);
+    } catch (e) { errorToast(e); results.replaceChildren(); }
   }
-  async function show(iri) {
+
+  async function show(iri, { keep = false } = {}) {
     current = iri;
-    detail.className = "card"; detail.replaceChildren(skeleton(5));
+    drawer.replaceChildren(skeleton(6));
     try {
       const e = await api.get(`/versions/${vid}/graph/entity${qs({ iri })}`);
       const att = e.attachments || {};
-      detail.replaceChildren(
-        h("h2", {}, h("span", {}, e.label, " ", e.types.map(t => badge(local(t), "neutral"))), button("Expand", { class: "sm", onClick: () => expand(iri) })),
-        h("p", { class: "mono small muted" }, e.iri),
-        h("h3", {}, "Attributes"), e.attributes.length ? table([{ label: "Attribute", render: a => local(a.predicate) }, { label: "Value", render: a => h("span", {}, a.value, a.inferred ? badge("inferred", "neutral") : null) }], e.attributes) : h("p", { class: "muted small" }, "None."),
-        h("h3", {}, "Relationships"), (e.outgoing.length || e.incoming.length) ? h("ul", { class: "list small" }, [...e.outgoing.map(r => h("li", {}, h("span", {}, `${local(r.predicate)} → `, h("a", { href: "#", onClick: ev => { ev.preventDefault(); show(r.target); } }, local(r.target)), r.inferred ? badge("inferred", "neutral") : null))),
-          ...e.incoming.map(r => h("li", {}, h("span", {}, h("a", { href: "#", onClick: ev => { ev.preventDefault(); show(r.source); } }, local(r.source)), ` ${local(r.predicate)} → this`, r.inferred ? badge("inferred", "neutral") : null)))]) : h("p", { class: "muted small" }, "None."),
-        att.virtual_attributes?.length ? h("div", {}, h("h3", {}, "Virtual attributes ", button("Compute", { class: "sm", onClick: () => virtual(iri) })), h("p", { class: "muted small" }, att.virtual_attributes.join(", "))) : null,
-        att.actions?.length ? h("div", {}, h("h3", {}, "Actions"), h("div", { class: "row" }, att.actions.map(a => button(a, { class: "sm", onClick: () => action(iri, a) })))) : null,
-        att.datasets?.length ? h("div", {}, h("h3", {}, "Datasets ", button("Show rows", { class: "sm", onClick: () => datasets(iri) })), h("p", { class: "muted small" }, att.datasets.join(", "))) : null,
-        att.bridges?.length ? h("div", {}, h("h3", {}, "Bridges ", button("Resolve", { class: "sm", onClick: () => bridges(iri) })), h("p", { class: "muted small" }, att.bridges.join(", "))) : null);
-      expand(iri);
+      const rel = (r, out) => h("li", {}, h("button", { type: "button", class: "link", onClick: () => show(out ? r.target : r.source) }, local(out ? r.target : r.source)),
+        h("span", { class: "muted small" }, out ? ` ← ${local(r.predicate)}` : ` ${local(r.predicate)} →`), r.inferred ? badge("inferred", "neutral") : null);
+      const grouped = (rels, out) => {
+        const by = {};
+        rels.forEach(r => (by[r.predicate] ||= []).push(r));
+        return Object.entries(by).map(([p, rs]) => h("details", { open: rs.length <= 8 }, h("summary", {}, `${local(p)} ${out ? "→" : "←"} `, h("span", { class: "muted" }, rs.length)),
+          h("ul", { class: "rel-list" }, rs.slice(0, 50).map(r => rel(r, out)), rs.length > 50 ? h("li", { class: "muted small" }, `… ${rs.length - 50} more`) : null)));
+      };
+      drawer.replaceChildren();
+      append(drawer, [
+        h("div", { class: "drawer-head" }, h("h2", {}, e.label), h("div", { class: "row" }, e.types.map(t => badge(local(t), "neutral"))), h("code", { class: "small muted iri" }, e.iri),
+          h("div", { class: "row" }, button("Expand", { class: "sm", title: "Add this entity's neighbourhood to the graph", onClick: () => expand(iri, true) }), button("Focus", { class: "sm ghost", onClick: () => expand(iri, false) }))),
+        e.attributes.length ? h("dl", { class: "attrs" }, e.attributes.map(a => [h("dt", {}, local(a.predicate)), h("dd", {}, a.value, a.inferred ? badge("inferred", "neutral") : null)])) : h("p", { class: "muted small" }, "No attributes."),
+        e.outgoing.length ? h("section", {}, h("h3", {}, `Outgoing · ${e.outgoing.length}`), grouped(e.outgoing, true)) : null,
+        e.incoming.length ? h("section", {}, h("h3", {}, `Incoming · ${e.incoming.length}`), grouped(e.incoming, false)) : null,
+        (att.virtual_attributes?.length || att.actions?.length || att.datasets?.length || att.bridges?.length) ? h("section", {}, h("h3", {}, "More"),
+          h("div", { class: "row" },
+            att.virtual_attributes?.length ? button("Virtual attributes", { class: "sm", onClick: () => virtual(iri) }) : null,
+            ...(att.actions || []).map(a => button(a, { class: "sm", onClick: () => action(iri, a) })),
+            att.datasets?.length ? button("Datasets", { class: "sm", onClick: () => datasets(iri) }) : null,
+            att.bridges?.length ? button("Bridges", { class: "sm", onClick: () => bridges(iri) }) : null)) : null]);
+      if (keep && graph) graph.select(iri); else expand(iri, false);
     } catch (err) { errorToast(err); }
   }
-  async function expand(iri) {
-    try { const sub = await api.get(`/versions/${vid}/graph/neighbourhood${qs({ iri, depth: depth.value, limit: 150 })}`);
-      const nodes = sub.nodes.map(n => ({ id: n.iri, label: n.label, color: colors.get(n.types[0]) || "#5a6470", size: n.iri === iri ? 10 : 6 }));
+
+  async function expand(iri, merge) {
+    try {
+      const sub = await api.get(`/versions/${vid}/graph/neighbourhood${qs({ iri, depth: depth.value, limit: 300 })}`);
+      const nodes = sub.nodes.map(n => ({ id: n.iri, label: n.label, type: n.types[0] || "?" }));
       const edges = sub.edges.map(e => ({ source: e.source, target: e.target, label: local(e.predicate) }));
-      graph?.destroy?.(); graph = renderGraph(graphBox, { nodes, edges, selected: iri, onSelect: n => show(n.id) }); }
-    catch (e) { errorToast(e); }
+      if (merge && graph) { graph.merge({ nodes, edges }); graph.select(iri); return; }
+      graph?.destroy?.();
+      graph = renderGraph(stage, { nodes, edges, selected: iri, onSelect: n => show(n.id, { keep: true }), onExpand: n => expand(n.id, true) });
+    } catch (e) { errorToast(e); }
   }
   async function virtual(iri) { try { const v = await api.get(`/versions/${vid}/graph/entity/virtual${qs({ iri })}`); dialog("Virtual attributes", table([{ label: "Name", key: "k" }, { label: "Value", render: r => r.v ?? "—" }], Object.entries(v).map(([k, v]) => ({ k, v }))), { confirm: "Close", cancel: "Dismiss" }); } catch (e) { errorToast(e); } }
   async function action(iri, name) { try { const r = await api.post(`/versions/${vid}/graph/entity/actions/${encodeURIComponent(name)}${qs({ iri })}`);
@@ -58,6 +83,7 @@ export async function exploreTab(ctx) {
     dialog("Datasets", h("div", {}, ds.map(d => h("div", {}, h("h3", {}, d.table, " ", h("span", { class: "muted small" }, d.description || "")), d.rows.length ? table(d.columns.map(c => ({ label: c, render: r => r[c] ?? "—" })), d.rows) : h("p", { class: "muted small" }, "No rows.")))), { confirm: "Close", cancel: "Dismiss" }); } catch (e) { errorToast(e); } }
   async function bridges(iri) { try { const b = await api.get(`/versions/${vid}/graph/entity/bridges${qs({ iri })}`);
     dialog("Bridges", table([{ label: "Domain", key: "domain" }, { label: "Entity", render: x => x.error ? badge(x.error, "error") : h("a", { href: `#/d/${encodeURIComponent(x.domain)}/explore/${encodeURIComponent(x.iri)}` }, x.label || local(x.iri)) }, { label: "Exists", render: x => x.exists ? badge("yes", "ok") : badge("no", "neutral") }], b), { confirm: "Close", cancel: "Dismiss" }); } catch (e) { errorToast(e); } }
-  if (current) show(current); else search();
+
+  if (current) show(current); else search(true);
   return root;
 }

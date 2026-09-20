@@ -56,9 +56,15 @@ function renderTopbar() {
       button(me ? "Switch" : "Sign in", { class: "sm", onClick: identityDialog })));
 }
 
-export function renderSidenav(items, activeId, base) {
+export function renderSidenav(items, activeId, base, versions = null) {
   const nav = clear(document.getElementById("sidenav"));
   if (!items) return;
+  if (versions?.length) {
+    const key = `of.version.${state.domain?.name}`;
+    const sel = h("select", { "aria-label": "Version", onChange: (e) => { localStorage.setItem(key, e.target.value); route(); } },
+      versions.map(v => h("option", { value: v.version, selected: state.version?.version === v.version }, `v${v.version} · ${v.status.replace("_", " ")}`)));
+    nav.append(h("div", { class: "version-pick" }, sel));
+  }
   let group = null;
   for (const it of items) {
     if (it.group && it.group !== group) { group = it.group; nav.append(h("div", { class: "group" }, group)); }

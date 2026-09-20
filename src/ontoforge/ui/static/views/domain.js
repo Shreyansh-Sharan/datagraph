@@ -28,10 +28,10 @@ export const DOMAIN_TABS = [
 export async function domainView(name, tab, arg) {
   const domain = await api.get(`/domains/${encodeURIComponent(name)}`);
   const versions = await api.get(`/domains/${encodeURIComponent(name)}/versions`);
-  const wanted = new URLSearchParams(location.search).get("v");
+  const wanted = localStorage.getItem(`of.version.${name}`);
   const version = versions.find(v => String(v.version) === wanted) || versions.find(v => v.status === "draft") || versions[0] || null;
   state.domain = domain; state.version = version;
-  renderSidenav(DOMAIN_TABS, tab, `#/d/${encodeURIComponent(name)}`);
+  renderSidenav(DOMAIN_TABS, tab, `#/d/${encodeURIComponent(name)}`, versions);
   const reload = () => { const target = `#/d/${encodeURIComponent(name)}/${tab}`; if (location.hash === target) return route(); location.hash = target; return Promise.resolve(); };
   const ctx = { domain, version, versions, name, reload, arg };
   if (tab !== "overview" && tab !== "settings" && !version) return needVersion(ctx);
@@ -93,7 +93,7 @@ async function versionCard(ctx, v) {
     last ? badge(`build ${last.status}${last.triple_count ? ` · ${last.triple_count} triples` : ""}`, last.status) : badge("not built", "neutral"),
     v.editor ? h("span", {}, `editing: ${v.editor}`) : null, domain.active_version_id === v.id ? badge("active", "ok") : null);
   const card = h("div", { class: "card" },
-    h("h2", {}, h("span", {}, `Version ${v.version} `, badge(status)), h("span", { class: "row" }, actions, h("a", { class: "btn", href: `#/d/${encodeURIComponent(name)}/ontology?v=${v.version}` }, "Open"))),
+    h("h2", {}, h("span", {}, `Version ${v.version} `, badge(status)), h("span", { class: "row" }, actions, h("a", { class: "btn", href: `#/d/${encodeURIComponent(name)}/ontology`, onClick: () => localStorage.setItem(`of.version.${name}`, String(v.version)) }, "Open"))),
     facts,
     reviews.length ? h("div", { class: "small" }, h("strong", {}, "Reviews: "), reviews.map(r => h("span", { class: "chip" }, `${r.reviewer}: ${r.approved ? "approved" : "changes requested"}${r.comment ? " — " + r.comment : ""}`))) : null,
     h("details", {}, h("summary", { class: "small muted" }, `Discussion (${comments.length}) · Audit (${audit.length})`),

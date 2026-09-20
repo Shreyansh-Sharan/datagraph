@@ -216,12 +216,12 @@ export async function ontologyTab(ctx) {
   }
 
   function graphView() {
-    const box = h("div", { class: "graph" });
-    const nodes = onto.classes.map(c => ({ id: c.iri, label: local(c.iri), color: "#0b6e4f", size: 6 + Math.min(10, propsOf(c.iri).length) }));
+    const box = h("div", { class: "graph stage-host tall" });
+    const nodes = onto.classes.map(c => ({ id: c.iri, label: c.label || local(c.iri), type: c.parents?.length ? local(c.parents[0]) : "root" }));
     const edges = [...onto.object_properties.filter(p => p.domain && p.range).map(p => ({ source: p.domain, target: p.range, label: local(p.iri) })),
-      ...onto.classes.flatMap(c => (c.parents || []).map(p => ({ source: c.iri, target: p, label: "⊂" })))];
-    setTimeout(() => renderGraph(box, { nodes, edges, selected, onSelect: n => { selected = n.id; mode = "list"; render(); } }), 0);
-    return h("div", {}, box, h("p", { class: "muted small" }, "Drag to pan, scroll to zoom, click a class to edit it. Arrow keys move the selection."));
+      ...onto.classes.flatMap(c => (c.parents || []).map(p => ({ source: c.iri, target: p, label: "subclass of" })))];
+    setTimeout(() => renderGraph(box, { nodes, edges, selected, showEdgeLabels: true, onSelect: n => { selected = n.id; }, onExpand: n => { selected = n.id; mode = "list"; render(); } }), 0);
+    return h("div", {}, box, h("p", { class: "muted small" }, "Classes are nodes, relationships are edges (colour = parent class). Click to select, double-click or Enter to edit, arrow keys to move, F to fit."));
   }
 
   render();
