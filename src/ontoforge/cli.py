@@ -7,10 +7,8 @@ from pathlib import Path
 
 from ontoforge.compiler import CompileError, compile_mapping
 from ontoforge.compiler.identifiers import IdentifierError
-from ontoforge.dialects import DatabricksDialect, SQLiteDialect
+from ontoforge.dialects import DIALECTS
 from ontoforge.r2rml import MappingError, parse_r2rml
-
-DIALECTS = {"databricks": DatabricksDialect, "sqlite": SQLiteDialect}
 
 
 def build_parser() -> argparse.ArgumentParser:
