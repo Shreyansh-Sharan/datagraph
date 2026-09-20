@@ -53,12 +53,20 @@ def compile_constraint(c: Constraint, version_id: UUID | str, ontology: Ontology
     focus = (f"(SELECT DISTINCT subject FROM triples WHERE domain_version_id = {vid} AND predicate = {rdf_type} "
              f"AND object IN ({cls_list})) f")
     vals = (f"(SELECT subject, object, object_type, datatype FROM triples WHERE domain_version_id = {vid} "
-            f"AND predicate = {_D.string_literal(c.property)}) v")
+            f"AND predicate = {_D.string_literal(c.property or '')}) v")
     targets = f"SELECT count(*) FROM {focus}"
     join = f"FROM {focus} JOIN {vals} ON v.subject = f.subject"
     num = f"(CASE WHEN v.object_type = 'literal' AND v.object ~ {_NUMERIC} THEN CAST(v.object AS numeric) END)"
     k, val = c.kind, c.value
-    if k in ("min_count", "max_count"):
+    if k == "require_label":
+        sql = (f"SELECT f.subject AS focus, CAST(NULL AS text) AS value FROM {focus} WHERE NOT EXISTS (SELECT 1 FROM triples l "
+               f"WHERE l.domain_version_id = {vid} AND l.subject = f.subject AND l.object_type = 'literal' "
+               f"AND lower(l.predicate) ~ '(label|name|title)$')")
+    elif k == "no_orphans":
+        sql = (f"SELECT f.subject AS focus, CAST(NULL AS text) AS value FROM {focus} WHERE NOT EXISTS (SELECT 1 FROM triples r "
+               f"WHERE r.domain_version_id = {vid} AND r.predicate <> {rdf_type} AND r.object_type <> 'literal' "
+               f"AND (r.subject = f.subject OR (r.object_key = md5(f.subject) AND r.object = f.subject)))")
+    elif k in ("min_count", "max_count"):
         op = "<" if k == "min_count" else ">"
         sql = (f"SELECT f.subject AS focus, CAST(count(v.object) AS text) AS value FROM {focus} LEFT JOIN {vals} "
                f"ON v.subject = f.subject GROUP BY f.subject HAVING count(v.object) {op} {int(val)}")

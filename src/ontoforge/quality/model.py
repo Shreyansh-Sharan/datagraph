@@ -4,7 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 KINDS = ("min_count", "max_count", "datatype", "class", "pattern", "in", "min_inclusive", "max_inclusive",
-         "min_exclusive", "max_exclusive", "unique", "node_kind")
+         "min_exclusive", "max_exclusive", "unique", "node_kind", "require_label", "no_orphans")
+GLOBAL_KINDS = ("require_label", "no_orphans")   # apply to the entity itself; property is None
 SEVERITIES = ("violation", "warning", "info")
 XSD_STRING = "http://www.w3.org/2001/XMLSchema#string"
 
@@ -17,7 +18,7 @@ class QualityError(ValueError):
 class Constraint:
     name: str
     target_class: str
-    property: str
+    property: str | None
     kind: str
     value: object = None
     severity: str = "violation"
@@ -38,6 +39,10 @@ class Constraint:
             raise QualityError(f"Constraint {self.name!r}: node_kind must be iri, literal or bnode")
         if self.kind in ("datatype", "class", "pattern") and not isinstance(self.value, str):
             raise QualityError(f"Constraint {self.name!r}: {self.kind} needs a string value")
+        if self.kind in GLOBAL_KINDS and self.property is not None:
+            raise QualityError(f"Constraint {self.name!r}: {self.kind} applies to the entity; leave property empty")
+        if self.kind not in GLOBAL_KINDS and not self.property:
+            raise QualityError(f"Constraint {self.name!r}: {self.kind} needs a property")
 
     def default_message(self) -> str:
         return {
@@ -48,6 +53,7 @@ class Constraint:
             "min_inclusive": f"must be >= {self.value}", "max_inclusive": f"must be <= {self.value}",
             "min_exclusive": f"must be > {self.value}", "max_exclusive": f"must be < {self.value}",
             "unique": "must be unique across instances", "node_kind": f"must be a(n) {self.value}",
+            "require_label": "must have a label or name", "no_orphans": "must be connected to at least one other entity",
         }[self.kind]
 
     def to_dict(self) -> dict:

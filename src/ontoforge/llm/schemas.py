@@ -51,3 +51,15 @@ MAPPING_SCHEMA = {
     "required": ["classes", "relations"],
     "additionalProperties": False,
 }
+
+INSIGHT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "key_findings": _S,
+        "notable_entities": {"type": "array", "items": {
+            "type": "object", "properties": {"iri": _S, "reason": _S}, "required": ["iri", "reason"], "additionalProperties": False}},
+        "recommendations": _ARR_S,
+    },
+    "required": ["key_findings", "notable_entities", "recommendations"],
+    "additionalProperties": False,
+}

@@ -40,3 +40,17 @@ every class and property that should exist afterwards. Keep everything the instr
 ask you to change, preserve existing names, and follow the same naming rules as when designing:
 PascalCase classes, lowerCamelCase properties, real domains and ranges, XSD ranges for attributes.
 """
+
+INTERPRET_ANALYTICS = """\
+You interpret graph-analytics results for a business knowledge graph. You are given KPIs (nodes,
+edges, components, density), centrality metrics for the top entities (PageRank, degree,
+betweenness, closeness, clustering), community sizes when available, and data-model health
+flags. Write for a domain expert who does not know graph theory:
+
+- key_findings: two to four sentences on what the structure says about the business data.
+- notable_entities: up to five entities that matter, each with the IRI exactly as given and a
+  one-sentence reason grounded in the metrics.
+- recommendations: two to four concrete, actionable next steps (data fixes, modelling changes,
+  questions to ask).
+Do not invent entities or numbers that are not in the input.
+"""

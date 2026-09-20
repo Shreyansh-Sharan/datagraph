@@ -676,7 +676,7 @@ def _validated_constraints(request: Request, version_id: UUID, cs: ConstraintSet
     for c in cs.constraints:
         if c.target_class not in onto.classes:
             raise QualityError(f"Constraint {c.name!r}: unknown class {c.target_class}")
-        if c.property not in props:
+        if c.property is not None and c.property not in props:
             raise QualityError(f"Constraint {c.name!r}: unknown property {c.property}")
     return cs
 
@@ -795,6 +795,17 @@ def analytics_runs(version_id: UUID, request: Request):
 @router.get("/analytics/runs/{run_id}")
 def analytics_run(run_id: UUID, request: Request):
     return _st(request).registry.get_analytics(run_id)
+
+
+@router.post("/analytics/runs/{run_id}/interpret")
+def analytics_interpret(run_id: UUID, request: Request, me: Principal = Depends(builder),
+                        comment: bool = Query(default=False, description="also post the insight as a version comment")):
+    from ontoforge.analytics import insight_markdown, interpret_run
+    st = _st(request)
+    insight = interpret_run(st.registry, st.store, run_id, _llm(request))
+    if comment:
+        st.registry.add_comment(st.registry.get_analytics(run_id).domain_version_id, author=me.name, body=insight_markdown(insight))
+    return insight
 
 
 # -- metadata --------------------------------------------------------------------

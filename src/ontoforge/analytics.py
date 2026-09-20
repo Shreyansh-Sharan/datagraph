@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import statistics
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from uuid import UUID
 
 import networkx as nx
@@ -218,3 +218,38 @@ def _histogram(values: list[float], bins: int = 20) -> dict:
     ordered = sorted(values)
     p90 = ordered[min(len(ordered) - 1, int(round(0.9 * (len(ordered) - 1))))]
     return {"bins": counts, "min": lo, "max": hi, "median": statistics.median(values), "p90": p90}
+
+
+def interpret_run(registry: Registry, store: TripleStore, run_id: UUID, provider) -> dict:
+    """Ask the LLM provider to explain an analytics run; entities are labelled from the store."""
+    import json
+    from ontoforge.llm import prompts
+    from ontoforge.llm.schemas import INSIGHT_SCHEMA
+
+    run = registry.get_analytics(run_id)
+    if run.status != "succeeded" or not run.results:
+        raise AnalyticsError("Only successful analytics runs can be interpreted")
+    ga = GraphAnalytics(registry, store)
+    health = [asdict(h) for h in ga.health(run.domain_version_id)]
+    payload = {"scope": run.scope, "kpis": run.results.get("kpis") or {"nodes": run.nodes, "edges": run.edges, "components": run.components},
+               "top_entities": run.results.get("top", []), "communities": run.results.get("sizes"),
+               "estimated_metrics": run.results.get("estimated", []), "data_model_health": health}
+    data = provider.complete_json(prompts.INTERPRET_ANALYTICS, json.dumps(payload, indent=1, default=str), INSIGHT_SCHEMA)
+    iris = [e["iri"] for e in data.get("notable_entities", [])]
+    labels = ga._labels(run.domain_version_id, iris)
+    return {"run_id": str(run_id), "key_findings": data["key_findings"],
+            "notable_entities": [{"iri": e["iri"], "label": labels.get(e["iri"], Ontology.local_name(e["iri"])), "reason": e["reason"]}
+                                 for e in data.get("notable_entities", [])],
+            "recommendations": list(data.get("recommendations", []))}
+
+
+def insight_markdown(insight: dict) -> str:
+    lines = [f"**AI interpretation of analytics run {insight['run_id']}**", "", insight["key_findings"], ""]
+    if insight["notable_entities"]:
+        lines.append("Notable entities:")
+        lines += [f"- {e['label']} (`{e['iri']}`): {e['reason']}" for e in insight["notable_entities"]]
+        lines.append("")
+    if insight["recommendations"]:
+        lines.append("Recommendations:")
+        lines += [f"- {r}" for r in insight["recommendations"]]
+    return "\n".join(lines)

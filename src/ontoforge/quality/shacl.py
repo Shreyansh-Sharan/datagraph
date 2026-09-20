@@ -11,7 +11,8 @@ SH = Namespace("http://www.w3.org/ns/shacl#")
 OF = Namespace("http://ontoforge.dev/shacl#")
 _KIND_PRED = {"min_count": SH.minCount, "max_count": SH.maxCount, "datatype": SH.datatype, "class": SH["class"],
               "pattern": SH.pattern, "in": SH["in"], "min_inclusive": SH.minInclusive, "max_inclusive": SH.maxInclusive,
-              "min_exclusive": SH.minExclusive, "max_exclusive": SH.maxExclusive, "unique": OF.unique, "node_kind": SH.nodeKind}
+              "min_exclusive": SH.minExclusive, "max_exclusive": SH.maxExclusive, "unique": OF.unique, "node_kind": SH.nodeKind,
+              "require_label": OF.requireLabel, "no_orphans": OF.noOrphans}
 _PRED_KIND = {v: k for k, v in _KIND_PRED.items()}
 _SEVERITY = {"violation": SH.Violation, "warning": SH.Warning, "info": SH.Info}
 _SEVERITY_BACK = {v: k for k, v in _SEVERITY.items()}
@@ -32,7 +33,7 @@ def to_shacl(cs: ConstraintSet) -> str:
             g.add((shape, SH.targetClass, URIRef(c.target_class)))
         ps = BNode()
         g.add((shape, SH.property, ps))
-        g.add((ps, SH.path, URIRef(c.property)))
+        g.add((ps, SH.path, URIRef(c.property) if c.property else OF.entity))
         g.add((ps, SH.name, Literal(c.name)))
         g.add((ps, SH.severity, _SEVERITY[c.severity]))
         if c.message:
@@ -46,7 +47,7 @@ def to_shacl(cs: ConstraintSet) -> str:
             g.add((ps, pred, head))
         elif c.kind == "node_kind":
             g.add((ps, pred, _NODE_KIND[c.value]))
-        elif c.kind == "unique":
+        elif c.kind in ("unique", "require_label", "no_orphans"):
             g.add((ps, pred, Literal(True)))
         else:
             g.add((ps, pred, Literal(c.value)))
@@ -76,8 +77,8 @@ def from_shacl(turtle: str) -> ConstraintSet:
                     value = [str(x) for x in Collection(g, obj)]
                 elif kind == "node_kind":
                     value = _NODE_KIND_BACK.get(obj, "iri")
-                elif kind == "unique":
-                    value = True
+                elif kind in ("unique", "require_label", "no_orphans"):
+                    value = None if kind != "unique" else True
                 elif kind in ("min_count", "max_count"):
                     value = int(obj)
                 elif kind in ("min_inclusive", "max_inclusive", "min_exclusive", "max_exclusive"):
@@ -85,5 +86,6 @@ def from_shacl(turtle: str) -> ConstraintSet:
                 else:
                     value = str(obj)
                 name = base if base and len(found) == 1 else f"{base or str(target).rsplit('#', 1)[-1] + '.' + str(path).rsplit('#', 1)[-1]}.{kind}"
-                out.append(Constraint(name, str(target), str(path), kind, value, severity, str(message) if message else None))
+                out.append(Constraint(name, str(target), None if path == OF.entity else str(path), kind, value, severity,
+                                      str(message) if message else None))
     return ConstraintSet(sorted(out, key=lambda c: c.name))
