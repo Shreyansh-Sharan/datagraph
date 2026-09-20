@@ -130,3 +130,14 @@ def test_union_domains_round_trip_and_apply_to_every_member():
     assert not [p.iri for p in again.properties_of("http://d/u#Customer")]
     assert Ontology.from_dict(o.to_dict()) == o
     assert not [i for i in o.check() if i.severity == "error"]
+
+
+def test_class_icons_round_trip_through_owl_and_dict():
+    o = Ontology(iri="http://d/i")
+    o.add_class(OntoClass("http://d/i#Customer", "Customer", icon="👤"))
+    o.add_class(OntoClass("http://d/i#Thing", "Thing"))
+    ttl = o.to_turtle()
+    assert "👤" in ttl and "ofui:icon" in ttl and "http://ontoforge.dev/ui#" in ttl
+    again = Ontology.from_turtle(ttl)
+    assert again == o and again.classes["http://d/i#Customer"].icon == "👤" and again.classes["http://d/i#Thing"].icon is None
+    assert Ontology.from_dict(o.to_dict()).classes["http://d/i#Customer"].icon == "👤"

@@ -20,6 +20,30 @@ class AutodraftError(ValueError):
     pass
 
 
+# Glyphs by keyword in the class name; first match wins, checked longest keyword first.
+_ICONS = [
+    ("customer", "👤"), ("client", "👤"), ("person", "👤"), ("employee", "🧑‍💼"), ("user", "👤"), ("account", "🗂️"),
+    ("product", "📦"), ("sku", "📦"), ("item", "📦"), ("order", "🧾"), ("sale", "🧾"), ("invoice", "🧾"), ("transaction", "💳"),
+    ("payment", "💰"), ("price", "🏷️"), ("promotion", "🎯"), ("promo", "🎯"), ("campaign", "📣"), ("target", "🎯"),
+    ("forecast", "📈"), ("metric", "📊"), ("kpi", "📊"), ("store", "🏬"), ("shop", "🏬"), ("warehouse", "🏭"),
+    ("supplier", "🚚"), ("vendor", "🚚"), ("shipment", "🚚"), ("org", "🏢"), ("company", "🏢"), ("department", "🏢"),
+    ("hierarchy", "🏢"), ("team", "👥"), ("calendar", "📅"), ("date", "📅"), ("time", "⏱️"), ("geo", "🌍"),
+    ("country", "🌍"), ("region", "🌍"), ("city", "🏙️"), ("address", "📍"), ("location", "📍"), ("currency", "💱"),
+    ("channel", "📡"), ("contract", "📝"), ("claim", "📋"), ("ticket", "🎫"), ("call", "📞"), ("email", "✉️"),
+    ("device", "📟"), ("meter", "📟"), ("sensor", "📡"), ("vehicle", "🚗"), ("trip", "🚕"), ("event", "⚡"),
+    ("business", "💼"), ("segment", "🧩"), ("category", "🗃️"), ("type", "🏷️"), ("uom", "📏"), ("pack", "📏"), ("unit", "📏"),
+    ("skill", "🛠️"), ("project", "📁"), ("document", "📄"), ("review", "⭐"), ("rating", "⭐"), ("weather", "🌦️"),
+]
+
+
+def icon_for(class_name: str) -> str:
+    name = re.sub(r"(?<!^)(?=[A-Z])", "_", class_name).lower()
+    for key, glyph in sorted(_ICONS, key=lambda kv: -len(kv[0])):
+        if key in name:
+            return glyph
+    return "🔹"
+
+
 @dataclass(frozen=True)
 class InferredKeys:
     primary_key: tuple[str, ...]
@@ -138,7 +162,7 @@ def draft_from_catalog(catalog: CatalogAdapter, *, ontology_iri: str, base_iri: 
     for t, m in meta.items():
         if m.is_link_table:
             continue
-        onto.add_class(OntoClass(class_iri[t], label=humanize(onto.local_name(class_iri[t]))))
+        onto.add_class(OntoClass(class_iri[t], label=humanize(onto.local_name(class_iri[t])), icon=icon_for(onto.local_name(class_iri[t]))))
         attributes = []
         for col, sql_type in m.columns.items():
             if col in m.fk_columns:

@@ -3,6 +3,7 @@ import { api, identity, loadAuthConfig, authConfig } from "./api.js";
 import { h, clear, button, input, field, dialog, toast, errorToast, badge } from "./ui.js";
 import { domainsView } from "./views/domains.js";
 import { domainView, DOMAIN_TABS } from "./views/domain.js";
+import { iconEl } from "./icons.js";
 import { adminView } from "./views/admin.js";
 import { tasksView } from "./views/tasks.js";
 
@@ -14,7 +15,16 @@ const routes = [
   { re: /^#\/d\/([^/]+)(?:\/([^/]+))?(?:\/(.*))?$/, view: (m) => domainView(decodeURIComponent(m[1]), m[2] || "overview", m[3] ? decodeURIComponent(m[3]) : null) },
 ];
 
-export const state = { me: null, domain: null, version: null };
+export const state = { me: null, domain: null, version: null, progress: null };
+
+const THEME_KEY = "of.theme";
+export function applyTheme(t) { const v = t || localStorage.getItem(THEME_KEY) || ""; if (v) document.documentElement.dataset.theme = v; else delete document.documentElement.dataset.theme; }
+function toggleTheme() {
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  const cur = localStorage.getItem(THEME_KEY) || (dark ? "dark" : "light");
+  const next = cur === "dark" ? "light" : "dark";
+  localStorage.setItem(THEME_KEY, next); applyTheme(next); renderTopbar();
+}
 
 export async function whoami() {
   try { state.me = await api.get("/me"); } catch (e) { state.me = null; if (e.status !== 401) errorToast(e); }
@@ -42,15 +52,26 @@ function identityDialog() {
 
 function renderTopbar() {
   const bar = clear(document.getElementById("topbar"));
-  const crumbs = h("nav", { class: "crumbs", "aria-label": "Breadcrumb" }, h("a", { href: "#/domains" }, "Domains"));
-  if (state.domain) crumbs.append(h("span", {}, "›"), h("a", { href: `#/d/${encodeURIComponent(state.domain.name)}` }, state.domain.name));
-  if (state.version) crumbs.append(h("span", {}, "›"), h("span", {}, `v${state.version.version}`), badge(state.version.status));
+  const crumbs = h("nav", { class: "crumbs", "aria-label": "Breadcrumb" }, h("a", { href: "#/domains" }, iconEl("overview"), "Domains"));
+  if (state.domain) {
+    const base = `#/d/${encodeURIComponent(state.domain.name)}`;
+    crumbs.append(h("span", { class: "sep" }, "›"), h("a", { href: base, class: "crumb" }, iconEl("domain"), state.domain.name,
+      state.version ? h("span", { class: "muted" }, ` v${state.version.version}`) : null));
+    const p = state.progress || {};
+    for (const [id, label, done] of [["ontology", "Ontology", p.ontology], ["mapping", "Mapping", p.mapping], ["build", "Graph", p.built]]) {
+      crumbs.append(h("span", { class: "sep" }, "›"), h("a", { href: `${base}/${id}`, class: `crumb step ${done ? "done" : ""}` },
+        h("span", { class: "tick", "aria-hidden": "true" }, done ? iconEl("check") : ""), label));
+    }
+    if (state.version) crumbs.append(badge(state.version.status));
+  }
   const me = state.me;
+  const dark = (localStorage.getItem(THEME_KEY) || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")) === "dark";
   bar.append(
     h("a", { class: "brand", href: "#/domains" }, h("span", { class: "dot", "aria-hidden": "true" }), "ontoforge"),
     crumbs, h("div", { class: "spacer" }),
-    h("a", { href: "#/tasks", class: "muted" }, "My tasks"),
-    me?.role === "admin" ? h("a", { href: "#/admin", class: "muted" }, "Admin") : null,
+    h("a", { href: "#/tasks", class: "topnav" }, iconEl("tasks"), "My tasks"),
+    me?.role === "admin" ? h("a", { href: "#/admin", class: "topnav" }, iconEl("shield"), "Admin") : null,
+    button(iconEl(dark ? "sun" : "moon"), { class: "sm ghost", title: dark ? "Switch to light theme" : "Switch to dark theme", "aria-label": "Toggle theme", onClick: toggleTheme }),
     h("div", { class: "identity" },
       me ? h("span", { class: "chip", title: `role: ${me.role}` }, me.name, h("span", { class: "muted" }, me.role)) : h("span", { class: "chip" }, "not signed in"),
       button(me ? "Switch" : "Sign in", { class: "sm", onClick: identityDialog })));
@@ -68,7 +89,7 @@ export function renderSidenav(items, activeId, base, versions = null) {
   let group = null;
   for (const it of items) {
     if (it.group && it.group !== group) { group = it.group; nav.append(h("div", { class: "group" }, group)); }
-    nav.append(h("a", { href: `${base}/${it.id}`, "aria-current": it.id === activeId ? "page" : null }, it.label, it.count !== undefined ? h("span", { class: "chip" }, it.count) : null));
+    nav.append(h("a", { href: `${base}/${it.id}`, "aria-current": it.id === activeId ? "page" : null }, h("span", { class: "nav-label" }, iconEl(it.icon || it.id), it.label), it.count !== undefined ? h("span", { class: "chip" }, it.count) : null));
   }
 }
 
@@ -98,6 +119,7 @@ export async function route() {
 
 window.addEventListener("hashchange", route);
 (async () => {
+  applyTheme();
   await loadAuthConfig();
   await whoami();
   if (!state.me) identityDialog();

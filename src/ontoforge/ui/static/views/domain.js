@@ -14,17 +14,17 @@ import { settingsTab } from "./settings.js";
 import { triplesTab } from "./triples.js";
 
 export const DOMAIN_TABS = [
-  { id: "overview", label: "Overview", group: "Domain" },
-  { id: "metadata", label: "Metadata", group: "Design" },
-  { id: "ontology", label: "Ontology", group: "Design" },
-  { id: "mapping", label: "Mapping", group: "Design" },
-  { id: "rules", label: "Rules", group: "Design" },
-  { id: "quality", label: "Data quality", group: "Design" },
-  { id: "build", label: "Build", group: "Knowledge graph" },
-  { id: "explore", label: "Explore", group: "Knowledge graph" },
-  { id: "triples", label: "Triples", group: "Knowledge graph" },
-  { id: "analytics", label: "Analytics", group: "Knowledge graph" },
-  { id: "settings", label: "Settings", group: "Domain" },
+  { id: "overview", label: "Overview", group: "Domain", icon: "info" },
+  { id: "metadata", label: "Metadata", group: "Design", icon: "table" },
+  { id: "ontology", label: "Ontology", group: "Design", icon: "ontology" },
+  { id: "mapping", label: "Mapping", group: "Design", icon: "mapping" },
+  { id: "rules", label: "Rules", group: "Design", icon: "rules" },
+  { id: "quality", label: "Data quality", group: "Design", icon: "quality" },
+  { id: "build", label: "Build", group: "Knowledge graph", icon: "build" },
+  { id: "explore", label: "Explore", group: "Knowledge graph", icon: "explore" },
+  { id: "triples", label: "Triples", group: "Knowledge graph", icon: "triples" },
+  { id: "analytics", label: "Analytics", group: "Knowledge graph", icon: "analytics" },
+  { id: "settings", label: "Settings", group: "Domain", icon: "settings" },
 ];
 
 export async function domainView(name, tab, arg) {
@@ -33,6 +33,8 @@ export async function domainView(name, tab, arg) {
   const wanted = localStorage.getItem(`of.version.${name}`);
   const version = versions.find(v => String(v.version) === wanted) || versions.find(v => v.status === "draft") || versions[0] || null;
   state.domain = domain; state.version = version;
+  state.progress = version ? { ontology: version.has_ontology, mapping: version.has_mapping, built: false } : null;
+  if (version) api.get(`/versions/${version.id}/builds`).then(runs => { state.progress.built = runs.some(r => r.status === "succeeded"); }).catch(() => {});
   renderSidenav(DOMAIN_TABS, tab, `#/d/${encodeURIComponent(name)}`, versions);
   const reload = () => { const target = `#/d/${encodeURIComponent(name)}/${tab}`; if (location.hash === target) return route(); location.hash = target; return Promise.resolve(); };
   const ctx = { domain, version, versions, name, reload, arg };

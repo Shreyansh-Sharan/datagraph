@@ -144,3 +144,12 @@ def test_shared_relations_get_union_domains_instead_of_last_writer_wins():
     assert {onto.local_name(r.source_class) for r in spec.relations if r.property_iri == p.iri} == {"Sale", "Target"}
     from ontoforge.mapping import mapping_status
     assert mapping_status(onto, spec).completion == 1.0
+
+
+def test_autodraft_assigns_icons_from_class_names():
+    from ontoforge.autodraft import icon_for
+    assert icon_for("Customer") == "👤" and icon_for("Product") == "📦" and icon_for("SalesOrgHierarchy") == "🏢"
+    assert icon_for("Calendar") == "📅" and icon_for("Geography") == "🌍" and icon_for("Sale") == "🧾"
+    assert icon_for("QuantumFlux") == "🔹"
+    onto, spec = draft_from_catalog(RgmCatalog(), ontology_iri="http://d/fin", base_iri="http://d/fin/")
+    assert onto.classes["http://d/fin#Product"].icon == "📦" and onto.classes["http://d/fin#Store"].icon == "🏬"

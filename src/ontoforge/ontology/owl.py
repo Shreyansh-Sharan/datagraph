@@ -7,6 +7,8 @@ from rdflib.namespace import OWL, RDF, RDFS, XSD
 
 from .model import DatatypeProperty, ObjectProperty, OntoClass, Ontology, Restriction
 
+UI_ICON = URIRef("http://ontoforge.dev/ui#icon")   # annotation property carrying the class glyph
+
 _CHARACTERISTIC_CLASS = {
     "functional": OWL.FunctionalProperty, "inverse_functional": OWL.InverseFunctionalProperty,
     "transitive": OWL.TransitiveProperty, "symmetric": OWL.SymmetricProperty, "asymmetric": OWL.AsymmetricProperty,
@@ -20,6 +22,7 @@ _VALUE = {"some": OWL.someValuesFrom, "only": OWL.allValuesFrom, "has_value": OW
 def to_turtle(o: Ontology) -> str:
     g = Graph()
     g.bind("owl", OWL)
+    g.bind("ofui", "http://ontoforge.dev/ui#")
     root = URIRef(o.iri)
     g.add((root, RDF.type, OWL.Ontology))
     _annotate(g, root, o.label, o.description)
@@ -35,6 +38,8 @@ def to_turtle(o: Ontology) -> str:
             g.add((node, OWL.disjointWith, URIRef(d)))
         for r in c.restrictions:
             g.add((node, RDFS.subClassOf, _restriction(g, r)))
+        if c.icon:
+            g.add((node, UI_ICON, Literal(c.icon)))
     for p in o.object_properties.values():
         node = URIRef(p.iri)
         g.add((node, RDF.type, OWL.ObjectProperty))
@@ -83,7 +88,7 @@ def from_rdf(data: str, fmt: str = "turtle") -> Ontology:
         o.add_class(OntoClass(str(node), _label(g, node), _text(g, node, RDFS.comment), tuple(sorted(parents)),
                               tuple(sorted(str(x) for x in g.objects(node, OWL.equivalentClass) if isinstance(x, URIRef))),
                               tuple(sorted(str(x) for x in g.objects(node, OWL.disjointWith) if isinstance(x, URIRef))),
-                              tuple(restrictions)))
+                              tuple(restrictions), _text(g, node, UI_ICON)))
     for node in sorted(g.subjects(RDF.type, OWL.ObjectProperty), key=str):
         chars = tuple(ch for t in g.objects(node, RDF.type) if (ch := _CLASS_CHARACTERISTIC.get(t)))
         chains = tuple(tuple(str(x) for x in Collection(g, head)) for head in g.objects(node, OWL.propertyChainAxiom))

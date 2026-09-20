@@ -39,6 +39,7 @@ class OntoClass:
     equivalent_to: tuple[str, ...] = ()
     disjoint_with: tuple[str, ...] = ()
     restrictions: tuple[Restriction, ...] = ()
+    icon: str | None = None                    # a short glyph (emoji) used by the UI; stored as an annotation
 
     def __post_init__(self) -> None:
         # Sets in OWL; normalise order so equality and round-trips are stable.
@@ -260,7 +261,8 @@ class Ontology:
         for c in d.get("classes", []):
             o.add_class(OntoClass(c["iri"], c.get("label"), c.get("description"), tuple(c.get("parents", ())),
                                   tuple(c.get("equivalent_to", ())), tuple(c.get("disjoint_with", ())),
-                                  tuple(Restriction(r["property"], r["kind"], r["value"]) for r in c.get("restrictions", ()))))
+                                  tuple(Restriction(r["property"], r["kind"], r["value"]) for r in c.get("restrictions", ())),
+                                  c.get("icon") or None))
         for p in d.get("object_properties", []):
             o.add_object_property(ObjectProperty(p["iri"], p.get("label"), p.get("description"), p.get("domain"),
                                                  p.get("range"), p.get("inverse_of"), tuple(p.get("characteristics", ())),

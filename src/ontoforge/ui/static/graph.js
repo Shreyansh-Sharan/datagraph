@@ -30,8 +30,9 @@ export function renderGraph(container, opts) {
 
   const graph = new graphology.Graph({ multi: false, type: "directed" });
   const types = palette(opts.nodes.map(n => n.type || "?"));
+  const withGlyph = (n) => (n.glyph ? `${n.glyph} ${n.label || n.id}` : (n.label || n.id));
   for (const n of opts.nodes) {
-    if (!graph.hasNode(n.id)) graph.addNode(n.id, { label: n.label || n.id, cls: n.type || "?", color: n.color || types.get(n.type || "?") || "#5a6470", size: n.size || 4, x: Math.random(), y: Math.random() });
+    if (!graph.hasNode(n.id)) graph.addNode(n.id, { label: withGlyph(n), plain: n.label || n.id, glyph: n.glyph || "", cls: n.type || "?", color: n.color || types.get(n.type || "?") || "#5a6470", size: n.size || 4, x: Math.random(), y: Math.random() });
   }
   for (const e of opts.edges) {
     if (graph.hasNode(e.source) && graph.hasNode(e.target) && !graph.hasEdge(e.source, e.target)) graph.addEdge(e.source, e.target, { label: e.label || "", size: 1, type: "arrow" });
@@ -47,6 +48,9 @@ export function renderGraph(container, opts) {
   let highlighted = new Set();            // search hits
   let selected = opts.selected && graph.hasNode(opts.selected) ? opts.selected : null;
   let hovered = null;
+  let backdrop = !!opts.backdrop && !selected;   // whole-graph context: everything grey until a node is focused
+  let hideEdges = false, hideOrphans = false;
+  const backdropColor = () => mix(css("--border-strong") || "#b8bec6", css("--surface") || "#fff", 0.35);
   const ink = () => css("--text") || "#1b2026";
   const dimEdge = () => css("--border") || "#d7dbe0";
 
@@ -59,8 +63,10 @@ export function renderGraph(container, opts) {
     nodeReducer: (node, data) => {
       const d = { ...data };
       if (hidden.has(node)) { d.hidden = true; return d; }
+      if (hideOrphans && graph.degree(node) === 0) { d.hidden = true; return d; }
       if (colorBy === "community" && communities && communities[node] !== undefined) d.color = CLASS_COLORS[communities[node] % CLASS_COLORS.length];
       const focus = hovered || selected;
+      if (backdrop && !focus && !highlighted.size) { d.color = backdropColor(); d.label = ""; d.size = Math.max(2, data.size * 0.6); return d; }
       if (focus && node !== focus && !graph.areNeighbors(focus, node)) { d.color = mix(d.color, css("--surface") || "#fff", 0.82); d.label = ""; d.zIndex = 0; }
       else d.zIndex = 1;
       if (highlighted.size && !highlighted.has(node) && !focus) { d.color = mix(d.color, css("--surface") || "#fff", 0.75); }
@@ -70,7 +76,8 @@ export function renderGraph(container, opts) {
     },
     edgeReducer: (edge, data) => {
       const d = { ...data, color: dimEdge() };
-      if (hidden.has(graph.source(edge)) || hidden.has(graph.target(edge))) { d.hidden = true; return d; }
+      if (hideEdges || hidden.has(graph.source(edge)) || hidden.has(graph.target(edge))) { d.hidden = true; return d; }
+      if (backdrop && !(hovered || selected) && !highlighted.size) { d.color = mix(dimEdge(), css("--surface") || "#fff", 0.5); d.size = 0.6; return d; }
       const focus = hovered || selected;
       if (focus) {
         if (graph.hasExtremity(edge, focus)) { d.color = mix(ink(), dimEdge(), 0.35); d.size = 1.6; d.zIndex = 1; }
@@ -105,7 +112,7 @@ export function renderGraph(container, opts) {
   renderer.on("clickNode", ({ node }) => { const a = graph.getNodeAttributes(node); if (a.superNode) { expandCluster(a.community); } });
 
   function nodeOf(id) { const a = graph.getNodeAttributes(id); return { id, label: a.label, type: a.cls }; }
-  function select(id) { selected = graph.hasNode(id) ? id : null; renderer.refresh(); }
+  function select(id) { selected = graph.hasNode(id) ? id : null; if (selected) backdrop = false; renderer.refresh(); }
   function fit() { renderer.getCamera().animatedReset({ duration: 250 }); }
   function focusOn(id) {
     if (!graph.hasNode(id)) return;
@@ -203,7 +210,8 @@ export function renderGraph(container, opts) {
     if (ev.key === "Enter" && selected) opts.onExpand?.(nodeOf(selected));
     if (ev.key === "f") fit();
   });
-  const ro = new ResizeObserver(() => renderer.refresh());
+  let sized = container.clientWidth > 0;
+  const ro = new ResizeObserver(() => { renderer.refresh(); if (!sized && container.clientWidth > 0) { sized = true; fit(); } });
   ro.observe(container);
   renderLegend();
   if (colorBy === "community") setColorBy("community");
@@ -219,11 +227,17 @@ export function renderGraph(container, opts) {
       renderer.refresh();
       if (highlighted.size) focusOn([...highlighted][0]);
     },
+    setting: (name, value) => {
+      if (name === "renderLabels") renderer.setSetting("renderLabels", !!value);
+      else if (name === "hideEdges") { hideEdges = !!value; renderer.refresh(); }
+      else if (name === "hideOrphans") { hideOrphans = !!value; renderer.refresh(); }
+    },
+    attrs: (id) => (graph.hasNode(id) ? graph.getNodeAttributes(id) : null),
     clearHighlight: () => { highlighted = new Set(); renderer.refresh(); },
     has: (id) => graph.hasNode(id),
     merge: ({ nodes, edges }) => {   // add a neighbourhood without discarding the current picture
       const t2 = palette([...graph.mapNodes((n, a) => a.cls), ...nodes.map(n => n.type || "?")]);
-      for (const n of nodes) if (!graph.hasNode(n.id)) graph.addNode(n.id, { label: n.label || n.id, cls: n.type || "?", color: t2.get(n.type || "?"), size: 4, x: Math.random(), y: Math.random() });
+      for (const n of nodes) if (!graph.hasNode(n.id)) graph.addNode(n.id, { label: withGlyph(n), plain: n.label || n.id, glyph: n.glyph || "", cls: n.type || "?", color: t2.get(n.type || "?"), size: 4, x: Math.random(), y: Math.random() });
       for (const e of edges) if (graph.hasNode(e.source) && graph.hasNode(e.target) && !graph.hasEdge(e.source, e.target)) graph.addEdge(e.source, e.target, { label: e.label || "", size: 1, type: "arrow" });
       graph.forEachNode((n, a) => { if (!types.has(a.cls)) types.set(a.cls, t2.get(a.cls)); graph.setNodeAttribute(n, "color", types.get(a.cls)); });
       sizeByDegree(graph); layout(graph, true); communities = null; if (colorBy === "community") setColorBy("community"); renderLegend();
