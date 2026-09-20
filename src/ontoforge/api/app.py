@@ -13,6 +13,7 @@ from ontoforge.config import Settings, load_settings
 from ontoforge.db import Database, run_migrations
 from ontoforge.llm import AnthropicProvider, LLMOutputError, LLMProvider, LLMUnavailable
 from ontoforge.mapping import MappingSpecError
+from ontoforge.observability import RequestLoggingMiddleware, configure_logging
 from ontoforge.r2rml import MappingError
 from ontoforge.reasoning import Reasoner
 from ontoforge.registry import LifecycleError, LockedError, NotFound, Registry
@@ -27,7 +28,9 @@ _STATUS = {AuthError: 401, Forbidden: 403, NotFound: 404, LifecycleError: 409, L
 def create_app(db: Database, source_db: Database | None = None, settings: Settings | None = None,
                llm: LLMProvider | None = None) -> FastAPI:
     settings = settings or load_settings()
+    configure_logging(settings.log_format, settings.log_level)
     app = FastAPI(title="ontoforge", version="0.1.0")
+    app.add_middleware(RequestLoggingMiddleware, identity_header=settings.auth_header)
     app.state.settings = settings
     app.state.db = db
     app.state.registry = Registry(db)

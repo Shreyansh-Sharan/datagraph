@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     database_schema: str | None = None
     base_iri: str = "http://ontoforge.local/"
     build_workers: int = 2
+    log_format: str = "text"            # "text" | "json"
+    log_level: str = "INFO"
 
     auth_mode: str = "header"           # "header" (trusted proxy / dev) | "token" (API keys)
     auth_header: str = "X-Actor"        # identity header in header mode (Databricks Apps: X-Forwarded-Email)

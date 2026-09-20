@@ -6,6 +6,7 @@ triples untouched (the load itself is one transaction, so a cancel during it is 
 """
 from __future__ import annotations
 
+import logging
 import time
 from typing import Callable
 from uuid import UUID
@@ -17,6 +18,9 @@ from ontoforge.registry import BuildRun, Registry
 from ontoforge.store import TripleStore
 
 from .source import PostgresSource, SourceEngine
+
+
+log = logging.getLogger("ontoforge.build")
 
 
 class BuildError(Exception):
@@ -36,11 +40,18 @@ class BuildPipeline:
         run = run or self.registry.start_build(version_id, actor=actor)
         steps: list[dict] = []
         cancelled = cancel_check or (lambda: False)
+        ctx = {"run_id": str(run.id), "version_id": str(version_id)}
+        log.info("build started", extra={"event": "build.started", **ctx})
+
+        def on_step_done():
+            self.registry.update_build_steps(run.id, steps)
+            log.info("step %s %.3fs", steps[-1]["name"], steps[-1]["seconds"],
+                     extra={"event": "build.step", "step": steps[-1]["name"], "seconds": steps[-1]["seconds"], **ctx})
 
         def step(name: str):
             if cancelled():
                 raise BuildCancelled(f"cancelled before {name}")
-            return _step(steps, name, on_done=lambda: self.registry.update_build_steps(run.id, steps))
+            return _step(steps, name, on_done=on_step_done)
 
         try:
             with step("compile"):
@@ -56,10 +67,13 @@ class BuildPipeline:
                 steps[-1]["detail"] = {"triples": count}
             with step("finalize"):
                 counted = self.store.count(version_id)
+            log.info("build succeeded: %d triples", counted, extra={"event": "build.succeeded", "triples": counted, **ctx})
             return self.registry.finish_build(run.id, status="succeeded", triple_count=counted, steps=steps)
         except BuildCancelled as exc:
+            log.warning("build cancelled", extra={"event": "build.cancelled", **ctx})
             return self.registry.finish_build(run.id, status="cancelled", error=str(exc), steps=steps)
         except Exception as exc:  # noqa: BLE001 - every failure must be recorded on the run
+            log.error("build failed: %s", exc, extra={"event": "build.failed", "error": str(exc), **ctx}, exc_info=True)
             return self.registry.finish_build(run.id, status="failed", error=f"{type(exc).__name__}: {exc}", steps=steps)
 
     # -- overridable stages ---------------------------------------------------
