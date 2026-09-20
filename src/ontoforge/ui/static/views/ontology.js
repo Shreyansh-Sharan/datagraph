@@ -56,10 +56,11 @@ export async function ontologyTab(ctx) {
     return h("div", { class: "split" }, left, cls ? classDetail(cls) : h("div", { class: "card muted" }, "Select a class to see its properties."));
   }
 
+  const domainsOf = (p) => (p.domains && p.domains.length ? p.domains : (p.domain ? [p.domain] : []));
   function propsOf(iri) {
     const anc = ancestors(iri);
     return [...onto.datatype_properties.map(p => ({ ...p, kind: "attribute" })), ...onto.object_properties.map(p => ({ ...p, kind: "relationship" }))]
-      .filter(p => p.domain === iri || p.domain === null || anc.includes(p.domain));
+      .filter(p => p.domain === null || domainsOf(p).some(d => d === iri || anc.includes(d)));
   }
   function ancestors(iri) { const out = []; const stack = [...(onto.classes.find(c => c.iri === iri)?.parents || [])]; while (stack.length) { const p = stack.shift(); if (out.includes(p)) continue; out.push(p); stack.push(...(onto.classes.find(c => c.iri === p)?.parents || [])); } return out; }
 
@@ -71,11 +72,13 @@ export async function ontologyTab(ctx) {
     [label, desc, parents].forEach(el => el.addEventListener("change", apply));
     const props = propsOf(cls.iri);
     const propTable = table([
-      { label: "Property", render: p => h("span", {}, h("strong", {}, p.label || local(p.iri)), p.domain !== cls.iri ? h("span", { class: "muted small" }, p.domain ? ` (from ${local(p.domain)})` : " (global)") : null) },
+      { label: "Property", render: p => h("span", {}, h("strong", {}, p.label || local(p.iri)),
+        !domainsOf(p).includes(cls.iri) ? h("span", { class: "muted small" }, p.domain ? ` (from ${domainsOf(p).map(local).join(", ")})` : " (global)")
+        : domainsOf(p).length > 1 ? h("span", { class: "muted small" }, ` (shared with ${domainsOf(p).filter(d => d !== cls.iri).map(local).join(", ")})`) : null) },
       { label: "Kind", render: p => badge(p.kind, "neutral") },
       { label: "Range", render: p => p.range ? local(p.range) : "—" },
       { label: "Traits", render: p => h("span", { class: "small muted" }, [p.functional ? "functional" : null, ...(p.characteristics || [])].filter(Boolean).join(", ") || "—") },
-      { label: "", render: p => editable && p.domain === cls.iri ? h("span", { class: "row" }, button("Edit", { class: "sm", onClick: () => propertyDialog(p, cls.iri) }), button("Remove", { class: "sm ghost", onClick: () => removeProperty(p) })) : null },
+      { label: "", render: p => editable && domainsOf(p).includes(cls.iri) ? h("span", { class: "row" }, button("Edit", { class: "sm", onClick: () => propertyDialog(p, cls.iri) }), button("Remove", { class: "sm ghost", onClick: () => removeProperty(p) })) : null },
     ], props);
     const restr = h("div", {}, h("h3", {}, "Restrictions", editable ? button("Add", { class: "sm", onClick: () => restrictionDialog(cls) }) : null),
       (cls.restrictions || []).length ? h("ul", { class: "list small" }, cls.restrictions.map((r, i) => h("li", {}, h("span", {}, `${local(r.property)} ${r.kind} ${typeof r.value === "string" ? local(r.value) : r.value}`), editable ? button("×", { class: "sm ghost", "aria-label": "Remove restriction", onClick: () => { cls.restrictions.splice(i, 1); render(); } }) : null))) : h("p", { class: "muted small" }, "None."));
@@ -128,7 +131,8 @@ export async function ontologyTab(ctx) {
       { confirm: existing ? "Save" : "Add", onConfirm: () => {
         const iri = existing?.iri || mint(name.value, false);
         if (!existing && (onto.datatype_properties.some(p => p.iri === iri) || onto.object_properties.some(p => p.iri === iri))) throw new Error("A property with that name exists");
-        const base = { iri, label: label.value || name.value, description: desc.value || null, domain: global.querySelector("input").checked ? null : domain };
+        const base = { iri, label: label.value || name.value, description: desc.value || null, domain: global.querySelector("input").checked ? null : (existing?.domain || domain),
+          domains: global.querySelector("input").checked ? [] : (existing?.domains || []) };
         if (isAttr) {
           const p = { ...base, range: XSD + range.value, functional: traits.querySelector("input").checked };
           const i = onto.datatype_properties.findIndex(x => x.iri === iri); i >= 0 ? onto.datatype_properties[i] = p : onto.datatype_properties.push(p);
@@ -218,7 +222,7 @@ export async function ontologyTab(ctx) {
   function graphView() {
     const box = h("div", { class: "graph stage-host tall" });
     const nodes = onto.classes.map(c => ({ id: c.iri, label: c.label || local(c.iri), type: c.parents?.length ? local(c.parents[0]) : "root" }));
-    const edges = [...onto.object_properties.filter(p => p.domain && p.range).map(p => ({ source: p.domain, target: p.range, label: local(p.iri) })),
+    const edges = [...onto.object_properties.filter(p => p.range).flatMap(p => domainsOf(p).map(d => ({ source: d, target: p.range, label: local(p.iri) }))),
       ...onto.classes.flatMap(c => (c.parents || []).map(p => ({ source: c.iri, target: p, label: "subclass of" })))];
     setTimeout(() => renderGraph(box, { nodes, edges, selected, showEdgeLabels: true, onSelect: n => { selected = n.id; }, onExpand: n => { selected = n.id; mode = "list"; render(); } }), 0);
     return h("div", {}, box, h("p", { class: "muted small" }, "Classes are nodes, relationships are edges (colour = parent class). Click to select, double-click or Enter to edit, arrow keys to move, F to fit."));

@@ -21,7 +21,9 @@ export async function mappingTab(ctx) {
     catch (e) { errorToast(e); }
   }
   const classSpec = (iri) => spec.classes.find(c => c.class_iri === iri);
-  const propsOf = (iri) => { const anc = ancestors(iri); return { attrs: onto.datatype_properties.filter(p => p.domain === iri || p.domain === null || anc.includes(p.domain)), rels: onto.object_properties.filter(p => p.domain === iri || anc.includes(p.domain)) }; };
+  const domainsOf = (p) => (p.domains && p.domains.length ? p.domains : (p.domain ? [p.domain] : []));
+  const inScope = (p, iri, anc, allowGlobal) => (p.domain === null ? allowGlobal : domainsOf(p).some(d => d === iri || anc.includes(d)));
+  const propsOf = (iri) => { const anc = ancestors(iri); return { attrs: onto.datatype_properties.filter(p => inScope(p, iri, anc, true)), rels: onto.object_properties.filter(p => inScope(p, iri, anc, false)) }; };
   function ancestors(iri) { const out = []; const stack = [...(onto.classes.find(c => c.iri === iri)?.parents || [])]; while (stack.length) { const p = stack.shift(); if (out.includes(p)) continue; out.push(p); stack.push(...(onto.classes.find(c => c.iri === p)?.parents || [])); } return out; }
 
   function render() {
