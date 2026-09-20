@@ -8,6 +8,15 @@ SQL Server to follow.
 
 ## Run it
 
+One command (starts Postgres in Docker, seeds a demo schema, serves API + UI, opens the browser):
+
+```bash
+make start                 # http://127.0.0.1:8765/ui/  — Ctrl-C to stop
+make install-service       # macOS: start at login and keep running (make uninstall-service to remove)
+```
+
+Step by step:
+
 ```bash
 docker compose up -d                       # Postgres 16 on :5439
 uv venv && uv pip install -e ".[dev]"
