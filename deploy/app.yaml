@@ -1,0 +1,26 @@
+# Databricks Apps manifest: `databricks apps deploy ontoforge --source-code-path .`
+# The app reads its identity header from the Apps proxy and talks to Lakebase/Postgres + a SQL Warehouse.
+command: ["uvicorn", "ontoforge.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+env:
+  - name: ONTOFORGE_AUTH_MODE
+    value: header
+  - name: ONTOFORGE_AUTH_HEADER
+    value: X-Forwarded-Email
+  - name: ONTOFORGE_AUTH_DEFAULT_ROLE
+    value: viewer
+  - name: ONTOFORGE_LOG_FORMAT
+    value: json
+  - name: ONTOFORGE_SOURCE_KIND
+    value: databricks
+  - name: ONTOFORGE_DATABRICKS_HOST
+    valueFrom: databricks-host          # app resource / secret
+  - name: ONTOFORGE_DATABRICKS_HTTP_PATH
+    valueFrom: sql-warehouse-http-path
+  - name: ONTOFORGE_DATABRICKS_TOKEN
+    valueFrom: databricks-token
+  - name: ONTOFORGE_DATABASE_URL
+    valueFrom: postgres-url             # Lakebase or any Postgres
+  - name: ONTOFORGE_WAREHOUSE_TARGET_SCHEMA
+    value: main.ontoforge
+  - name: ONTOFORGE_WAREHOUSE_MATERIALIZATION
+    value: view

@@ -20,7 +20,7 @@ from ontoforge.dialects import DIALECTS
 from ontoforge.graphql import build_schema
 from ontoforge.llm import LLMUnavailable, MappingSuggester, OntologyAssistant, OntologyDrafter, describe_tables
 from ontoforge.mapping import ClassMapping, MappingSpec, mapping_status
-from ontoforge.ontology import Ontology
+from ontoforge.ontology import INDUSTRY_ONTOLOGIES, Ontology, merge_ontologies
 from ontoforge.r2rml import serialize_r2rml
 from ontoforge.reasoning import generate_shapes
 from ontoforge.quality import ConstraintSet, QualityEngine, QualityError
@@ -56,6 +56,14 @@ class DomainIn(BaseModel):
 
 class OntologyIn(BaseModel):
     turtle: str
+
+
+class OntologyImportIn(BaseModel):
+    data: str | None = None
+    url: str | None = None
+    source: str | None = None            # a key of INDUSTRY_ONTOLOGIES
+    format: str = "turtle"               # turtle | xml | json-ld | n3 | nt
+    mode: str = "merge"                  # merge | replace
 
 
 class TransitionIn(BaseModel):
@@ -301,6 +309,45 @@ def get_version(version_id: UUID, request: Request):
 def put_ontology(version_id: UUID, body: OntologyIn, request: Request, me: Principal = Depends(builder)):
     Ontology.from_turtle(body.turtle)  # validate before storing
     return _version_json(_st(request).registry.update_content(version_id, actor=me.name, ontology_ttl=body.turtle))
+
+
+@router.get("/ontologies/industry")
+def industry_ontologies():
+    return INDUSTRY_ONTOLOGIES
+
+
+@router.post("/versions/{version_id}/ontology/import")
+def import_ontology(version_id: UUID, body: OntologyImportIn, request: Request, me: Principal = Depends(builder)):
+    fmt, data = body.format, body.data
+    if body.source:
+        entry = INDUSTRY_ONTOLOGIES.get(body.source)
+        if entry is None or not entry["url"]:
+            raise ValueError(f"Unknown or non-fetchable industry ontology {body.source!r}")
+        body.url, fmt = entry["url"], entry["format"]
+    if body.url:
+        import httpx
+        r = httpx.get(body.url, follow_redirects=True, timeout=60.0)
+        r.raise_for_status()
+        if len(r.content) > 64 * 1024 * 1024:
+            raise ValueError("Ontology file exceeds 64 MB")
+        data = r.text
+    if not data:
+        raise ValueError("Provide data, url or source")
+    if body.mode not in ("merge", "replace"):
+        raise ValueError("mode must be merge or replace")
+    try:
+        incoming = Ontology.from_rdf(data, fmt)
+    except Exception as exc:  # noqa: BLE001 - parser errors are user errors here
+        raise ValueError(f"Could not parse ontology ({fmt}): {exc}") from None
+    st = _st(request)
+    current = st.registry.get_version(version_id).ontology_ttl
+    if body.mode == "merge" and current:
+        merged, report = merge_ontologies(Ontology.from_turtle(current), incoming)
+    else:
+        merged, report = incoming, {"classes_added": len(incoming.classes), "classes_skipped": 0,
+                                    "properties_added": len(list(incoming.all_properties())), "properties_skipped": 0}
+    st.registry.update_content(version_id, actor=me.name, ontology_ttl=merged.to_turtle())
+    return {**_ontology_summary_json(merged), "report": report}
 
 
 @router.get("/versions/{version_id}/ontology")

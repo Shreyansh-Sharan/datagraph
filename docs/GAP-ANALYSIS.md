@@ -58,11 +58,11 @@ Legend: ✅ have · 🟡 partial · ❌ missing · ➖ not planned (UI-only or D
 | Community detection: Louvain, Label Propagation, Greedy Modularity | ✅ | optional persistence as inferred triples |
 | Centrality analytics: PageRank, betweenness, degree, closeness, clustering coefficient; histograms, ranking, sampling | ✅ | in-process networkx; sampled above 5k nodes |
 | Data-model health (flat / time-series entity types) | ✅ | |
-| AI graph interpretation (Key findings / notable entities / recommendations) | ❌ | fits the `LLMProvider` port |
-| Cohorts (criteria → materialised group, explainable) | ❌ | |
-| Bridges (cross-domain links) | ❌ | |
-| Datasets (link a table/view to a class, preview rows) | ❌ | |
-| Class actions / virtual attributes (SQL functions on an entity) | ❌ | generalise from UC functions to any SQL function |
+| AI graph interpretation (Key findings / notable entities / recommendations) | ✅ | `/analytics/runs/{id}/interpret` |
+| Cohorts (criteria → materialised group, explainable) | ✅ | per-member evidence; materialised as inferred triples |
+| Bridges (cross-domain links) | ✅ | key-matched counterparts, in REST + MCP |
+| Datasets (link a table/view to a class, preview rows) | ✅ | |
+| Class actions / virtual attributes (SQL functions on an entity) | ✅ | any SELECT with `:key` placeholders; MCP invoke/compute |
 | Sigma.js viewer, cluster collapse, dashboards embedding | ➖ | UI |
 
 ## 5. Reasoning & data quality
@@ -72,7 +72,7 @@ Legend: ✅ have · 🟡 partial · ❌ missing · ➖ not planned (UI-only or D
 | SHACL validation | ✅ | SQL-compiled constraints; pySHACL kept for ad-hoc shapes |
 | SWRL evaluation (violations + materialisation) | ✅ | |
 | Graph reasoning (transitive closure, symmetric expansion) | ✅ | via OWL RL with characteristics |
-| Quality checks with generated SQL: cardinality, value constraints, property characteristics, global rules (labels, orphans) | 🟡 | cardinality/value/pattern/datatype/class/unique via SQL; no global label/orphan rules yet |
+| Quality checks with generated SQL: cardinality, value constraints, property characteristics, global rules (labels, orphans) | ✅ | 14 kinds incl. require_label / no_orphans |
 | Async execution with progress | ❌ | |
 
 ## 6. Query & integration
@@ -82,7 +82,7 @@ Legend: ✅ have · 🟡 partial · ❌ missing · ➖ not planned (UI-only or D
 | Pagination (offset), configurable depth, batch resolution (N+1), schema cache invalidation | 🟡 | limit only; per-request rebuild; N+1 resolvers |
 | GraphiQL playground | ➖ | UI |
 | MCP: list_domains, describe_ontology, search, describe_entity, graph_status, GraphQL tools | ✅ | |
-| MCP: select_domain session, list_domain_versions, get_design_status, get_entity_context, invoke_entity_action | 🟡 | all but invoke_entity_action (needs class actions) |
+| MCP: select_domain session, list_domain_versions, get_design_status, get_entity_context, invoke_entity_action | ✅ | 14 tools |
 | MCP: per-domain tool policy (Preferred / Normal / Disabled), hot switch | ✅ | exposed flag + disabled tools, checked per call |
 | MCP: Streamable HTTP transport | ✅ | mounted at `/mcp` behind API auth |
 
