@@ -124,6 +124,11 @@ class TestSqlIn(BaseModel):
     limit: int = Field(default=20, ge=1, le=500)
 
 
+class McpPolicyIn(BaseModel):
+    exposed: bool = True
+    disabled_tools: list[str] = Field(default_factory=list)
+
+
 class MetadataImportIn(BaseModel):
     tables: list[str]
     schema_name: str | None = None
@@ -218,6 +223,17 @@ def delete_domain(name: str, request: Request, me: Principal = Depends(admin)):
     reg = _st(request).registry
     reg.delete_domain(reg.get_domain(name).id)
     return Response(status_code=204)
+
+
+@router.get("/domains/{name}/mcp-policy")
+def get_mcp_policy(name: str, request: Request):
+    return _st(request).registry.get_domain(name).mcp_policy
+
+
+@router.put("/domains/{name}/mcp-policy")
+def put_mcp_policy(name: str, body: McpPolicyIn, request: Request, me: Principal = Depends(builder)):
+    reg = _st(request).registry
+    return reg.set_mcp_policy(reg.get_domain(name).id, body.model_dump()).mcp_policy
 
 
 @router.get("/domains/{name}/export")

@@ -10,11 +10,11 @@ Legend: ✅ have · 🟡 partial · ❌ missing · ➖ not planned (UI-only or D
 |---|---|---|
 | Classes, subclass hierarchy, object/datatype properties, domain/range, inverse | ✅ | `ontology/` |
 | OWL Turtle generation / OWL & RDFS import | ✅ | `to_turtle`, `from_rdf` |
-| Property characteristics (functional, transitive, symmetric, asymmetric, irreflexive) | ❌ | model can't express them; OWL RL would use them |
-| Cardinality / value restrictions on classes | ❌ | |
-| Axioms: equivalent, disjoint, union, intersection, property chains, disjoint properties | ❌ | |
-| SWRL rules (author, import/export .swrl, compile to SQL, evaluate) | ❌ | biggest single gap in reasoning |
-| SHACL shapes authored by users (6 categories, severity, messages, conditional IF rules, Turtle import) | 🟡 | shapes are only auto-generated from the ontology |
+| Property characteristics (functional, transitive, symmetric, asymmetric, irreflexive) | ✅ | model + OWL + OWL RL + SHACL + GraphQL |
+| Cardinality / value restrictions on classes | ✅ | min/max/exactly/some/only/hasValue |
+| Axioms: equivalent, disjoint, union, intersection, property chains, disjoint properties | 🟡 | equivalent, disjoint, chains, subPropertyOf; no union/intersection expressions |
+| SWRL rules (author, import/export .swrl, compile to SQL, evaluate) | ✅ | presentation syntax, SQL fixpoint materialisation, violation mode; no .swrl RDF import |
+| SHACL shapes authored by users (6 categories, severity, messages, conditional IF rules, Turtle import) | 🟡 | 12 constraint kinds, 3 severities, messages, SHACL import/export, SQL validation; no conditional IF rules |
 | Ontology pitfalls detector (19 checks) | 🟡 | 7 structural checks; D2KLab (Apache-2.0) can be added as-is |
 | Industry ontologies: FIBO, CDISC, IOF, HL7 FHIR | ❌ | verify each vocabulary's licence before bundling |
 | LLM ontology wizard (metadata + guidelines templates + document enrichment) | 🟡 | draft from metadata + description; no templates, no PDF/DOCX enrichment |
@@ -29,9 +29,9 @@ Legend: ✅ have · 🟡 partial · ❌ missing · ➖ not planned (UI-only or D
 | Schema-drift detection (renamed/dropped columns vs stored mapping) | ✅ | `/mapping/drift`, recorded as a build step |
 | Class→table / attribute→column mapping, key columns, IRI templates | ✅ | `MappingSpec` |
 | Relationship via FK, link table, self-reference | ✅ | join-free compile |
-| Relationship direction: reverse / bidirectional | ❌ | forward only |
-| Per-attribute include/exclude, completion %, partial-mapping status, gap report | ❌ | |
-| SQL query test / preview with row limit | ❌ | easy: compile one class, `LIMIT n` |
+| Relationship direction: reverse / bidirectional | ✅ | |
+| Per-attribute include/exclude, completion %, partial-mapping status, gap report | ✅ | `/mapping/status`, `/mapping/exclude*` |
+| SQL query test / preview with row limit | ✅ | `/mapping/preview`, `/mapping/test-sql` |
 | LLM auto-map | 🟡 | single-shot suggest; no batch progress, cancel, agent log, re-assign-missing |
 | Metadata quality warning (missing comments) | 🟡 | comments are captured; no warning surfaced yet |
 | R2RML generation | ✅ | |
@@ -55,9 +55,9 @@ Legend: ✅ have · 🟡 partial · ❌ missing · ➖ not planned (UI-only or D
 | Capability | Status | Note |
 |---|---|---|
 | Search, entity detail, N-hop neighbourhood, type/predicate inventory | ✅ | |
-| Community detection: Louvain, Label Propagation, Greedy Modularity | ❌ | `networkx` — small |
-| Centrality analytics: PageRank, betweenness, degree, closeness, clustering coefficient; histograms, ranking, sampling | ❌ | `networkx` in-process; their Lakeflow job is ➖ |
-| Data-model health (flat / time-series entity types) | ❌ | |
+| Community detection: Louvain, Label Propagation, Greedy Modularity | ✅ | optional persistence as inferred triples |
+| Centrality analytics: PageRank, betweenness, degree, closeness, clustering coefficient; histograms, ranking, sampling | ✅ | in-process networkx; sampled above 5k nodes |
+| Data-model health (flat / time-series entity types) | ✅ | |
 | AI graph interpretation (Key findings / notable entities / recommendations) | ❌ | fits the `LLMProvider` port |
 | Cohorts (criteria → materialised group, explainable) | ❌ | |
 | Bridges (cross-domain links) | ❌ | |
@@ -69,10 +69,10 @@ Legend: ✅ have · 🟡 partial · ❌ missing · ➖ not planned (UI-only or D
 | Capability | Status | Note |
 |---|---|---|
 | OWL 2 RL closure, inferred layer, purge | ✅ | purge has no endpoint yet |
-| SHACL validation | 🟡 | in-memory pySHACL only — won't scale; theirs compiles shapes to SQL |
-| SWRL evaluation (violations + materialisation) | ❌ | |
-| Graph reasoning (transitive closure, symmetric expansion) | 🟡 | OWL RL does it once characteristics exist in the model |
-| Quality checks with generated SQL: cardinality, value constraints, property characteristics, global rules (labels, orphans) | ❌ | |
+| SHACL validation | ✅ | SQL-compiled constraints; pySHACL kept for ad-hoc shapes |
+| SWRL evaluation (violations + materialisation) | ✅ | |
+| Graph reasoning (transitive closure, symmetric expansion) | ✅ | via OWL RL with characteristics |
+| Quality checks with generated SQL: cardinality, value constraints, property characteristics, global rules (labels, orphans) | 🟡 | cardinality/value/pattern/datatype/class/unique via SQL; no global label/orphan rules yet |
 | Async execution with progress | ❌ | |
 
 ## 6. Query & integration
@@ -82,9 +82,9 @@ Legend: ✅ have · 🟡 partial · ❌ missing · ➖ not planned (UI-only or D
 | Pagination (offset), configurable depth, batch resolution (N+1), schema cache invalidation | 🟡 | limit only; per-request rebuild; N+1 resolvers |
 | GraphiQL playground | ➖ | UI |
 | MCP: list_domains, describe_ontology, search, describe_entity, graph_status, GraphQL tools | ✅ | |
-| MCP: select_domain session, list_domain_versions, get_design_status, get_entity_context, invoke_entity_action | ❌ | |
-| MCP: per-domain tool policy (Preferred / Normal / Disabled), hot switch | ❌ | |
-| MCP: Streamable HTTP transport | 🟡 | stdio only wired |
+| MCP: select_domain session, list_domain_versions, get_design_status, get_entity_context, invoke_entity_action | 🟡 | all but invoke_entity_action (needs class actions) |
+| MCP: per-domain tool policy (Preferred / Normal / Disabled), hot switch | ✅ | exposed flag + disabled tools, checked per call |
+| MCP: Streamable HTTP transport | ✅ | mounted at `/mcp` behind API auth |
 
 ## 7. Governance & administration
 | Capability | Status | Note |

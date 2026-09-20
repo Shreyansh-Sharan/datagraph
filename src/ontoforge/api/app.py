@@ -1,19 +1,23 @@
 """FastAPI application factory. All state hangs off ``app.state``; routes read it via ``deps``."""
 from __future__ import annotations
 
+import json
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from starlette.datastructures import Headers
 
 from ontoforge.analytics import AnalyticsError, GraphAnalytics
 from ontoforge.auth import AuthError, Forbidden, Principals
+from ontoforge.auth.fastapi import principal_from_headers
 from ontoforge.build import BuildPipeline, BuildScheduler, DatabricksSource, PublishConfig, PostgresSource, SourceEngine, databricks_connect_factory
 from ontoforge.compiler import CompileError, IdentifierError
 from ontoforge.config import Settings, load_settings
 from ontoforge.db import Database, run_migrations
 from ontoforge.llm import AnthropicProvider, LLMOutputError, LLMProvider, LLMUnavailable
 from ontoforge.mapping import MappingSpecError
+from ontoforge.mcp import GraphTools, create_mcp_server
 from ontoforge.metadata import MetadataError, MetadataService
 from ontoforge.observability import RequestLoggingMiddleware, configure_logging
 from ontoforge.r2rml import MappingError
@@ -50,19 +54,48 @@ def create_app(db: Database, source_db: Database | None = None, settings: Settin
     app.state.reasoner = Reasoner(app.state.registry, app.state.store)
     app.state.analytics = GraphAnalytics(app.state.registry, app.state.store)
     app.state.llm = llm
+    mcp_app = _mcp_mount(app)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.registry.fail_stale_builds()   # no worker survives a restart
-        yield
+        async with mcp_app.router.lifespan_context(mcp_app):   # mounted apps don't get their lifespan run for them
+            yield
         app.state.scheduler.shutdown(wait=False)
 
     app.router.lifespan_context = lifespan
     app.include_router(open_router)
     app.include_router(router)
+    app.mount("/", _guarded(app, mcp_app))   # serves /mcp (Streamable HTTP); everything else 404s here
 
     for cls, code in _STATUS.items():
         app.add_exception_handler(cls, _handler(code))
     return app
+
+
+def _mcp_mount(app: FastAPI):
+    from mcp.server.transport_security import TransportSecuritySettings
+    tools = GraphTools(app.state.registry, app.state.store, app.state.metadata)
+    server = create_mcp_server(tools)
+    app.state.mcp_server = server
+    return server.streamable_http_app(streamable_http_path="/mcp", json_response=True, stateless_http=True,
+                                      transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False))
+
+
+def _guarded(app: FastAPI, inner):
+    """ASGI wrapper: the MCP transport sits behind the same authentication as the REST API."""
+    async def guarded(scope, receive, send):
+        if scope["type"] == "http":
+            try:
+                principal_from_headers(app.state.settings, app.state.principals, Headers(scope=scope))
+            except AuthError as exc:
+                body = json.dumps({"detail": str(exc)}).encode()
+                await send({"type": "http.response.start", "status": 401,
+                            "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]})
+                await send({"type": "http.response.body", "body": body})
+                return
+        await inner(scope, receive, send)
+    return guarded
 
 
 def _handler(code: int):

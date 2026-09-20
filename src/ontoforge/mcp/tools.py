@@ -11,24 +11,84 @@ from dataclasses import asdict
 
 from graphql import graphql_sync, print_schema
 
+from ontoforge.constants import MCP_TOOLS
 from ontoforge.graphql import build_schema
+from ontoforge.mapping import MappingSpec, mapping_status
 from ontoforge.ontology import DatatypeProperty, Ontology
-from ontoforge.registry import DomainVersion, NotFound, Registry, Status
+from ontoforge.registry import Domain, DomainVersion, NotFound, Registry, Status
 from ontoforge.store import TripleStore
 
 
 class GraphTools:
-    def __init__(self, registry: Registry, store: TripleStore) -> None:
-        self.registry, self.store = registry, store
+    def __init__(self, registry: Registry, store: TripleStore, metadata=None) -> None:
+        self.registry, self.store, self.metadata = registry, store, metadata
+        self.current: str | None = None   # domain selected with select_domain (per server instance)
 
     # -- domain resolution ------------------------------------------------------
 
-    def _version(self, domain: str) -> DomainVersion | None:
+    def _domain(self, domain: str | None) -> Domain | None:
+        name = domain or self.current
+        if not name:
+            return None
         try:
-            d = self.registry.get_domain(domain)
+            d = self.registry.get_domain(name)
         except NotFound:
             return None
+        return d if d.mcp_exposed else None
+
+    def _version(self, domain: str | None) -> DomainVersion | None:
+        d = self._domain(domain)
+        if d is None:
+            return None
         return self.registry.latest_version(d.id, status=Status.PUBLISHED) or self.registry.latest_version(d.id)
+
+    def _disabled(self, tool: str, domain: str | None) -> str | None:
+        d = self._domain(domain)
+        if d is not None and d.tool_disabled(tool):
+            return f"Tool {tool} is disabled for domain {d.name!r} by its MCP policy."
+        return None
+
+    def _unknown(self, domain: str | None) -> str:
+        name = domain or self.current
+        return (f"Unknown domain {name!r}. Call list_domains to see what exists." if name
+                else "No domain selected. Call select_domain(domain) first or pass domain explicitly.")
+
+    # -- registry-level tools ---------------------------------------------------
+
+    def select_domain(self, domain: str) -> dict:
+        v = self._version(domain)
+        if v is None:
+            return {"error": self._unknown(domain)}
+        self.current = domain
+        return {"selected": domain, "version": v.version, "status": v.status.value, "triples": self.store.count(v.id)}
+
+    def list_domain_versions(self, domain: str | None = None) -> list[dict]:
+        d = self._domain(domain)
+        if d is None:
+            return [{"error": self._unknown(domain)}]
+        out = []
+        for v in self.registry.list_versions(d.id):
+            build = self.registry.latest_build(v.id)
+            out.append({"version": v.version, "status": v.status.value, "has_ontology": bool(v.ontology_ttl),
+                        "has_mapping": bool(v.mapping), "built": bool(build and build.status == "succeeded"),
+                        "triples": self.store.count(v.id), "updated_at": v.updated_at.isoformat()})
+        return out
+
+    def get_design_status(self, domain: str | None = None) -> dict:
+        v = self._version(domain)
+        if v is None:
+            return {"error": self._unknown(domain)}
+        onto = self._ontology(v)
+        mapping = None
+        if onto and v.mapping:
+            st = mapping_status(onto, MappingSpec.from_dict(v.mapping))
+            mapping = {"completion": st.completion, "classes": st.summary["classes"], "complete_classes": st.summary["complete_classes"]}
+        build = self.registry.latest_build(v.id)
+        drift = len(self.metadata.drift(v.id)) if self.metadata else 0
+        return {"domain": domain or self.current, "version": v.version, "status": v.status.value,
+                "ontology": onto is not None, "classes": len(onto.classes) if onto else 0, "mapping": mapping,
+                "build_ready": bool(onto and v.mapping), "built": bool(build and build.status == "succeeded"),
+                "last_build": build.status if build else None, "triples": self.store.count(v.id), "drift_issues": drift}
 
     def _ontology(self, version: DomainVersion) -> Ontology | None:
         return Ontology.from_turtle(version.ontology_ttl) if version.ontology_ttl else None
@@ -38,6 +98,8 @@ class GraphTools:
     def list_domains(self) -> list[dict]:
         out = []
         for d in self.registry.list_domains():
+            if not d.mcp_exposed:
+                continue
             published = self.registry.latest_version(d.id, status=Status.PUBLISHED)
             v = published or self.registry.latest_version(d.id)
             out.append({"name": d.name, "description": d.description, "base_iri": d.base_iri,
@@ -46,10 +108,12 @@ class GraphTools:
                         "triples": self.store.count(v.id) if v else 0})
         return out
 
-    def describe_ontology(self, domain: str) -> str:
+    def describe_ontology(self, domain: str | None = None) -> str:
+        if msg := self._disabled("describe_ontology", domain):
+            return msg
         v = self._version(domain)
         if v is None:
-            return f"Unknown domain {domain!r}. Call list_domains to see what exists."
+            return self._unknown(domain)
         o = self._ontology(v)
         if o is None:
             return f"Domain {domain!r} has no ontology yet."
@@ -68,31 +132,73 @@ class GraphTools:
                 lines.append(f"  - {o.local_name(p.iri)} [{kind} -> {rng}]" + (f": {p.description}" if p.description else ""))
         return "\n".join(lines)
 
-    def graph_status(self, domain: str) -> dict:
+    def graph_status(self, domain: str | None = None) -> dict:
+        if msg := self._disabled("graph_status", domain):
+            return {"error": msg}
         v = self._version(domain)
         if v is None:
-            return {"error": f"Unknown domain {domain!r}"}
+            return {"error": self._unknown(domain)}
         return {"domain": domain, "version": v.version, "status": v.status.value,
                 "triples": self.store.count(v.id), "inferred": self.store.count(v.id, inferred=True),
                 "types": dict(self.store.type_inventory(v.id))}
 
-    def search_entities(self, domain: str, query: str, entity_type: str | None = None, limit: int = 10) -> list[dict]:
+    def list_entity_types(self, domain: str | None = None) -> dict:
+        if msg := self._disabled("list_entity_types", domain):
+            return {"error": msg}
         v = self._version(domain)
         if v is None:
-            return [{"error": f"Unknown domain {domain!r}"}]
-        type_iri = self._resolve_type(v, entity_type) if entity_type else None
-        return [asdict(e) for e in self.store.search(v.id, query, type_iri=type_iri, limit=max(1, min(limit, 100)))]
+            return {"error": self._unknown(domain)}
+        o = self._ontology(v) or Ontology(iri="urn:none")
+        return {"total_triples": self.store.count(v.id),
+                "types": [{"type": t, "name": o.local_name(t), "instances": n} for t, n in self.store.type_inventory(v.id)],
+                "predicates": [{"predicate": p, "name": o.local_name(p), "triples": n} for p, n in self.store.predicate_inventory(v.id)]}
 
-    def describe_entity(self, domain: str, entity: str, depth: int = 1) -> str:
+    def get_entity_context(self, domain: str | None, entity: str) -> dict:
+        if msg := self._disabled("get_entity_context", domain):
+            return {"error": msg}
         v = self._version(domain)
         if v is None:
-            return f"Unknown domain {domain!r}."
+            return {"error": self._unknown(domain)}
         detail = self.store.describe(v.id, entity)
         if detail is None:
             hits = self.store.search(v.id, entity, limit=1)
             detail = self.store.describe(v.id, hits[0].iri) if hits else None
         if detail is None:
-            return f"Entity {entity!r} not found in domain {domain!r}."
+            return {"error": f"Entity {entity!r} not found in domain {domain or self.current!r}."}
+        source = None
+        if v.mapping:
+            spec = MappingSpec.from_dict(v.mapping)
+            cm = next((c for c in spec.classes if c.class_iri in detail.types), None)
+            if cm:
+                source = {"table": cm.table, "sql_query": cm.sql_query, "key_columns": list(cm.key_columns),
+                          "columns": {a.property_iri: a.column for a in cm.attributes}}
+        return {"iri": detail.iri, "label": detail.label, "types": list(detail.types), "source": source,
+                "degree": {"outgoing": len(detail.outgoing), "incoming": len(detail.incoming)},
+                "attributes": {a.predicate: a.value for a in detail.attributes},
+                "predicates_out": sorted({r.predicate for r in detail.outgoing}),
+                "predicates_in": sorted({r.predicate for r in detail.incoming})}
+
+    def search_entities(self, domain: str | None, query: str, entity_type: str | None = None, limit: int = 10) -> list[dict]:
+        if msg := self._disabled("search_entities", domain):
+            return [{"error": msg}]
+        v = self._version(domain)
+        if v is None:
+            return [{"error": self._unknown(domain)}]
+        type_iri = self._resolve_type(v, entity_type) if entity_type else None
+        return [asdict(e) for e in self.store.search(v.id, query, type_iri=type_iri, limit=max(1, min(limit, 100)))]
+
+    def describe_entity(self, domain: str | None, entity: str, depth: int = 1) -> str:
+        if msg := self._disabled("describe_entity", domain):
+            return msg
+        v = self._version(domain)
+        if v is None:
+            return self._unknown(domain)
+        detail = self.store.describe(v.id, entity)
+        if detail is None:
+            hits = self.store.search(v.id, entity, limit=1)
+            detail = self.store.describe(v.id, hits[0].iri) if hits else None
+        if detail is None:
+            return f"Entity {entity!r} not found in domain {domain or self.current!r}."
         o = self._ontology(v) or Ontology(iri="urn:none")
         ln = o.local_name
         lines = [f"{detail.label} <{detail.iri}>", "Types: " + ", ".join(ln(t) for t in detail.types) or "Types: (none)"]
@@ -116,16 +222,20 @@ class GraphTools:
             lines += [f"  - {ln(e.source)} --{ln(e.predicate)}--> {ln(e.target)}" for e in sub.edges[:60]]
         return "\n".join(lines)
 
-    def get_graphql_schema(self, domain: str) -> str:
+    def get_graphql_schema(self, domain: str | None = None) -> str:
+        if msg := self._disabled("get_graphql_schema", domain):
+            return msg
         v = self._version(domain)
         if v is None:
-            return f"Unknown domain {domain!r}."
+            return self._unknown(domain)
         return print_schema(build_schema(self.registry, self.store, v.id))
 
-    def query_graphql(self, domain: str, query: str, variables: dict | None = None) -> str:
+    def query_graphql(self, domain: str | None, query: str, variables: dict | None = None) -> str:
+        if msg := self._disabled("query_graphql", domain):
+            return json.dumps({"errors": [{"message": msg}]})
         v = self._version(domain)
         if v is None:
-            return json.dumps({"errors": [{"message": f"Unknown domain {domain!r}"}]})
+            return json.dumps({"errors": [{"message": self._unknown(domain)}]})
         result = graphql_sync(build_schema(self.registry, self.store, v.id), query, variable_values=variables)
         out: dict = {"data": result.data}
         if result.errors:

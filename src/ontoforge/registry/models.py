@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from uuid import UUID
@@ -46,6 +46,14 @@ class Domain:
     base_iri: str
     review_quorum: int
     created_at: datetime
+    mcp_policy: dict = field(default_factory=lambda: {"exposed": True})
+
+    @property
+    def mcp_exposed(self) -> bool:
+        return bool(self.mcp_policy.get("exposed", True))
+
+    def tool_disabled(self, tool: str) -> bool:
+        return tool in self.mcp_policy.get("disabled_tools", [])
 
 
 @dataclass(frozen=True)

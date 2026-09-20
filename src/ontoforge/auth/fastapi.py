@@ -10,10 +10,13 @@ from .principals import Principals
 
 
 def resolve_principal(request: Request) -> Principal:
-    settings: Settings = request.app.state.settings
-    principals: Principals = request.app.state.principals
+    return principal_from_headers(request.app.state.settings, request.app.state.principals, request.headers)
+
+
+def principal_from_headers(settings: Settings, principals: Principals, headers) -> Principal:
+    """Shared by the FastAPI dependency and the raw-ASGI guard in front of the MCP mount."""
     if settings.auth_mode == "token":
-        header = request.headers.get("authorization", "")
+        header = headers.get("authorization", "")
         if not header.lower().startswith("bearer "):
             raise AuthError("Missing bearer token")
         key = principals.resolve_api_key(header[7:].strip())
@@ -21,7 +24,7 @@ def resolve_principal(request: Request) -> Principal:
             raise AuthError("Unknown or revoked API key")
         return Principal(key.principal, key.role)
     if settings.auth_mode == "header":
-        name = (request.headers.get(settings.auth_header) or "").strip()
+        name = (headers.get(settings.auth_header) or "").strip()
         if not name:
             raise AuthError(f"Missing identity header {settings.auth_header}")
         role = principals.get_role(name) or Role(settings.auth_default_role)

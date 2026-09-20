@@ -8,6 +8,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from ontoforge.constants import MCP_REGISTRY_TOOLS, MCP_TOOLS
 from ontoforge.db import Database
 
 from .models import (
@@ -53,6 +54,22 @@ class Registry:
     def list_domains(self) -> list[Domain]:
         with self._cur() as cur:
             return [Domain(**r) for r in cur.execute("SELECT * FROM domains ORDER BY name")]
+
+    def set_mcp_policy(self, domain_id: UUID, policy: dict) -> Domain:
+        disabled = list(policy.get("disabled_tools", []))
+        bad = [t for t in disabled if t not in MCP_TOOLS or t in MCP_REGISTRY_TOOLS]
+        if bad:
+            raise ValueError(f"Cannot disable tool(s) {', '.join(bad)}; domain-scoped tools are "
+                             f"{', '.join(t for t in MCP_TOOLS if t not in MCP_REGISTRY_TOOLS)}")
+        clean = {"exposed": bool(policy.get("exposed", True))}
+        if disabled:
+            clean["disabled_tools"] = sorted(set(disabled))
+        with self._cur() as cur:
+            row = cur.execute("UPDATE domains SET mcp_policy = %s WHERE id = %s RETURNING *", (Jsonb(clean), domain_id)).fetchone()
+            if row is None:
+                raise NotFound(f"Domain {domain_id}")
+            self._audit(cur, None, None, "mcp_policy.updated", {"domain": str(domain_id), **clean})
+            return Domain(**row)
 
     def delete_domain(self, domain_id: UUID) -> None:
         with self._cur() as cur:
