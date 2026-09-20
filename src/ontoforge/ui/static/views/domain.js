@@ -11,6 +11,7 @@ import { rulesTab } from "./rules.js";
 import { qualityTab } from "./quality.js";
 import { analyticsTab } from "./analytics.js";
 import { settingsTab } from "./settings.js";
+import { triplesTab } from "./triples.js";
 
 export const DOMAIN_TABS = [
   { id: "overview", label: "Overview", group: "Domain" },
@@ -21,6 +22,7 @@ export const DOMAIN_TABS = [
   { id: "quality", label: "Data quality", group: "Design" },
   { id: "build", label: "Build", group: "Knowledge graph" },
   { id: "explore", label: "Explore", group: "Knowledge graph" },
+  { id: "triples", label: "Triples", group: "Knowledge graph" },
   { id: "analytics", label: "Analytics", group: "Knowledge graph" },
   { id: "settings", label: "Settings", group: "Domain" },
 ];
@@ -36,7 +38,7 @@ export async function domainView(name, tab, arg) {
   const ctx = { domain, version, versions, name, reload, arg };
   if (tab !== "overview" && tab !== "settings" && !version) return needVersion(ctx);
   const views = { overview: overviewTab, ontology: ontologyTab, mapping: mappingTab, metadata: metadataTab, build: buildTab,
-    explore: exploreTab, rules: rulesTab, quality: qualityTab, analytics: analyticsTab, settings: settingsTab };
+    explore: exploreTab, triples: triplesTab, rules: rulesTab, quality: qualityTab, analytics: analyticsTab, settings: settingsTab };
   const view = views[tab] || overviewTab;
   return view(ctx);
 }

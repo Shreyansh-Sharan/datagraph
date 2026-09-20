@@ -15,7 +15,7 @@ const css = (name) => getComputedStyle(document.documentElement).getPropertyValu
 /**
  * renderGraph(container, opts) -> controller
  * opts: { nodes: [{id, label, type, color?, size?}], edges: [{source, target, label}], selected, onSelect(node), onExpand(node),
- *         colorBy: "type" | "community", showEdgeLabels }
+ *         onContextMenu(node, items) -> menu items [{label, action}], colorBy: "type" | "community", showEdgeLabels }
  */
 export function renderGraph(container, opts) {
   container.replaceChildren();
@@ -24,7 +24,9 @@ export function renderGraph(container, opts) {
   const toolbar = h("div", { class: "stage-tools", role: "toolbar", "aria-label": "Graph controls" });
   const legend = h("div", { class: "stage-legend" });
   const status = h("div", { class: "stage-status", "aria-live": "polite" });
-  container.append(stageEl, toolbar, legend, status);
+  const clusterPanel = h("div", { class: "stage-clusters", hidden: true });
+  const menu = h("div", { class: "ctx-menu", role: "menu", hidden: true });
+  container.append(stageEl, toolbar, legend, status, clusterPanel, menu);
 
   const graph = new graphology.Graph({ multi: false, type: "directed" });
   const types = palette(opts.nodes.map(n => n.type || "?"));
@@ -38,7 +40,11 @@ export function renderGraph(container, opts) {
   layout(graph);
 
   let colorBy = opts.colorBy || "type";
-  let communities = null;
+  let communities = null;                 // node -> community id
+  let resolution = 1.0;
+  const collapsed = new Map();            // community id -> super-node id
+  const hidden = new Set();               // nodes folded into a super-node
+  let highlighted = new Set();            // search hits
   let selected = opts.selected && graph.hasNode(opts.selected) ? opts.selected : null;
   let hovered = null;
   const ink = () => css("--text") || "#1b2026";
@@ -52,15 +58,19 @@ export function renderGraph(container, opts) {
     defaultEdgeType: "arrow", zIndex: true, minCameraRatio: 0.05, maxCameraRatio: 4,
     nodeReducer: (node, data) => {
       const d = { ...data };
-      if (colorBy === "community" && communities) d.color = CLASS_COLORS[communities[node] % CLASS_COLORS.length];
+      if (hidden.has(node)) { d.hidden = true; return d; }
+      if (colorBy === "community" && communities && communities[node] !== undefined) d.color = CLASS_COLORS[communities[node] % CLASS_COLORS.length];
       const focus = hovered || selected;
       if (focus && node !== focus && !graph.areNeighbors(focus, node)) { d.color = mix(d.color, css("--surface") || "#fff", 0.82); d.label = ""; d.zIndex = 0; }
       else d.zIndex = 1;
+      if (highlighted.size && !highlighted.has(node) && !focus) { d.color = mix(d.color, css("--surface") || "#fff", 0.75); }
+      if (highlighted.has(node)) { d.highlighted = true; d.zIndex = 2; }
       if (node === selected) { d.highlighted = true; d.size = data.size + 3; d.zIndex = 2; }
       return d;
     },
     edgeReducer: (edge, data) => {
       const d = { ...data, color: dimEdge() };
+      if (hidden.has(graph.source(edge)) || hidden.has(graph.target(edge))) { d.hidden = true; return d; }
       const focus = hovered || selected;
       if (focus) {
         if (graph.hasExtremity(edge, focus)) { d.color = mix(ink(), dimEdge(), 0.35); d.size = 1.6; d.zIndex = 1; }
@@ -74,7 +84,25 @@ export function renderGraph(container, opts) {
   renderer.on("leaveNode", () => { hovered = null; stageEl.style.cursor = "default"; renderer.refresh(); });
   renderer.on("clickNode", ({ node }) => { select(node); opts.onSelect?.(nodeOf(node)); });
   renderer.on("doubleClickNode", ({ node, event }) => { event.preventSigmaDefault?.(); opts.onExpand?.(nodeOf(node)); });
-  renderer.on("clickStage", () => { if (selected) { selected = null; renderer.refresh(); } });
+  renderer.on("clickStage", () => { hideMenu(); if (selected) { selected = null; renderer.refresh(); } });
+  renderer.on("rightClickNode", ({ node, event }) => {
+    event.preventSigmaDefault?.(); event.original?.preventDefault?.();
+    const a = graph.getNodeAttributes(node);
+    if (a.superNode) { showMenu(event, [{ label: `Expand cluster (${a.members.length})`, action: () => expandCluster(a.community) }]); return; }
+    const base = [{ label: "Expand neighbours", action: () => opts.onExpand?.(nodeOf(node)) }, { label: "Copy IRI", action: () => navigator.clipboard?.writeText(node) }];
+    const extra = opts.onContextMenu ? (opts.onContextMenu(nodeOf(node)) || []) : [];
+    showMenu(event, [...base, ...extra]);
+  });
+  stageEl.addEventListener("contextmenu", (e) => e.preventDefault());
+  function showMenu(event, items) {
+    menu.replaceChildren(...items.map(it => h("button", { type: "button", role: "menuitem", onClick: () => { hideMenu(); it.action(); } }, it.label)));
+    const r = container.getBoundingClientRect(); const ev = event.original || event;
+    menu.style.left = `${(ev.clientX || 0) - r.left + 2}px`; menu.style.top = `${(ev.clientY || 0) - r.top + 2}px`; menu.hidden = false;
+    menu.querySelector("button")?.focus();
+  }
+  function hideMenu() { menu.hidden = true; }
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideMenu(); });
+  renderer.on("clickNode", ({ node }) => { const a = graph.getNodeAttributes(node); if (a.superNode) { expandCluster(a.community); } });
 
   function nodeOf(id) { const a = graph.getNodeAttributes(id); return { id, label: a.label, type: a.cls }; }
   function select(id) { selected = graph.hasNode(id) ? id : null; renderer.refresh(); }
@@ -85,19 +113,64 @@ export function renderGraph(container, opts) {
     if (pos) renderer.getCamera().animate({ x: pos.x, y: pos.y, ratio: Math.min(renderer.getCamera().ratio, 0.5) }, { duration: 300 });
   }
   function relayout() { layout(graph, true); renderer.refresh(); fit(); }
+  function detectClusters() {
+    const ug = new graphology.Graph({ type: "undirected" });
+    graph.forEachNode((n, a) => { if (!a.superNode) ug.addNode(n, a); });
+    graph.forEachEdge((e, a, s, t) => { if (ug.hasNode(s) && ug.hasNode(t) && !ug.hasEdge(s, t)) ug.addEdge(s, t); });
+    communities = ug.order ? graphologyLibrary.communitiesLouvain(ug, { resolution }) : {};
+    const count = new Set(Object.values(communities)).size;
+    status.textContent = `${count} clusters (Louvain, resolution ${resolution})`;
+    clusterPanel.hidden = false;
+    renderClusters();
+  }
+  function clearClusters() {
+    expandAll(); communities = null; colorBy = "type"; colorSel.value = "type"; clusterPanel.hidden = true;
+    status.textContent = `${graph.order} nodes · ${graph.size} edges`; renderLegend(); renderer.refresh();
+  }
   function setColorBy(mode) {
     colorBy = mode;
-    if (mode === "community" && !communities) {
-      const ug = new graphology.Graph({ type: "undirected" });
-      graph.forEachNode((n, a) => ug.addNode(n, a));
-      graph.forEachEdge((e, a, s, t) => { if (!ug.hasEdge(s, t)) ug.addEdge(s, t); });
-      communities = graphologyLibrary.communitiesLouvain(ug, { resolution: 1 });
-      const count = new Set(Object.values(communities)).size;
-      status.textContent = `${count} communities (Louvain)`;
-    }
-    if (mode === "type") status.textContent = "";
+    if (mode === "community" && !communities) detectClusters();
     renderLegend();
     renderer.refresh();
+  }
+  function membersOf(c) { return Object.entries(communities || {}).filter(([n, cc]) => cc === c).map(([n]) => n); }
+  function collapseCluster(c) {
+    if (collapsed.has(c)) return;
+    const members = membersOf(c); if (members.length < 2) return;
+    let x = 0, y = 0; members.forEach(m => { x += graph.getNodeAttribute(m, "x"); y += graph.getNodeAttribute(m, "y"); hidden.add(m); });
+    const id = `__cluster_${c}`;
+    graph.addNode(id, { label: `Cluster ${c} · ${members.length}`, cls: "cluster", color: CLASS_COLORS[c % CLASS_COLORS.length], size: 8 + Math.min(20, Math.sqrt(members.length) * 3),
+      x: x / members.length, y: y / members.length, superNode: true, community: c, members });
+    const seen = new Set();
+    for (const m of members) graph.forEachEdge(m, (e, a, src, tgt) => {
+      const other = src === m ? tgt : src; if (members.includes(other) || hidden.has(other)) return;
+      const key = src === m ? `${id}>${other}` : `${other}>${id}`; if (seen.has(key)) return; seen.add(key);
+      const [s2, t2] = src === m ? [id, other] : [other, id]; if (!graph.hasEdge(s2, t2)) graph.addEdge(s2, t2, { label: "", size: 1, type: "arrow", synthetic: true });
+    });
+    collapsed.set(c, id); renderClusters(); renderer.refresh();
+  }
+  function expandCluster(c) {
+    const id = collapsed.get(c); if (!id) return;
+    graph.getNodeAttribute(id, "members").forEach(m => hidden.delete(m));
+    graph.dropNode(id); collapsed.delete(c); renderClusters(); renderer.refresh();
+  }
+  function expandAll() { [...collapsed.keys()].forEach(expandCluster); }
+  function renderClusters() {
+    if (!communities) return;
+    const counts = {};
+    Object.values(communities).forEach(c => { counts[c] = (counts[c] || 0) + 1; });
+    const ids = Object.keys(counts).map(Number).sort((a, b) => counts[b] - counts[a]);
+    clusterPanel.replaceChildren(
+      h("div", { class: "row" }, h("strong", {}, `${ids.length} clusters`),
+        h("label", { class: "check small" }, "resolution ", h("input", { type: "range", min: 0.2, max: 3, step: 0.1, value: resolution, "aria-label": "Cluster resolution",
+          onChange: e => { resolution = Number(e.target.value); expandAll(); detectClusters(); renderLegend(); renderer.refresh(); } })),
+        h("label", { class: "check small" }, h("input", { type: "checkbox", checked: colorBy === "community", onChange: e => { setColorBy(e.target.checked ? "community" : "type"); colorSel.value = colorBy; } }), "colour by cluster"),
+        h("button", { type: "button", class: "sm", onClick: () => ids.forEach(collapseCluster) }, "Collapse all"),
+        h("button", { type: "button", class: "sm", onClick: expandAll }, "Expand all"),
+        h("button", { type: "button", class: "sm ghost", onClick: clearClusters }, "Clear")),
+      h("div", { class: "chips" }, ids.map(c => h("button", { type: "button", class: "chip" + (collapsed.has(c) ? " collapsed" : ""), title: collapsed.has(c) ? "Expand cluster" : "Collapse into a super-node",
+        onClick: () => collapsed.has(c) ? expandCluster(c) : collapseCluster(c) },
+        h("i", { style: { background: CLASS_COLORS[c % CLASS_COLORS.length] } }), `${c} · ${counts[c]}`))));
   }
   function renderLegend() {
     legend.replaceChildren();
@@ -120,7 +193,8 @@ export function renderGraph(container, opts) {
     h("option", { value: "type", selected: colorBy === "type" }, "Color: class"), h("option", { value: "community", selected: colorBy === "community" }, "Color: community"));
   const labelsToggle = h("label", { class: "check small" }, h("input", { type: "checkbox", checked: !!opts.showEdgeLabels, onChange: e => { renderer.setSetting("renderEdgeLabels", e.target.checked); } }), "edge labels");
   toolbar.append(btn("+", "Zoom in", () => renderer.getCamera().animatedZoom({ duration: 200 })), btn("−", "Zoom out", () => renderer.getCamera().animatedUnzoom({ duration: 200 })),
-    btn("Fit", "Fit graph to view", fit), btn("Layout", "Run the layout again", relayout), colorSel, labelsToggle);
+    btn("Fit", "Fit graph to view", fit), btn("Layout", "Run the layout again", relayout), btn("Clusters", "Detect clusters (Louvain) on the displayed graph", () => { detectClusters(); setColorBy("community"); colorSel.value = "community"; }),
+    colorSel, labelsToggle);
   stageEl.addEventListener("keydown", (ev) => {
     const ids = graph.nodes(); if (!ids.length) return;
     const i = ids.indexOf(selected);
@@ -140,6 +214,13 @@ export function renderGraph(container, opts) {
     destroy: () => { ro.disconnect(); renderer.kill(); },
     select: (id) => { select(id); focusOn(id); },
     fit,
+    highlight: (ids) => {   // search hits: emphasise them and their neighbours, zoom to the first
+      highlighted = new Set(ids.filter(id => graph.hasNode(id)));
+      renderer.refresh();
+      if (highlighted.size) focusOn([...highlighted][0]);
+    },
+    clearHighlight: () => { highlighted = new Set(); renderer.refresh(); },
+    has: (id) => graph.hasNode(id),
     merge: ({ nodes, edges }) => {   // add a neighbourhood without discarding the current picture
       const t2 = palette([...graph.mapNodes((n, a) => a.cls), ...nodes.map(n => n.type || "?")]);
       for (const n of nodes) if (!graph.hasNode(n.id)) graph.addNode(n.id, { label: n.label || n.id, cls: n.type || "?", color: t2.get(n.type || "?"), size: 4, x: Math.random(), y: Math.random() });

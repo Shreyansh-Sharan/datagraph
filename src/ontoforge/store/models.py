@@ -48,3 +48,9 @@ class Edge:
 class Subgraph:
     nodes: list[Entity] = field(default_factory=list)
     edges: list[Edge] = field(default_factory=list)
+
+
+@dataclass
+class TriplePage:
+    total: int
+    rows: list[dict] = field(default_factory=list)

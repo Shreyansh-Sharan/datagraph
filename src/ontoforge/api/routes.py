@@ -579,8 +579,22 @@ def graph_status(version_id: UUID, request: Request):
 
 @router.get("/versions/{version_id}/graph/search")
 def graph_search(version_id: UUID, request: Request, q: str = Query(default=""), type: str | None = None,
-                 limit: int = Query(default=20, ge=1, le=200)):
-    return _st(request).store.search(version_id, q, type_iri=type, limit=limit)
+                 limit: int = Query(default=20, ge=1, le=200),
+                 match: str = Query(default="contains", pattern="^(contains|exact|starts_with|ends_with)$"),
+                 field: str = Query(default="any", pattern="^(any|label|iri)$")):
+    return _st(request).store.search(version_id, q, type_iri=type, limit=limit, match=match, field=field)
+
+
+@router.get("/versions/{version_id}/graph/overview")
+def graph_overview(version_id: UUID, request: Request, limit: int = Query(default=300, ge=10, le=2000)):
+    return _st(request).store.overview(version_id, limit)
+
+
+@router.get("/versions/{version_id}/graph/triples")
+def graph_triples(version_id: UUID, request: Request, subject: str | None = None, predicate: str | None = None,
+                  text: str | None = None, inferred: bool | None = None,
+                  limit: int = Query(default=100, ge=1, le=1000), offset: int = Query(default=0, ge=0)):
+    return _st(request).store.triples(version_id, subject=subject, predicate=predicate, text=text, inferred=inferred, limit=limit, offset=offset)
 
 
 @router.get("/versions/{version_id}/graph/entity")

@@ -8,7 +8,7 @@ from ontoforge.compiler import RDF_TYPE
 from ontoforge.db import Database
 from ontoforge.ontology import Ontology
 
-from .models import Attribute, Edge, Entity, EntityDetail, Relation, Subgraph
+from .models import Attribute, Edge, Entity, EntityDetail, Relation, Subgraph, TriplePage
 
 RDFS_LABEL = "http://www.w3.org/2000/01/rdf-schema#label"
 COLUMNS = ("subject", "predicate", "object", "object_type", "datatype", "lang")
@@ -83,19 +83,32 @@ class TripleStore:
             return cur.execute("SELECT predicate, count(*) FROM triples WHERE domain_version_id = %s "
                                "GROUP BY 1 ORDER BY 2 DESC, 1", (version_id,)).fetchall()
 
-    def search(self, version_id: UUID, text: str, type_iri: str | None = None, limit: int = 20) -> list[Entity]:
-        """Entities whose literal values or IRI contain ``text``; exact label matches first, then prefix, then contains."""
-        pattern, q = f"%{text}%", text.lower()
+    def search(self, version_id: UUID, text: str, type_iri: str | None = None, limit: int = 20,
+               match: str = "contains", field: str = "any") -> list[Entity]:
+        """Entities whose literal values (field=label), IRI (field=iri) or either (any) match ``text``.
+        match: contains | exact | starts_with | ends_with. Ranked exact > prefix > contains, shortest first."""
+        if match not in ("contains", "exact", "starts_with", "ends_with"):
+            raise ValueError("match must be contains, exact, starts_with or ends_with")
+        if field not in ("any", "label", "iri"):
+            raise ValueError("field must be any, label or iri")
+        esc = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = {"contains": f"%{esc}%", "exact": esc, "starts_with": f"{esc}%", "ends_with": f"%{esc}"}[match]
+        q = text.lower()
+        lit = "(t.object_type = 'literal' AND t.object ILIKE %s)"
+        iri = "t.subject ILIKE %s"
+        where = {"any": f"({lit} OR {iri})", "label": lit, "iri": iri}[field]
+        params: list = [q, q + "%", version_id]
+        params += [pattern, pattern] if field == "any" else [pattern]
         with self.db.transaction() as cur:
             rows = cur.execute(
                 "SELECT t.subject, min(CASE WHEN lower(t.object) = %s THEN 0 WHEN lower(t.object) LIKE %s THEN 1 "
                 "                          WHEN t.object_type = 'literal' THEN 2 ELSE 3 END) AS rank, min(length(t.object)) AS len "
                 "FROM triples t WHERE t.domain_version_id = %s AND t.subject NOT LIKE '\\_:%%' "
-                "AND ((t.object_type = 'literal' AND t.object ILIKE %s) OR t.subject ILIKE %s) "
+                f"AND {where} "
                 "AND (%s::text IS NULL OR EXISTS (SELECT 1 FROM triples ty WHERE ty.domain_version_id = t.domain_version_id "
                 "     AND ty.subject = t.subject AND ty.predicate = %s AND ty.object = %s)) "
                 "GROUP BY t.subject ORDER BY rank, len, t.subject LIMIT %s",
-                (q, q + "%", version_id, pattern, pattern, type_iri, RDF_TYPE, type_iri, limit)).fetchall()
+                (*params, type_iri, RDF_TYPE, type_iri, limit)).fetchall()
             iris = [r[0] for r in rows]
             order = {iri: i for i, iri in enumerate(iris)}
             return sorted(self._entities(cur, version_id, iris), key=lambda e: order[e.iri])
@@ -136,6 +149,45 @@ class TripleStore:
             nodes = self._entities(cur, version_id, sorted(seen))
         unique_edges = list(dict.fromkeys(edges))
         return Subgraph(nodes=nodes, edges=unique_edges)
+
+    def overview(self, version_id: UUID, limit: int = 300) -> Subgraph:
+        """A first picture of the graph: a few relationships of every predicate, spread evenly."""
+        with self.db.transaction() as cur:
+            preds = [p for p, _ in cur.execute(
+                "SELECT predicate, count(*) FROM triples WHERE domain_version_id = %s AND predicate <> %s AND object_type <> 'literal' "
+                "AND subject NOT LIKE '\\_:%%' GROUP BY 1 ORDER BY 2 DESC", (version_id, RDF_TYPE)).fetchall()]
+            if not preds:
+                return Subgraph()
+            per = max(1, limit // len(preds))
+            edges: list[Edge] = []
+            for p in preds:
+                for s_, o in cur.execute("SELECT subject, object FROM triples WHERE domain_version_id = %s AND predicate = %s "
+                                         "AND object_type <> 'literal' ORDER BY subject, object LIMIT %s", (version_id, p, per)):
+                    edges.append(Edge(s_, p, o))
+            edges = edges[:limit]
+            iris = sorted({e.source for e in edges} | {e.target for e in edges})
+            nodes = self._entities(cur, version_id, iris)
+        return Subgraph(nodes=nodes, edges=edges)
+
+    def triples(self, version_id: UUID, *, subject: str | None = None, predicate: str | None = None, text: str | None = None,
+                inferred: bool | None = None, limit: int = 100, offset: int = 0) -> TriplePage:
+        """Raw triple rows, filterable and paged, for the triples grid."""
+        clauses, params = ["domain_version_id = %s"], [version_id]
+        if subject:
+            clauses.append("subject = %s"); params.append(subject)
+        if predicate:
+            clauses.append("predicate = %s"); params.append(predicate)
+        if text:
+            clauses.append("(object ILIKE %s OR subject ILIKE %s OR predicate ILIKE %s)"); params += [f"%{text}%"] * 3
+        if inferred is not None:
+            clauses.append("inferred = %s"); params.append(inferred)
+        where = " AND ".join(clauses)
+        with self.db.transaction() as cur:
+            total = cur.execute(f"SELECT count(*) FROM triples WHERE {where}", params).fetchone()[0]
+            rows = cur.execute(f"SELECT subject, predicate, object, object_type, datatype, lang, inferred FROM triples WHERE {where} "
+                               f"ORDER BY subject, predicate, object LIMIT %s OFFSET %s", (*params, limit, offset)).fetchall()
+        cols = ("subject", "predicate", "object", "object_type", "datatype", "lang", "inferred")
+        return TriplePage(total=total, rows=[dict(zip(cols, r)) for r in rows])
 
     # -- helpers -------------------------------------------------------------
 

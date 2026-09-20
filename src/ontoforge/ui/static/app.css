@@ -182,3 +182,16 @@ dialog h2 { margin-top: 0; }
 .notice { padding: var(--s3); border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface-2); }
 .notice.warn { background: var(--warn-soft); border-color: var(--warn); }
 .notice.error { background: var(--danger-soft); border-color: var(--danger); }
+
+.ctx-menu { position: absolute; z-index: var(--z-drawer); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); padding: var(--s1); min-width: 200px; display: flex; flex-direction: column; }
+.ctx-menu button { border: 0; background: none; text-align: left; padding: 6px var(--s3); border-radius: var(--radius); }
+.ctx-menu button:hover, .ctx-menu button:focus-visible { background: var(--surface-2); }
+.stage-clusters { position: absolute; top: 44px; left: var(--s2); right: var(--s2); z-index: 2; background: color-mix(in srgb, var(--surface) 92%, transparent); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--s2) var(--s3); font-size: 12px; }
+.stage-clusters .row { gap: var(--s3); }
+.stage-clusters input[type="range"] { width: 120px; padding: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: var(--s2); }
+.chips .chip { cursor: pointer; }
+.chips .chip.collapsed { border-style: dashed; opacity: .8; }
+.chips .chip i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.explore .searchbar .check { gap: 4px; }
+.explore .searchbar select { width: auto; }

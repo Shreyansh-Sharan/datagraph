@@ -49,7 +49,7 @@ Legend: ✅ have · 🟡 partial · ❌ missing · ➖ not planned (UI-only or D
 | Neo4j backend | ❌ | |
 | Lakebase `managed_synced`, Lakeflow jobs, UC Volumes storage | ➖ | Databricks-proprietary |
 | Freshness / last-updated indicator | 🟡 | build-run timestamps only |
-| Triples grid (paged browsing of raw triples) | ❌ | trivial endpoint |
+| Triples grid (paged browsing of raw triples) | ✅ | `/graph/triples`, Triples tab |
 
 ## 4. Exploration & analytics
 | Capability | Status | Note |
@@ -63,7 +63,7 @@ Legend: ✅ have · 🟡 partial · ❌ missing · ➖ not planned (UI-only or D
 | Bridges (cross-domain links) | ✅ | key-matched counterparts, in REST + MCP |
 | Datasets (link a table/view to a class, preview rows) | ✅ | |
 | Class actions / virtual attributes (SQL functions on an entity) | ✅ | any SELECT with `:key` placeholders; MCP invoke/compute |
-| Sigma.js viewer, cluster collapse, dashboards embedding | 🟡 | own canvas graph (pan/zoom/select/keyboard); no cluster collapse or dashboards |
+| Sigma.js viewer, cluster collapse, dashboards embedding | ✅/➖ | sigma.js stage: overview on load, find (label/IRI × contains/exact/starts/ends), hover/click/right-click menu, expand N hops, clusters with resolution slider, colour-by-cluster, collapse/expand super-nodes, chips, clear; dashboards ➖ |
 
 ## 5. Reasoning & data quality
 | Capability | Status | Note |
