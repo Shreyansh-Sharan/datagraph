@@ -10,9 +10,11 @@ from graphql import graphql_sync, print_schema
 from pydantic import BaseModel, Field
 
 from ontoforge.autodraft import draft_from_catalog
+from ontoforge.bundle import export_bundle, import_bundle
 from ontoforge.compiler import compile_mapping
 from ontoforge.dialects import DIALECTS
 from ontoforge.graphql import build_schema
+from ontoforge.llm import LLMUnavailable, MappingSuggester, OntologyAssistant, OntologyDrafter, describe_tables
 from ontoforge.mapping import MappingSpec
 from ontoforge.ontology import Ontology
 from ontoforge.r2rml import serialize_r2rml
@@ -70,6 +72,22 @@ class GraphQLIn(BaseModel):
     variables: dict | None = None
 
 
+class DraftOntologyIn(BaseModel):
+    ontology_iri: str
+    description: str = ""
+    tables: list[str] | None = None
+    schema_name: str | None = None
+
+
+class SuggestMappingIn(BaseModel):
+    tables: list[str] | None = None
+    schema_name: str | None = None
+
+
+class AssistIn(BaseModel):
+    instruction: str
+
+
 class AutodraftIn(BaseModel):
     ontology_iri: str
     tables: list[str] | None = None
@@ -105,6 +123,16 @@ def delete_domain(name: str, request: Request):
     reg = _st(request).registry
     reg.delete_domain(reg.get_domain(name).id)
     return Response(status_code=204)
+
+
+@router.get("/domains/{name}/export")
+def export_domain(name: str, request: Request, version_id: UUID | None = None):
+    return export_bundle(_st(request).registry, name, version_id)
+
+
+@router.post("/domains/import", status_code=201)
+def import_domain(body: dict, request: Request, who: str = Header(default="anonymous", alias="X-Actor")):
+    return _version_json(import_bundle(_st(request).registry, body, actor=who, name=body.get("name")))
 
 
 @router.get("/domains/{name}/versions")
@@ -313,6 +341,57 @@ def autodraft(version_id: UUID, body: AutodraftIn, request: Request, who: str = 
     st.registry.update_content(version_id, actor=who, ontology_ttl=onto.to_turtle(), mapping=spec.to_dict())
     return {"classes": len(onto.classes), "properties": len(onto.datatype_properties) + len(onto.object_properties),
             "relations": len(spec.relations), "issues": onto.check()}
+
+
+# -- llm -------------------------------------------------------------------------
+
+def _llm(request: Request):
+    llm = _st(request).llm
+    if llm is None:
+        raise LLMUnavailable("No LLM provider configured (set ONTOFORGE_LLM_PROVIDER=anthropic)")
+    return llm
+
+
+def _tables(request: Request, tables: list[str] | None, schema: str | None) -> list[dict]:
+    cat = _st(request).source.catalog
+    return describe_tables(cat, tables, schema, sample_rows=lambda t: _samples(request, t))
+
+
+def _samples(request: Request, table: str, n: int = 3) -> list[tuple]:
+    src = _st(request).source
+    try:
+        return list(src.stream(f"SELECT * FROM {src.dialect.quote_table(table)} LIMIT {n}", batch=n))[:n]
+    except Exception:  # noqa: BLE001 - samples are a nicety, never a failure
+        return []
+
+
+@router.post("/versions/{version_id}/llm/draft-ontology")
+def llm_draft_ontology(version_id: UUID, body: DraftOntologyIn, request: Request, who: str = Header(default="anonymous", alias="X-Actor")):
+    onto = OntologyDrafter(_llm(request)).draft(body.ontology_iri, _tables(request, body.tables, body.schema_name), body.description)
+    _st(request).registry.update_content(version_id, actor=who, ontology_ttl=onto.to_turtle())
+    return _ontology_summary_json(onto)
+
+
+@router.post("/versions/{version_id}/llm/suggest-mapping")
+def llm_suggest_mapping(version_id: UUID, body: SuggestMappingIn, request: Request, who: str = Header(default="anonymous", alias="X-Actor")):
+    st = _st(request)
+    version = st.registry.get_version(version_id)
+    domain = st.registry.get_domain_by_id(version.domain_id)
+    spec = MappingSuggester(_llm(request)).suggest(_ontology(request, version_id), _tables(request, body.tables, body.schema_name), domain.base_iri)
+    st.registry.update_content(version_id, actor=who, mapping=spec.to_dict())
+    return {"classes": len(spec.classes), "relations": len(spec.relations), "mapping": spec.to_dict()}
+
+
+@router.post("/versions/{version_id}/llm/assist")
+def llm_assist(version_id: UUID, body: AssistIn, request: Request, who: str = Header(default="anonymous", alias="X-Actor")):
+    onto = OntologyAssistant(_llm(request)).edit(_ontology(request, version_id), body.instruction)
+    _st(request).registry.update_content(version_id, actor=who, ontology_ttl=onto.to_turtle())
+    return _ontology_summary_json(onto)
+
+
+def _ontology_summary_json(onto: Ontology) -> dict:
+    return {"classes": len(onto.classes), "properties": len(onto.datatype_properties) + len(onto.object_properties),
+            "issues": onto.check(), "ontology": onto.to_dict()}
 
 
 # -- helpers ---------------------------------------------------------------------

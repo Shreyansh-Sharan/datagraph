@@ -10,6 +10,15 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://ontoforge:ontoforge@localhost:5439/ontoforge"
     database_schema: str | None = None
     base_iri: str = "http://ontoforge.local/"
+    source_kind: str = "postgres"       # "postgres" (registry database) | "databricks"
+    databricks_host: str | None = None
+    databricks_http_path: str | None = None
+    databricks_token: str | None = None
+    databricks_catalog: str | None = None
+    databricks_schema: str | None = None
+
+    llm_provider: str = "none"          # "none" | "anthropic"
+    llm_model: str = "claude-opus-5"
 
 
 def load_settings() -> Settings:

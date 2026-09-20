@@ -1,0 +1,55 @@
+"""Databricks SQL Warehouse as a source engine.
+
+The connection is supplied by a factory so the engine can be exercised with a fake DB-API
+connection in tests; production passes ``lambda: databricks.sql.connect(...)``.
+"""
+from __future__ import annotations
+
+from typing import Callable, Iterator
+
+from ontoforge.catalog import DatabricksCatalog
+from ontoforge.dialects import DatabricksDialect
+
+from .source import SourceEngine
+
+ConnectionFactory = Callable[[], object]  # DB-API 2.0 connection with .cursor()
+
+
+class DatabricksSource(SourceEngine):
+    def __init__(self, connect: ConnectionFactory, default_catalog: str | None = None, default_schema: str | None = None) -> None:
+        self.connect = connect
+        self.dialect = DatabricksDialect()
+        self.catalog = DatabricksCatalog(self._run_query, default_catalog, default_schema)
+
+    def prepare(self) -> None:
+        """Spark SQL has url_encode / concat built in: nothing to install."""
+
+    def stream(self, sql: str, batch: int = 10_000) -> Iterator[tuple]:
+        conn = self.connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                while True:
+                    rows = cur.fetchmany(batch)
+                    if not rows:
+                        break
+                    yield from (tuple(r) for r in rows)
+        finally:
+            conn.close()
+
+    def _run_query(self, sql: str, params: tuple) -> list[tuple]:
+        conn = self.connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                return [tuple(r) for r in cur.fetchall()]
+        finally:
+            conn.close()
+
+
+def databricks_connect_factory(server_hostname: str, http_path: str, access_token: str) -> ConnectionFactory:
+    """Build a factory over ``databricks-sql-connector`` (optional dependency)."""
+    def connect():
+        from databricks import sql  # imported lazily: optional extra
+        return sql.connect(server_hostname=server_hostname, http_path=http_path, access_token=access_token)
+    return connect
