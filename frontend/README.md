@@ -106,10 +106,14 @@ means every schema it offers. The Metadata picker lists every source's schemas, 
 
 ### The scan (metadata snapshot)
 
-The Metadata screen browses the source's tables per schema and imports the ticked ones into the
-draft's snapshot (`POST /versions/{id}/metadata/import` with `schema_name` and `tables`): columns,
-types, keys and comments are captured, and the list marks what the snapshot holds
-(`GET /versions/{id}/metadata`). "Refresh snapshot" re-reads the source and reports added, removed
+The Metadata screen is a workbench that fills the viewport: on the left a schema browser (every
+source, every schema and its tables, loaded at once, searchable, with a checkbox per table and per
+schema; the divider is draggable and its width is remembered), on the right what is selected. A
+schema shows its table list with columns, snapshot state and class, and a button to tick everything
+not yet in the snapshot; a table shows its columns, types, keys and comments. Ticked tables are
+imported into the draft's snapshot (`POST /versions/{id}/metadata/import` with `schema_name` and
+`tables`, one call per schema): columns, types, keys and comments are captured, and both panes mark
+what the snapshot holds (`GET /versions/{id}/metadata`). "Refresh snapshot" re-reads the source and reports added, removed
 or retyped columns. Both need a draft whose lease you hold, like every other edit.
 
 ### Build and mapping
@@ -117,8 +121,11 @@ or retyped columns. Both need a draft whose lease you hold, like every other edi
 The Build screen starts a run (`POST /versions/{id}/builds`), polls `GET /builds/{run}` until it
 settles and shows the steps as the pipeline records them (compile, drift, prepare, publish when the
 domain materializes, load, finalize); a run still running when the screen opens is picked up, and
-three failed status reads stop polling with a notice. The pre-build checklist reads the snapshot,
-ontology, mapping completion, ontology checks and drift of the version.
+three failed status reads stop polling with a notice. The pipeline records a step when it starts, and
+the load step records how many rows have arrived every 5,000 rows, so a long load shows "12,345 rows
+so far" and the elapsed time instead of a queued step. The pre-build checklist reads the snapshot,
+ontology, mapping completion and ontology checks of the version; the drift check re-reads every
+mapped table from the source, so it is its own row and the rest of the list does not wait for it.
 
 The Mapping screen edits the version's mapping spec: map a class to a snapshot table and key,
 bind attributes to columns from a dropdown, exclude properties, join relationships on a source and

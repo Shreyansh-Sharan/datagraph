@@ -379,7 +379,7 @@ export class MockApi implements DatagraphApi {
     return clone(l.run);
   }
   async checklist(_domain: string, _version: number): Promise<ChecklistItem[]> {
-    return [{ label: "Mapping completion", value: "78%", ok: false, go: { screen: "mapping" } }, { label: "Ontology checks", value: "0 errors", ok: true, go: { screen: "ontology", arg: "checks" } }, { label: "Schema drift", value: "1 issue", ok: false, go: { screen: "metadata", arg: "fct_sales" } }];
+    return [{ label: "Mapping completion", value: "78%", ok: false, go: { screen: "mapping" } }, { label: "Ontology checks", value: "0 errors", ok: true, go: { screen: "ontology", arg: "checks" } }];
   }
 
   async search(_domain: string, q: string, opts?: SearchOptions): Promise<SearchHit[]> { const t = q.toLowerCase(); const typeName = opts?.type ? opts.type.split(/[#/]/).pop() : null; const ok = (v: string) => opts?.match === "exact" ? v.toLowerCase() === t : opts?.match === "starts_with" ? v.toLowerCase().startsWith(t) : v.toLowerCase().includes(t); return D.SEARCH.filter(h => (!typeName || h.type === typeName) && (!t || ok(h.label) || ok(h.id))); }

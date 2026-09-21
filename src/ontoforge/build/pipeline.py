@@ -10,7 +10,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Iterable, Iterator
 from uuid import UUID
 
 from ontoforge.compiler import compile_mapping
@@ -50,11 +50,13 @@ class BuildCancelled(Exception):
 
 class BuildPipeline:
     def __init__(self, registry: Registry, store: TripleStore, source: "SourceEngine | Callable[[UUID], SourceEngine]",
+                 *, progress_rows: int = 5000,
                  publish: PublishConfig | None = None, metadata=None) -> None:
         self.registry, self.store = registry, store
         self._source = source     # one engine, or a resolver giving the version's domain's engine
         self.publish = publish if publish and publish.enabled else None
         self.metadata = metadata  # MetadataService, optional: adds a non-blocking drift step
+        self.progress_rows = progress_rows  # the load step records its row count this often
 
     def source_for(self, version_id: UUID) -> SourceEngine:
         return self._source(version_id) if callable(self._source) else self._source
@@ -67,15 +69,22 @@ class BuildPipeline:
         ctx = {"run_id": str(run.id), "version_id": str(version_id)}
         log.info("build started", extra={"event": "build.started", **ctx})
 
-        def on_step_done():
+        def persist():   # what GET /builds/{id} returns while the run is still going
             self.registry.update_build_steps(run.id, steps)
+
+        def on_step_done():
+            persist()
             log.info("step %s %.3fs", steps[-1]["name"], steps[-1]["seconds"],
                      extra={"event": "build.step", "step": steps[-1]["name"], "seconds": steps[-1]["seconds"], **ctx})
 
         def step(name: str):
             if cancelled():
                 raise BuildCancelled(f"cancelled before {name}")
-            return _step(steps, name, on_done=on_step_done)
+            return _step(steps, name, on_start=persist, on_done=on_step_done)
+
+        def on_rows(n: int):   # progress of the load step, persisted every `progress_rows` rows
+            steps[-1]["detail"] = {"rows": n}
+            persist()
 
         try:
             with step("compile"):
@@ -101,7 +110,7 @@ class BuildPipeline:
                     steps[-1]["detail"] = published
                     load_sql = f"SELECT {', '.join(COLUMNS)} FROM {self._quote(published['table'] or published['view'])}"
             with step("load"):
-                count = self._load(version_id, load_sql)
+                count = self._load(version_id, load_sql, on_rows)
                 steps[-1]["detail"] = {"triples": count}
             with step("finalize"):
                 counted = self.store.count(version_id)
@@ -137,10 +146,18 @@ class BuildPipeline:
     def _quote(self, dotted: str) -> str:
         return self.source.dialect.quote_table(dotted)
 
-    def _load(self, version_id: UUID, sql: str) -> int:
+    def _load(self, version_id: UUID, sql: str, on_rows: Callable[[int], None] | None = None) -> int:
         if isinstance(self.source, PostgresSource) and self.source.db is self.store.db:
-            return self.store.replace_from_sql(version_id, sql)
-        return self.store.replace(version_id, self.source.stream(sql))
+            return self.store.replace_from_sql(version_id, sql)   # one server-side statement: no rows pass through here
+        return self.store.replace(version_id, self._counted(self.source.stream(sql), on_rows))
+
+    def _counted(self, rows: Iterable[tuple], on_rows: Callable[[int], None] | None) -> Iterator[tuple]:
+        n = 0
+        for row in rows:
+            n += 1
+            if on_rows and n % self.progress_rows == 0:
+                on_rows(n)
+            yield row
 
     @staticmethod
     def _r2rml(version):
@@ -159,12 +176,15 @@ def safe_identifier(name: str) -> str:
 
 
 class _step:
-    def __init__(self, steps: list[dict], name: str, on_done: Callable[[], None] | None = None) -> None:
-        self.steps, self.name, self.on_done = steps, name, on_done
+    def __init__(self, steps: list[dict], name: str, on_start: Callable[[], None] | None = None,
+                 on_done: Callable[[], None] | None = None) -> None:
+        self.steps, self.name, self.on_start, self.on_done = steps, name, on_start, on_done
 
     def __enter__(self):
         self.t0 = time.perf_counter()
         self.steps.append({"name": self.name, "seconds": None})
+        if self.on_start:
+            self.on_start()
         return self
 
     def __exit__(self, exc_type, exc, tb):

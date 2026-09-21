@@ -369,14 +369,20 @@ export class RestApi extends MockApi {
   private toRun(r: { id: string; status: BuildRun["status"]; actor: string | null; started_at: string; finished_at: string | null; triple_count: number | null; error: string | null; steps: { name: string; seconds: number | null; detail?: Record<string, unknown> }[] }, domain?: string): BuildRun {
     const secs = r.finished_at ? (new Date(r.finished_at).getTime() - new Date(r.started_at).getTime()) / 1000 : null;
     const running = r.status === "running" || r.status === "queued";
-    const detail = (d?: Record<string, unknown>) => d ? Object.entries(d).filter(([, v]) => typeof v !== "object" || v === null).map(([k, v]) => `${v} ${k}`).join(", ") + (Array.isArray(d.issues) ? `${d.issues.length} drift issue${d.issues.length === 1 ? "" : "s"}` : "") : "";
+    const fmt = (v: unknown) => typeof v === "number" ? v.toLocaleString() : String(v);
+    const detail = (d?: Record<string, unknown>) => d ? Object.entries(d).filter(([, v]) => typeof v !== "object" || v === null).map(([k, v]) => k === "rows" ? `${fmt(v)} rows so far` : `${fmt(v)} ${k}`).join(", ") + (Array.isArray(d.issues) ? `${d.issues.length} drift issue${d.issues.length === 1 ? "" : "s"}` : "") : "";
     const done = r.steps.map(s => ({ name: s.name, detail: detail(s.detail), seconds: s.seconds, state: (s.seconds == null && running ? "running" : "done") as BuildStep["state"] }));
     const seen = new Set(done.map(s => s.name));
-    const queued = running && domain ? this.pipeline(domain).filter(n => !seen.has(n)).map(n => ({ name: n, detail: "", seconds: null, state: "queued" as const })) : [];
+    const order = domain ? this.pipeline(domain) : [];
+    const last = Math.max(-1, ...done.map(s => order.indexOf(s.name)));   // only what comes after the furthest step reached is still queued: a skipped step is not
+    const queued = running ? order.slice(last + 1).filter(n => !seen.has(n)).map(n => ({ name: n, detail: "", seconds: null, state: "queued" as const })) : [];
     const steps = [...done, ...queued];
-    const stepIndex = running ? Math.max(steps.findIndex(s => s.state === "running"), 0) : -1;
+    const runningAt = steps.findIndex(s => s.state === "running");
+    const stepIndex = running ? (runningAt >= 0 ? runningAt : Math.min(done.length, steps.length - 1)) : -1;   // an older API only reports finished steps: the next one is where the run is
+    const elapsed = Math.max(0, Math.round((Date.now() - new Date(r.started_at).getTime()) / 1000));
+    const soFar = elapsed >= 60 ? `${Math.floor(elapsed / 60)} min ${elapsed % 60} s so far` : `${elapsed} s so far`;
     const inferred = r.steps.find(s => s.name === "infer")?.detail?.inferred;
-    return { id: r.id, label: `#${r.id.slice(0, 4)}`, status: r.status, actor: r.actor ?? "", duration: secs != null ? `${secs.toFixed(1)} s` : "—", triples: r.triple_count?.toLocaleString() ?? "—", inferred: typeof inferred === "number" ? inferred.toLocaleString() : "—", error: r.error ?? "", stepIndex, steps };
+    return { id: r.id, label: `#${r.id.slice(0, 4)}`, status: r.status, actor: r.actor ?? "", duration: secs != null ? `${secs.toFixed(1)} s` : running ? soFar : "—", triples: r.triple_count?.toLocaleString() ?? "—", inferred: typeof inferred === "number" ? inferred.toLocaleString() : "—", error: r.error ?? "", stepIndex, steps };
   }
   private runDomains: Record<string, string> = {};   // run id -> domain, so a poll can still show the queued steps
   private remember(domain: string, run: BuildRun): BuildRun { this.runDomains[run.id] = domain; return run; }
@@ -387,9 +393,9 @@ export class RestApi extends MockApi {
   override async checklist(domain: string, version: number): Promise<ChecklistItem[]> {
     const vid = this.vid(domain, version);
     const opt = <T,>(path: string) => this.req<T>("GET", path).catch(() => null);
-    const [snap, onto, status, checks, drift] = await Promise.all([
+    const [snap, onto, status, checks] = await Promise.all([   // drift is not here: it reads the source and the Build screen loads it on its own
       opt<unknown[]>(`/versions/${vid}/metadata`), opt<{ classes: unknown[] }>(`/versions/${vid}/ontology`), opt<{ completion: number }>(`/versions/${vid}/mapping/status`),
-      opt<{ severity: string }[]>(`/versions/${vid}/ontology/checks`), opt<unknown[]>(`/versions/${vid}/mapping/drift`)]);
+      opt<{ severity: string }[]>(`/versions/${vid}/ontology/checks`)]);
     const n = (k: number, one: string, many = one + "s") => `${k} ${k === 1 ? one : many}`;
     const errors = (checks ?? []).filter(c => c.severity === "error").length;
     const pct = status ? Math.round(status.completion * 100) : null;
@@ -398,7 +404,6 @@ export class RestApi extends MockApi {
       { label: "Ontology", value: onto?.classes.length ? n(onto.classes.length, "class", "classes") : "none yet", ok: !!onto?.classes.length, go: { screen: "ontology" } },
       { label: "Mapping completion", value: pct == null ? "no mapping" : `${pct}%`, ok: pct === 100, go: { screen: "mapping" } },
       { label: "Ontology checks", value: checks ? n(errors, "error") : "—", ok: !!checks && errors === 0, go: { screen: "ontology", arg: "checks" } },
-      { label: "Schema drift", value: n(drift?.length ?? 0, "issue"), ok: !(drift?.length), go: { screen: "metadata" } },
     ];
   }
   override async mappingKpis(domain: string, version: number): Promise<MappingKpis> {

@@ -15,6 +15,10 @@ export function Build() {
   const dbx = config.sourceKind === "databricks";
   const history = useLoad(() => api.builds(domain.name, version!.version), [domain.name, version?.version]);
   const checklist = useLoad(() => api.checklist(domain.name, version!.version), [domain.name, version?.version]);
+  // Drift re-reads every mapped table from the source, so it is its own row and never holds the rest of the list back.
+  const drift = useLoad(() => api.drift(domain.name, version!.version), [domain.name, version?.version]);
+  const driftItem = { label: "Schema drift", value: drift.loading ? "checking the source…" : drift.error ? "could not check the source" : `${drift.data?.length ?? 0} issue${drift.data?.length === 1 ? "" : "s"}`, ok: !drift.loading && !drift.error && !(drift.data?.length), pending: drift.loading, go: { screen: "metadata" } as { screen: string; arg?: string } };
+  const items = [...(checklist.data ?? []).map(c => ({ ...c, pending: false })), ...(checklist.data ? [driftItem] : [])];
   const [live, setLive] = useState<BuildRun | null>(null);
   const [lost, setLost] = useState<string | null>(null);
   const poll = useRef<ReturnType<typeof setInterval>>();
@@ -69,7 +73,7 @@ export function Build() {
                   <div key={s.name} style={{ padding: 12, borderRadius: 8, border: `1px solid ${running ? ORANGE : "var(--line)"}`, background: "#fff" }}>
                     <div className="row" style={{ gap: 6, fontSize: 12, fontWeight: 700, color: done || running ? "var(--ink)" : "var(--muted-2)" }}><span style={{ width: 14, height: 14, borderRadius: "50%", background: done ? BLUE : running ? ORANGE : "#CFCFD2", display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none", animation: running ? "dg-pulse 1s ease-in-out infinite" : "none" }}>{done && <Icon name="check" size={10} stroke="#fff" width={2} />}</span>{s.name}</div>
                     <div className="mono muted small" style={{ marginTop: 6 }}>{s.seconds != null ? `${s.seconds.toFixed(1)} s` : running ? "…" : "—"}</div>
-                    <div className="muted-2" style={{ fontSize: 11, marginTop: 2 }}>{done ? s.detail : running ? "running…" : "queued"}</div>
+                    <div className="muted-2" style={{ fontSize: 11, marginTop: 2 }}>{done ? s.detail : running ? (s.detail || "running…") : "queued"}</div>
                   </div>); })}
               </div>
             )}
@@ -90,7 +94,8 @@ export function Build() {
         <div className="grid">
           <Card>
             <h2 className="h2" style={{ marginBottom: 10 }}>Pre-build checklist</h2>
-            {(checklist.data ?? []).map(c => <a key={c.label} href="#" className="row" style={{ gap: 10, padding: "9px 0", borderTop: "1px solid var(--line-2)", color: "var(--ink)", fontSize: 12.5 }} onClick={e => { e.preventDefault(); go(c.go.screen, c.go.arg ? (c.go.screen === "ontology" ? { view: c.go.arg } : { table: c.go.arg }) : {}); }}><CheckDot ok={c.ok} /><span style={{ flex: 1 }}>{c.label}</span><span className="muted small">{c.value}</span></a>)}
+            {checklist.loading && !checklist.data && <div style={{ display: "grid", gap: 10 }}><Skeleton h={16} /><Skeleton h={16} /><Skeleton h={16} /><Skeleton h={16} /></div>}
+            {items.map(c => <a key={c.label} href="#" className="row" style={{ gap: 10, padding: "9px 0", borderTop: "1px solid var(--line-2)", color: "var(--ink)", fontSize: 12.5 }} onClick={e => { e.preventDefault(); go(c.go.screen, c.go.arg ? (c.go.screen === "ontology" ? { view: c.go.arg } : { table: c.go.arg }) : {}); }}>{c.pending ? <Spinner blue /> : <CheckDot ok={c.ok} />}<span style={{ flex: 1 }}>{c.label}</span><span className="muted small">{c.value}</span></a>)}
           </Card>
           <Card>
             <h2 className="h2" style={{ marginBottom: 10 }}>Warehouse publish</h2>

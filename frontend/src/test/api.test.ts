@@ -414,6 +414,21 @@ describe("build (rest)", () => {
     await a.buildStatus(r.id);
     expect(calls).toContain(`GET /api/builds/${rid}`);
   });
+  it("shows the rows loaded so far on a running load step", async () => {
+    const loading = { ...running, steps: [{ name: "compile", seconds: 0.41, detail: { selects: 3 } }, { name: "prepare", seconds: 0 }, { name: "load", seconds: null, detail: { rows: 123456 } }] };
+    const a = api(loading); await a.domain("aw");
+    const r = (await a.builds("aw", 1))[0];
+    expect(r.steps.map(s => [s.name, s.state])).toEqual([["compile", "done"], ["prepare", "done"], ["load", "running"], ["finalize", "queued"]]);
+    expect(r.steps[2].detail).toBe("123,456 rows so far");
+  });
+  it("points at the next queued step and shows elapsed time when an older API reports no running step", async () => {
+    const between = { ...running, started_at: new Date(Date.now() - 95_000).toISOString(), steps: [{ name: "compile", seconds: 0.41 }, { name: "drift", seconds: 1 }, { name: "prepare", seconds: 0 }] };
+    const a = api(between); await a.domain("aw");
+    const r = (await a.builds("aw", 1))[0];
+    expect(r.steps.map(s => s.state)).toEqual(["done", "done", "done", "queued", "queued"]);
+    expect(r.stepIndex).toBe(3);
+    expect(r.duration).toMatch(/^1 min 3[0-9] s so far$/);
+  });
   it("reports a failed run with its error and no running step", async () => {
     const a = api(failed); await a.domain("aw");
     const r = (await a.builds("aw", 1))[0];
@@ -423,7 +438,7 @@ describe("build (rest)", () => {
   it("builds the pre-build checklist and mapping KPIs from the version's real state", async () => {
     const a = api(failed); await a.domain("aw");
     const items = await a.checklist("aw", 1);
-    expect(items.map(i => [i.label, i.value, i.ok])).toEqual([["Snapshot", "2 tables", true], ["Ontology", "4 classes", true], ["Mapping completion", "25%", false], ["Ontology checks", "1 error", false], ["Schema drift", "1 issue", false]]);
+    expect(items.map(i => [i.label, i.value, i.ok])).toEqual([["Snapshot", "2 tables", true], ["Ontology", "4 classes", true], ["Mapping completion", "25%", false], ["Ontology checks", "1 error", false]]);   // drift is the Build screen's own row
     expect(await a.mappingKpis("aw", 1)).toEqual({ completion: 25, classesMapped: [1, 4], attributes: [2, 9], relationships: [0, 2], excluded: 1 });
   });
 });

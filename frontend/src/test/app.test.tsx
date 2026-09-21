@@ -193,6 +193,18 @@ describe("Build screen", () => {
 });
 
 
+describe("Build screen · checklist", () => {
+  it("shows the checklist before the drift check finishes, and its result after", async () => {
+    class SlowDrift extends MockApi { override async drift(d: string, v: number) { await new Promise(r => setTimeout(r, 300)); return super.drift(d, v); } }
+    renderAt("#/d/rgm/build?v=3", new SlowDrift());
+    expect(await screen.findByText("Mapping completion")).toBeInTheDocument();      // the quick facts do not wait for the source
+    expect(screen.getByText("checking the source…")).toBeInTheDocument();
+    expect(await screen.findByText("1 issue", {}, { timeout: 2000 })).toBeInTheDocument();
+    expect(screen.queryByText("checking the source…")).toBeNull();
+  });
+});
+
+
 describe("Mapping screen", () => {
   it("maps an unmapped class to a snapshot table, binds an attribute from a dropdown and excludes another", async () => {
     const api = new MockApi();
