@@ -74,7 +74,8 @@ export function layoutNodes(nodes: StageNode[], edges: StageEdge[], layout: Stag
 type BubbleData = { node: StageNode; r: number; dim: boolean; showName: boolean; onSelect?: (id: string) => void; onExpand?: (id: string) => void };
 
 function Bubble({ data }: NodeProps<Node<BubbleData>>) {
-  const { node: n, r, dim, showName, onSelect, onExpand } = data;
+  const { node: n, dim, showName, onSelect, onExpand } = data;
+  const r = Number.isFinite(data.r) && data.r > 0 ? data.r : 30;   // a node kept across a hot reload may lack it
   const max = Math.max(3, Math.floor(r / 2.6));
   const short = n.label.length > max ? n.label.slice(0, Math.max(2, max - 1)) + "…" : n.label;
   const inside = r >= 24;
