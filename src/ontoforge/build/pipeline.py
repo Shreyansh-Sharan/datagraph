@@ -49,11 +49,15 @@ class BuildCancelled(Exception):
 
 
 class BuildPipeline:
-    def __init__(self, registry: Registry, store: TripleStore, source: SourceEngine,
+    def __init__(self, registry: Registry, store: TripleStore, source: "SourceEngine | Callable[[UUID], SourceEngine]",
                  publish: PublishConfig | None = None, metadata=None) -> None:
-        self.registry, self.store, self.source = registry, store, source
+        self.registry, self.store = registry, store
+        self._source = source     # one engine, or a resolver giving the version's domain's engine
         self.publish = publish if publish and publish.enabled else None
         self.metadata = metadata  # MetadataService, optional: adds a non-blocking drift step
+
+    def source_for(self, version_id: UUID) -> SourceEngine:
+        return self._source(version_id) if callable(self._source) else self._source
 
     def run(self, version_id: UUID, *, actor: str | None = None, run: BuildRun | None = None,
             cancel_check: Callable[[], bool] | None = None) -> BuildRun:
@@ -77,6 +81,7 @@ class BuildPipeline:
             with step("compile"):
                 version = self.registry.get_version(version_id)
                 r2rml = self._r2rml(version)
+                self.source = self.source_for(version_id)   # the domain's own connection, or the deployment's source
                 compiled = compile_mapping(r2rml, self.source.dialect, column_types=self.source.catalog.resolver())
                 self.registry.store_r2rml(version_id, serialize_r2rml(r2rml))
                 steps[-1]["detail"] = {"selects": len(compiled.selects)}

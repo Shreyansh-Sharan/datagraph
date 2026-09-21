@@ -639,8 +639,8 @@ def mapping_table_preview(version_id: UUID, request: Request, table: str, limit:
     """First rows of a source table, for the assignment designer (columns are bound by clicking headers)."""
     if not _TABLE_NAME.match(table):
         raise ValueError(f"Invalid table name {table!r}")
-    st = _st(request)
-    columns, rows = st.source.query(f"SELECT * FROM {st.source.dialect.quote_table(table)}", limit)
+    src = _st(request).sources.for_version(version_id)
+    columns, rows = src.query(f"SELECT * FROM {src.dialect.quote_table(table)}", limit)
     return {"columns": columns, "rows": [dict(zip(columns, (None if v is None else str(v) for v in r))) for r in rows]}
 
 
@@ -694,19 +694,20 @@ def mapping_unmap_class(version_id: UUID, request: Request, class_iri: str, me: 
 @router.get("/versions/{version_id}/mapping/preview")
 def mapping_preview(version_id: UUID, request: Request, class_iri: str, limit: int = Query(default=20, ge=1, le=500)):
     st = _st(request)
+    src = st.sources.for_version(version_id)
     spec = _spec(request, version_id)
     keep = _class_triples_maps(spec, class_iri)
     if not keep:
         raise NotFound(f"Class {class_iri} has no mapping")
     from ontoforge.r2rml import Mapping
-    compiled = compile_mapping(Mapping(keep), st.source.dialect, column_types=st.source.catalog.resolver())
-    columns, rows = st.source.query(compiled.sql, limit)
+    compiled = compile_mapping(Mapping(keep), src.dialect, column_types=src.catalog.resolver())
+    columns, rows = src.query(compiled.sql, limit)
     return {"columns": columns, "rows": [dict(zip(columns, (None if v is None else str(v) for v in r))) for r in rows]}
 
 
 @router.post("/versions/{version_id}/mapping/test-sql")
 def mapping_test_sql(version_id: UUID, body: TestSqlIn, request: Request, me: Principal = Depends(builder)):
-    columns, rows = _st(request).source.query(body.sql, body.limit)
+    columns, rows = _st(request).sources.for_version(version_id).query(body.sql, body.limit)
     return {"columns": columns, "rows": [dict(zip(columns, (None if v is None else str(v) for v in r))) for r in rows]}
 
 
@@ -925,22 +926,28 @@ def graphql_schema(version_id: UUID, request: Request):
 
 # -- catalog / autodraft ---------------------------------------------------------
 
+def _catalog(request: Request, domain: str | None):
+    """The catalog to browse: the domain's own connection when it has one, else the deployment's source."""
+    st = _st(request)
+    return (st.sources.for_domain(domain) if domain else st.sources.env).catalog
+
+
 @router.get("/catalog/schemas")
-def catalog_schemas(request: Request, catalog: str | None = None):
+def catalog_schemas(request: Request, catalog: str | None = None, domain: str | None = None):
     """Schemas the source offers (system ones left out), for picking a domain's schemas."""
-    return _st(request).source.catalog.list_schemas(catalog)
+    return _catalog(request, domain).list_schemas(catalog)
 
 
 @router.get("/catalog/tables")
-def catalog_tables(request: Request, schema_name: str | None = None, detail: bool = False):
+def catalog_tables(request: Request, schema_name: str | None = None, detail: bool = False, domain: str | None = None):
     """Table names of a schema; ``detail=true`` adds the column count and comment of each."""
-    cat = _st(request).source.catalog
+    cat = _catalog(request, domain)
     return cat.list_tables_detailed(schema_name) if detail else cat.list_tables(schema_name)
 
 
 @router.get("/catalog/tables/{table}")
-def catalog_table(table: str, request: Request):
-    cat = _st(request).source.catalog
+def catalog_table(table: str, request: Request, domain: str | None = None):
+    cat = _catalog(request, domain)
     return {"table": table, "columns": [{"name": n, "type": t} for n, t in cat.column_types(table).items()],
             "primary_key": list(cat.primary_key(table)),
             "foreign_keys": [{"columns": list(c), "references": r, "referenced_columns": list(rc)} for c, r, rc in cat.foreign_keys(table)]}
@@ -951,7 +958,7 @@ def autodraft(version_id: UUID, body: AutodraftIn, request: Request, me: Princip
     st = _st(request)
     version = st.registry.get_version(version_id)
     domain = st.registry.get_domain_by_id(version.domain_id)
-    onto, spec = draft_from_catalog(st.source.catalog, ontology_iri=body.ontology_iri, base_iri=domain.base_iri,
+    onto, spec = draft_from_catalog(st.sources.for_version(version_id).catalog, ontology_iri=body.ontology_iri, base_iri=domain.base_iri,
                                     tables=body.tables, schema=body.schema_name, infer=body.infer_keys)
     st.registry.update_content(version_id, actor=me.name, ontology_ttl=onto.to_turtle(), mapping=spec.to_dict())
     return {"classes": len(onto.classes), "properties": len(onto.datatype_properties) + len(onto.object_properties),
@@ -1181,11 +1188,11 @@ def _llm(request: Request):
 def _tables(request: Request, tables: list[str] | None, schema: str | None, version_id: UUID | None = None) -> list[dict]:
     st = _st(request)
     snapshots = {s.table: s for s in st.metadata.list(version_id)} if version_id else {}
-    return describe_tables(st.source.catalog, tables, schema, sample_rows=guarded_sampler(lambda t: _samples(request, t)), snapshots=snapshots)
+    src = st.sources.for_version(version_id) if version_id else st.sources.env
+    return describe_tables(src.catalog, tables, schema, sample_rows=guarded_sampler(lambda t: _samples(src, t)), snapshots=snapshots)
 
 
-def _samples(request: Request, table: str, n: int = 3) -> list[tuple]:
-    src = _st(request).source
+def _samples(src, table: str, n: int = 3) -> list[tuple]:
     return list(src.stream(f"SELECT * FROM {src.dialect.quote_table(table)} LIMIT {n}", batch=n))[:n]
 
 

@@ -171,15 +171,15 @@ export class RestApi extends MockApi {
   override async schemas(domain: string): Promise<{ id: string; label: string; group?: string }[]> {
     const f = await this.sourceFacts(domain);
     const entries = f.sources?.length ? f.sources : [{ kind: f.kind, connection: f.connection, catalog: f.catalog, schemas: f.schemas ?? (f.schema ? [f.schema] : []) }];
-    const all = async (catalog: string | null) => this.req<string[]>("GET", `/catalog/schemas${catalog ? `?catalog=${encodeURIComponent(catalog)}` : ""}`).catch(() => [] as string[]);
+    const all = async (catalog: string | null) => this.req<string[]>("GET", `/catalog/schemas?domain=${encodeURIComponent(domain)}${catalog ? `&catalog=${encodeURIComponent(catalog)}` : ""}`).catch(() => [] as string[]);
     const expanded = await Promise.all(entries.map(async src => ({ ...src, schemas: src.schemas.length ? src.schemas : await all(src.catalog) })));   // none chosen: every schema the source offers
     return expanded.flatMap(src => { const dbx = src.kind === "databricks" && !!src.catalog;
       return src.schemas.map(sch => ({ id: dbx ? `${src.catalog}.${sch}` : sch, label: `${dbx ? `${src.catalog}.` : ""}${sch}`, group: src.connection ?? "deployment default" })); });
   }
   override async catalogSchemas(domain: string): Promise<string[]> {
     const d = await this.domain(domain); const cfg = this.cfg ?? await this.config();
-    const q = cfg.sourceKind === "databricks" && d.catalog ? `?catalog=${encodeURIComponent(d.catalog)}` : "";
-    return this.req<string[]>("GET", `/catalog/schemas${q}`);
+    const q = cfg.sourceKind === "databricks" && d.catalog ? `&catalog=${encodeURIComponent(d.catalog)}` : "";
+    return this.req<string[]>("GET", `/catalog/schemas?domain=${encodeURIComponent(domain)}${q}`);
   }
   /** Class mapped to a table (matched on the qualified name, then on the bare table name). */
   private async classOf(domain: string, version: number | undefined, qualified: string): Promise<string | null> {
@@ -191,7 +191,7 @@ export class RestApi extends MockApi {
   }
   override async catalogTables(domain: string, schema: string, version?: number): Promise<CatalogTable[]> {
     const [raw, snap, mapped] = await Promise.all([
-      this.req<({ name: string; columns: number; comment: string | null } | string)[]>("GET", `/catalog/tables?schema_name=${encodeURIComponent(schema)}&detail=true`),
+      this.req<({ name: string; columns: number; comment: string | null } | string)[]>("GET", `/catalog/tables?domain=${encodeURIComponent(domain)}&schema_name=${encodeURIComponent(schema)}&detail=true`),
       version !== undefined ? this.snapshot(domain, version).catch(() => [] as SnapshotTable[]) : Promise.resolve([] as SnapshotTable[]),
       version !== undefined ? this.mapping(domain, version).catch(() => ({} as Record<string, ClassMapping>)) : Promise.resolve({} as Record<string, ClassMapping>)]);
     const held = new Map(snap.map(t => [t.table.toLowerCase(), t]));
@@ -218,10 +218,10 @@ export class RestApi extends MockApi {
   override async refreshSnapshot(domain: string, version: number): Promise<RefreshChange[]> {
     return this.req<RefreshChange[]>("POST", `/versions/${this.vid(domain, version)}/metadata/refresh`);
   }
-  override async tableDetail(_domain: string, schema: string, table: string): Promise<TableDetail> {
+  override async tableDetail(domain: string, schema: string, table: string): Promise<TableDetail> {
     const cfg = this.cfg ?? await this.config();
     const full = schema.includes(".") ? `${schema}.${table}` : cfg.sourceKind === "databricks" && cfg.catalog ? tableName("databricks", cfg.catalog, schema, table) : `${schema}.${table}`;
-    const t = await this.req<{ comment: string | null; columns: { name: string; type: string; comment: string | null }[]; primary_key: string[]; foreign_keys: { columns: string[] }[] }>("GET", `/catalog/tables/${encodeURIComponent(full)}`);
+    const t = await this.req<{ comment: string | null; columns: { name: string; type: string; comment: string | null }[]; primary_key: string[]; foreign_keys: { columns: string[] }[] }>("GET", `/catalog/tables/${encodeURIComponent(full)}?domain=${encodeURIComponent(domain)}`);
     const pk = new Set(t.primary_key ?? []); const fk = new Set((t.foreign_keys ?? []).flatMap(f => f.columns));
     return { name: table, fullName: full, comment: t.comment ?? "", columns: t.columns.map(c => ({ name: c.name, type: c.type, comment: c.comment ?? "", key: pk.has(c.name) ? "pk" : fk.has(c.name) ? "fk" : null, keyInferred: false })) };
   }

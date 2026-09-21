@@ -7,7 +7,7 @@ does that with the hub's own package. A stub hub with the real API shape stands 
 import uuid
 
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import Header, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from ontoforge.api import create_app
@@ -86,6 +86,15 @@ def stub_hub() -> FastAPI:
             raise HTTPException(404, "Connection not found")
         return out(state["connections"][cid])
 
+    @app.get("/connections/{cid}/credentials")
+    def credentials(cid: str, x_service_token: str | None = Header(default=None)):
+        if x_service_token != "svc":
+            raise HTTPException(403, "A valid X-Service-Token header is required.")
+        if cid not in state["connections"]:
+            raise HTTPException(404, "Connection not found")
+        c = state["connections"][cid]
+        return {"id": cid, "name": c["name"], "type": c["type"], "config": {**c["config"], **c["_secrets"]}}
+
     @app.post("/connections/{cid}/test")
     def test_saved(cid: str):
         if cid not in state["connections"]:
@@ -98,7 +107,7 @@ def stub_hub() -> FastAPI:
     return app
 
 
-HUB = Settings(auth_default_role="admin", connections_hub_url="http://hub.local")
+HUB = Settings(auth_default_role="admin", connections_hub_url="http://hub.local", connections_hub_service_token="svc")
 
 
 @pytest.fixture

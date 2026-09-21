@@ -89,8 +89,9 @@ class HubConnections:
 
     source = "hub"
 
-    def __init__(self, client: httpx.Client) -> None:
+    def __init__(self, client: httpx.Client, service_token: str | None = None) -> None:
         self.http = client
+        self.service_token = service_token
         self._types: dict[str, dict] | None = None
 
     # -- transport ----------------------------------------------------------------
@@ -170,6 +171,26 @@ class HubConnections:
 
     def get(self, connection_id: str) -> dict:
         return self._public(self._call("GET", f"/connections/{connection_id}"))
+
+    def credentials(self, connection_id: str) -> dict:
+        """The connection's full config, secrets included, for opening the source ourselves (builds,
+        catalog browsing). Needs one of the hub's CM_SERVICE_TOKENS; the hub audits every read."""
+        if not self.service_token:
+            raise HubUnavailable("Opening a domain's connection needs ONTOFORGE_CONNECTIONS_HUB_SERVICE_TOKEN "
+                                 "(one of the hub's CM_SERVICE_TOKENS); without it only the deployment's own source is available.")
+        try:
+            r = self.http.get(f"/connections/{connection_id}/credentials", headers={"X-Service-Token": self.service_token})
+        except httpx.HTTPError as e:
+            raise HubUnavailable(f"Connection hub unreachable: {e}") from e
+        if r.status_code == 404:
+            raise NotFound(f"Connection {connection_id}")
+        if r.status_code == 403:
+            raise HubUnavailable("The hub refused the service token: check CM_SERVICE_TOKENS on the hub and "
+                                 "ONTOFORGE_CONNECTIONS_HUB_SERVICE_TOKEN here.")
+        if not r.is_success:
+            raise HubUnavailable(f"Connection hub returned {r.status_code} for credentials")
+        c = r.json()
+        return {"id": c["id"], "name": c["name"], "kind": c["type"], "config": c.get("config") or {}}
 
     def test(self, connection_id: str, actor: str | None = None) -> dict:
         return result_from_report(self._call("POST", f"/connections/{connection_id}/test", actor=actor))

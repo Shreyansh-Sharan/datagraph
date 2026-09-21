@@ -262,7 +262,7 @@ describe("several schemas per domain", () => {
         "GET /api/domains/hr": { name: "hr", description: "", base_iri: "http://p/hr/", review_quorum: 1, schemas: ["people", "payroll"], default_schema: "people" },
         "GET /api/domains/hr/versions/summary": [],
         "GET /api/domains/cards": [{ name: "hr", version_count: 0, active_version: null, latest_version: null, triples: 0, last_build: null, source: { kind: "postgres", connection: null, catalog: null, schema: "people", schemas: ["people", "payroll"] }, mcp: { exposed: true, disabled_tools: [] } }],
-        "GET /api/catalog/schemas": ["people", "payroll", "public"],
+        "GET /api/catalog/schemas?domain=hr": ["people", "payroll", "public"],
         "GET /api/domains/hr/source": { kind: "postgres", connection: null, connection_id: null, catalog: null, schema: "people", schemas: ["people", "payroll"], host: null, auth_mode: "header", auth_header: "X-Actor", materialization: "none", target_schema: null, last_test: null, ai: null, sources: [{ kind: "postgres", connection: null, connection_id: null, catalog: null, schemas: ["people", "payroll"], host: null, last_test: null }] },
       };
       const key = `${init?.method ?? "GET"} ${url}`;
@@ -305,7 +305,7 @@ describe("several sources per domain", () => {
     const calls: string[] = [];
     const dom = { name: "hr", description: "", base_iri: "http://p/hr/", review_quorum: 1, ai_connection_id: "ai-1", sources: [{ connection_id: "wh", catalog: "rgm", schemas: ["gold", "silver"] }, { connection_id: "lake", catalog: null, schemas: ["raw"] }], connection_id: "wh", default_catalog: "rgm", schemas: ["gold", "silver"], default_schema: "gold" };
     const routes: Record<string, unknown> = {
-        "GET /api/catalog/schemas?catalog=rgm": ["bronze", "gold"],
+        "GET /api/catalog/schemas?domain=hr&catalog=rgm": ["bronze", "gold"],
         "GET /api/auth/config": { mode: "header", header: "X-Actor", source: { kind: "databricks", catalog: "finops_metadata" } },
         "GET /api/domains/hr": dom, "GET /api/domains/hr/versions/summary": [],
         "GET /api/domains/cards": [{ name: "hr", version_count: 0, active_version: null, latest_version: null, triples: 0, last_build: null, source: { kind: "databricks", connection: "warehouse", catalog: "rgm", schema: "gold", schemas: ["gold", "silver"] }, source_count: 2, mcp: { exposed: true, disabled_tools: [] } }],
@@ -328,7 +328,7 @@ describe("several sources per domain", () => {
     dom.sources[0].schemas = []; dom.schemas = [];
     (routes["GET /api/domains/hr/source"] as { sources: { schemas: string[] }[] }).sources[0].schemas = [];
     expect((await api.schemas("hr")).map(s => s.id)).toEqual(["rgm.bronze", "rgm.gold", "raw"]);
-    expect(calls.filter(c => c.startsWith("GET /api/catalog/schemas?catalog=rgm")).length).toBe(1);
+    expect(calls.filter(c => c.startsWith("GET /api/catalog/schemas?domain=hr&catalog=rgm")).length).toBe(1);
     await api.createDomain({ name: "hr", description: "", base_iri: "http://p/hr/", quorum: 1, ai_connection_id: "ai-1", sources: [{ connection_id: "wh", catalog: null, schemas: [] }] });
     expect(calls).toContain('POST /api/domains {"name":"hr","description":"","base_iri":"http://p/hr/","review_quorum":1,"ai_connection_id":"ai-1","sources":[{"connection_id":"wh","catalog":null,"schemas":[]}]}');
   });
@@ -358,7 +358,7 @@ describe("metadata snapshot (scan)", () => {
         "GET /api/domains/aw": { name: "aw", description: "", base_iri: "http://p/aw/", review_quorum: 1, sources: [{ connection_id: "c1", catalog: "adventurework2022", schemas: [] }] },
         "GET /api/domains/aw/versions/summary": [{ id: "v-1", version: 1, status: "draft", has_ontology: false, has_mapping: false, rule_count: 0, constraint_count: 0, created_at: "2026-09-21T10:00:00Z", created_by: "alice", is_active: false, stats: { classes: 0, attributes: 0, relationships: 0, bindings: 0, rules: 0, constraints: 0, triples: 0 }, mapping: null, last_build: null, review: null, lease: null }],
         "GET /api/domains/cards": [{ name: "aw", version_count: 1, active_version: null, latest_version: { version: 1, status: "draft" }, triples: 0, last_build: null, source: { kind: "databricks", connection: "AdventureWorks", catalog: "adventurework2022", schema: null, schemas: [] }, source_count: 1, mcp: { exposed: true, disabled_tools: [] } }],
-        "GET /api/catalog/tables?schema_name=adventurework2022.dbo&detail=true": [{ name: "awbuildversion", columns: 4, comment: null }, { name: "databaselog", columns: 8, comment: null }, { name: "errorlog", columns: 9, comment: null }],
+        "GET /api/catalog/tables?domain=aw&schema_name=adventurework2022.dbo&detail=true": [{ name: "awbuildversion", columns: 4, comment: null }, { name: "databaselog", columns: 8, comment: null }, { name: "errorlog", columns: 9, comment: null }],
         "GET /api/versions/v-1/metadata": snapshot,
         "POST /api/versions/v-1/metadata/refresh": [{ table: "adventurework2022.dbo.errorlog", missing: false, added: ["severity"], removed: [], modified: [], keys_changed: false }],
       };
@@ -529,7 +529,7 @@ describe("metadata screen data (rest)", () => {
         "GET /api/domains/aw": { name: "aw", description: "", base_iri: "http://p/aw/", review_quorum: 1, materialization: "none", sources: [{ connection_id: "c1", catalog: "adventurework2022", schemas: ["sales"] }] },
         "GET /api/domains/aw/versions/summary": [{ id: vid, version: 1, status: "draft", has_ontology: true, has_mapping: true, rule_count: 0, constraint_count: 0, created_at: "2026-09-21T10:00:00Z", created_by: "alice", is_active: false, stats: { classes: 1, attributes: 0, relationships: 0, bindings: 0, rules: 0, constraints: 0, triples: 0 }, mapping: null, last_build: null, review: null, lease: null }],
         "GET /api/domains/cards": [{ name: "aw", version_count: 1, active_version: null, latest_version: { version: 1, status: "draft" }, triples: 0, last_build: null, source: { kind: "databricks", connection: "AdventureWorks", catalog: "adventurework2022", schema: "sales", schemas: ["sales"] }, source_count: 1, mcp: { exposed: true, disabled_tools: [] } }],
-        "GET /api/catalog/tables?schema_name=adventurework2022.sales&detail=true": [{ name: "customer", columns: 7, comment: "Customers" }, { name: "store", columns: 5, comment: null }],
+        "GET /api/catalog/tables?domain=aw&schema_name=adventurework2022.sales&detail=true": [{ name: "customer", columns: 7, comment: "Customers" }, { name: "store", columns: 5, comment: null }],
         [`GET /api/versions/${vid}/metadata`]: [{ table: "adventurework2022.sales.customer", comment: "Customers", columns: [{ name: "customerid", type: "int", comment: null }], primary_key: ["customerid"], foreign_keys: [] }],
         [`GET /api/versions/${vid}/ontology`]: { classes: [{ iri: EX + "Customer", label: "Customer", description: null, parents: [] }], datatype_properties: [], object_properties: [] },
         [`GET /api/versions/${vid}/mapping`]: { base_iri: "http://p/aw/", classes: [{ class_iri: EX + "Customer", table: "adventurework2022.sales.customer", sql_query: null, key_columns: ["customerid"], iri_template: null, attributes: [], excluded: [] }], relations: [] },

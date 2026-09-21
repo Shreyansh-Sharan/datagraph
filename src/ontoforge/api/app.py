@@ -39,6 +39,7 @@ from ontoforge.observability import RequestLoggingMiddleware, configure_logging
 from ontoforge.r2rml import MappingError
 from ontoforge.reasoning import Reasoner
 from ontoforge.connectors import HubConnections, HubUnavailable, NoConnectionModule
+from ontoforge.sources import SourceResolver
 from ontoforge.registry import LifecycleError, LockedError, NotFound, Registry
 from ontoforge.quality import QualityError
 from ontoforge.rules import RuleError
@@ -62,16 +63,16 @@ def create_app(db: Database, source_db: Database | None = None, settings: Settin
     app.state.connections = _connections_backend(settings, hub_client)
     app.state.principals = Principals(db)
     app.state.store = TripleStore(db)
-    app.state.source = _source_engine(settings, source_db or db)
+    app.state.sources = SourceResolver(settings, app.state.registry, app.state.connections, lambda: _source_engine(settings, source_db or db))
     publish = PublishConfig(settings.warehouse_target_schema, settings.warehouse_materialization) \
         if settings.warehouse_target_schema else None
-    app.state.metadata = MetadataService(app.state.registry, app.state.source.catalog, db)
-    app.state.pipeline = BuildPipeline(app.state.registry, app.state.store, app.state.source, publish=publish,
+    app.state.metadata = MetadataService(app.state.registry, app.state.sources.catalog_for, db)
+    app.state.pipeline = BuildPipeline(app.state.registry, app.state.store, app.state.sources.for_version, publish=publish,
                                        metadata=app.state.metadata)
     app.state.scheduler = BuildScheduler(app.state.pipeline, app.state.registry, workers=settings.build_workers)
     app.state.reasoner = Reasoner(app.state.registry, app.state.store)
     app.state.analytics = GraphAnalytics(app.state.registry, app.state.store)
-    app.state.attachments = AttachmentService(app.state.registry, app.state.source, app.state.store)
+    app.state.attachments = AttachmentService(app.state.registry, app.state.sources.for_version, app.state.store)
     app.state.cohorts = CohortEngine(app.state.registry, app.state.store)
     app.state.llm = llm if llm is not None else _llm_provider(settings)   # the CLI's serve path passes none: build it from settings
     mcp_app = _mcp_mount(app)
@@ -141,7 +142,7 @@ def _connections_backend(settings: Settings, hub_client=None):
     if hub_client is None:
         headers = {"Authorization": f"Bearer {settings.connections_hub_token}"} if settings.connections_hub_token else {}
         hub_client = httpx.Client(base_url=settings.connections_hub_url.rstrip("/"), headers=headers, timeout=httpx.Timeout(180.0, connect=10.0))
-    return HubConnections(hub_client)
+    return HubConnections(hub_client, service_token=settings.connections_hub_service_token)
 
 
 def _source_engine(settings: Settings, db: Database) -> SourceEngine:

@@ -16,7 +16,8 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     connections_hub_url: str | None = None        # Polestar connection module (mf-studio-connectors hub); connections live there
-    connections_hub_token: str | None = None      # bearer token for the hub (platform user token), optional
+    connections_hub_token: str | None = None
+    connections_hub_service_token: str | None = None   # one of the hub's CM_SERVICE_TOKENS: lets builds open a domain's connection      # bearer token for the hub (platform user token), optional
     auth_mode: str = "header"           # "header" (trusted proxy / dev) | "token" (API keys)
     auth_header: str = "X-Actor"        # identity header in header mode (Databricks Apps: X-Forwarded-Email)
     auth_default_role: str = "viewer"   # role for principals without an explicit one

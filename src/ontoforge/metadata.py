@@ -7,6 +7,8 @@ build breaks.
 """
 from __future__ import annotations
 
+from typing import Callable
+
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from uuid import UUID
@@ -63,15 +65,19 @@ class DriftIssue:
 
 
 class MetadataService:
-    def __init__(self, registry: Registry, catalog: CatalogAdapter, db: Database) -> None:
-        self.registry, self.catalog, self.db = registry, catalog, db
+    def __init__(self, registry: Registry, catalog: "CatalogAdapter | Callable[[UUID], CatalogAdapter]", db: Database) -> None:
+        self.registry, self.db = registry, db
+        self._catalog = catalog   # one catalog, or a resolver giving the version's domain's catalog
+
+    def catalog_for(self, version_id: UUID) -> CatalogAdapter:
+        return self._catalog(version_id) if callable(self._catalog) else self._catalog
 
     # -- snapshots -----------------------------------------------------------
 
     def import_tables(self, version_id: UUID, tables: list[str], *, actor: str, schema: str | None = None) -> list[TableSnapshot]:
         self.registry.assert_editable(version_id, actor)
         qualified = [t if "." in t or not schema else f"{schema}.{t}" for t in tables]
-        out = [self._capture(t) for t in qualified]
+        out = [self._capture(version_id, t) for t in qualified]
         for snap in out:
             self._save(version_id, snap)
         return out
@@ -96,7 +102,7 @@ class MetadataService:
         for old in self.list(version_id):
             change = RefreshChange(table=old.table)
             try:
-                new = self._capture(old.table)
+                new = self._capture(version_id, old.table)
             except Exception:  # noqa: BLE001 - table gone or unreadable
                 change.missing = True
                 changes.append(change)
@@ -143,6 +149,7 @@ class MetadataService:
         if not version.mapping:
             return []
         spec = MappingSpec.from_dict(version.mapping)
+        catalog = self.catalog_for(version_id)
         snapshots = {s.table.lower(): s for s in self.list(version_id)}
         issues: list[DriftIssue] = []
         live_cache: dict[str, dict[str, dict] | None] = {}
@@ -151,7 +158,7 @@ class MetadataService:
             key = table.lower()
             if key not in live_cache:
                 try:
-                    live_cache[key] = {c["name"].lower(): c for c in self.catalog.column_details(table)} or None
+                    live_cache[key] = {c["name"].lower(): c for c in catalog.column_details(table)} or None
                 except Exception:  # noqa: BLE001
                     live_cache[key] = None
             return live_cache[key]
@@ -171,12 +178,13 @@ class MetadataService:
 
     # -- internals -----------------------------------------------------------
 
-    def _capture(self, table: str) -> TableSnapshot:
-        columns = self.catalog.column_details(table)
+    def _capture(self, version_id: UUID, table: str) -> TableSnapshot:
+        catalog = self.catalog_for(version_id)
+        columns = catalog.column_details(table)
         if not columns:
             raise MetadataError(f"Table {table!r} not found in the catalog")
-        return TableSnapshot(table, self.catalog.table_comment(table), columns, list(self.catalog.primary_key(table)),
-                             [{"columns": list(c), "references": r, "referenced_columns": list(rc)} for c, r, rc in self.catalog.foreign_keys(table)])
+        return TableSnapshot(table, catalog.table_comment(table), columns, list(catalog.primary_key(table)),
+                             [{"columns": list(c), "references": r, "referenced_columns": list(rc)} for c, r, rc in catalog.foreign_keys(table)])
 
     def _save(self, version_id: UUID, snap: TableSnapshot) -> None:
         with self.db.transaction() as cur:

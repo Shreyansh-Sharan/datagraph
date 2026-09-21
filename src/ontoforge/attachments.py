@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass, field
+from typing import Callable
 from uuid import UUID
 
 from ontoforge.build.source import SourceEngine
@@ -115,8 +116,12 @@ class Attachments:
 
 
 class AttachmentService:
-    def __init__(self, registry: Registry, source: SourceEngine, store=None) -> None:
-        self.registry, self.source, self.store = registry, source, store
+    def __init__(self, registry: Registry, source: "SourceEngine | Callable[[UUID], SourceEngine]", store=None) -> None:
+        self.registry, self.store = registry, store
+        self._source = source   # one engine, or a resolver giving the version's domain's engine
+
+    def source_for(self, version_id: UUID) -> SourceEngine:
+        return self._source(version_id) if callable(self._source) else self._source
 
     # -- lookup ------------------------------------------------------------------
 
@@ -143,6 +148,7 @@ class AttachmentService:
 
     def bridges_for(self, version_id: UUID, iri: str) -> list[dict]:
         att, spec = self._load(version_id)
+        source = self.source_for(version_id)
         try:
             cls, keys = self._resolve(spec, iri)
         except AttachmentError:
@@ -177,16 +183,18 @@ class AttachmentService:
 
     def compute_virtual(self, version_id: UUID, iri: str) -> dict[str, str | None]:
         att, spec = self._load(version_id)
+        source = self.source_for(version_id)
         cls, keys = self._resolve(spec, iri)
         out = {}
         for va in att.virtual_attributes:
             if va.class_iri == cls:
-                _, rows = self._run(va.sql, keys, limit=1)
+                _, rows = self._run(source, va.sql, keys, limit=1)
                 out[va.name] = _text(rows[0][0]) if rows else None
         return out
 
     def invoke(self, version_id: UUID, iri: str, name: str) -> dict:
         att, spec = self._load(version_id)
+        source = self.source_for(version_id)
         cls, keys = self._resolve(spec, iri)
         action = next((a for a in att.actions if a.name == name), None)
         if action is None:
@@ -194,13 +202,14 @@ class AttachmentService:
         if action.class_iri != cls:
             raise AttachmentError(f"Action {name!r} is declared on {Ontology.local_name(action.class_iri)}, "
                                   f"not on {Ontology.local_name(cls)}")
-        columns, rows = self._run(action.sql, keys, limit=1 if action.kind == "scalar" else 500)
+        columns, rows = self._run(source, action.sql, keys, limit=1 if action.kind == "scalar" else 500)
         if action.kind == "scalar":
             return {"kind": "scalar", "value": _text(rows[0][0]) if rows else None}
         return {"kind": "table", "columns": columns, "rows": [dict(zip(columns, (_text(v) for v in r))) for r in rows]}
 
     def dataset_rows(self, version_id: UUID, iri: str, limit: int = 50) -> list[dict]:
         att, spec = self._load(version_id)
+        source = self.source_for(version_id)
         cls, keys = self._resolve(spec, iri)
         cm = next(c for c in spec.classes if c.class_iri == cls)
         out = []
@@ -209,22 +218,22 @@ class AttachmentService:
                 continue
             if len(ds.key_columns) != len(cm.key_columns):
                 raise AttachmentError(f"Dataset {ds.table}: key_columns must match the class key ({len(cm.key_columns)} column(s))")
-            q = self.source.dialect.quote_identifier
+            q = source.dialect.quote_identifier
             where = " AND ".join(f"{q(col)} = :{col}" for col in ds.key_columns)
             params = {col: keys[k] for col, k in zip(ds.key_columns, cm.key_columns)}
-            order = ", ".join(q(c) for c in self.source.catalog.column_types(ds.table)) or "1"   # deterministic rows
-            columns, rows = self._run(f"SELECT * FROM {self.source.dialect.quote_table(ds.table)} WHERE {where} ORDER BY {order}", params, limit)
+            order = ", ".join(q(c) for c in source.catalog.column_types(ds.table)) or "1"   # deterministic rows
+            columns, rows = self._run(source, f"SELECT * FROM {source.dialect.quote_table(ds.table)} WHERE {where} ORDER BY {order}", params, limit)
             out.append({"table": ds.table, "description": ds.description, "columns": columns,
                         "rows": [dict(zip(columns, (_text(v) for v in r))) for r in rows]})
         return out
 
-    def _run(self, sql: str, params: dict[str, str], limit: int) -> tuple[list[str], list[tuple]]:
+    def _run(self, source: SourceEngine, sql: str, params: dict[str, str], limit: int) -> tuple[list[str], list[tuple]]:
         needed = set(_PLACEHOLDER.findall(sql))
         missing = needed - set(params)
         if missing:
             raise AttachmentError(f"SQL references unknown placeholder(s): {', '.join(sorted(missing))}; "
                                   f"available: {', '.join(sorted(params))}")
-        return self.source.query_params(sql, {k: v for k, v in params.items() if k in needed}, limit)
+        return source.query_params(sql, {k: v for k, v in params.items() if k in needed}, limit)
 
 
 def _text(v):

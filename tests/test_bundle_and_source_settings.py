@@ -51,17 +51,19 @@ def test_bundle_endpoints(db):
 
 def test_source_engine_from_settings_defaults_to_postgres(db):
     app = create_app(db=db, settings=Settings(source_kind="postgres", auth_default_role="admin"))
-    assert isinstance(app.state.source, PostgresSource)
+    assert isinstance(app.state.sources.env, PostgresSource)
 
 
 def test_source_engine_from_settings_databricks(db):
     settings = Settings(source_kind="databricks", databricks_host="h", databricks_http_path="/p", databricks_token="t",
                         databricks_catalog="main", databricks_schema="hr")
     app = create_app(db=db, settings=settings)
-    assert isinstance(app.state.source, DatabricksSource)
-    assert app.state.source.catalog.default_catalog == "main"
+    assert isinstance(app.state.sources.env, DatabricksSource)
+    assert app.state.sources.env.catalog.default_catalog == "main"
 
 
 def test_databricks_settings_incomplete_is_an_error(db):
+    """The deployment source is opened on first use (domains with their own connection never need it)."""
+    app = create_app(db=db, settings=Settings(source_kind="databricks"))
     with pytest.raises(ValueError, match="DATABRICKS"):
-        create_app(db=db, settings=Settings(source_kind="databricks"))
+        app.state.sources.env
