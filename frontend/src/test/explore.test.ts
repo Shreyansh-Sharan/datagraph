@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeNeighbourhood, type ExploreGraph } from "@/screens/Explore";
+import { mergeNeighbourhood, mergeSample, type ExploreGraph } from "@/screens/Explore";
 import type { EntityDetail } from "@/api";
 
 const entity = (id: string, out: [string, string][], inc: [string, string][] = []): EntityDetail => ({
@@ -19,5 +19,16 @@ describe("Explore graph expansion", () => {
     expect(Object.keys(g.nodes).sort()).toEqual(["A", "B", "C", "D", "E"]);
     expect(g.edges.length).toBe(4);
     expect(g.nodes.B.type).toBe("Customer");   // known once B itself was opened
+  });
+});
+
+
+describe("Explore overview", () => {
+  it("lays the sample on the canvas and later neighbourhoods refine it without duplicates", () => {
+    let g = mergeSample({ nodes: {}, edges: [] }, { nodes: [{ id: "A", label: "A", type: "Customer" }, { id: "B", label: "B", type: "" }], edges: [{ from: "A", to: "B", label: "knows" }] });
+    expect(Object.keys(g.nodes)).toEqual(["A", "B"]);
+    g = mergeNeighbourhood(g, entity("B", [["knows", "C"]], [["knows", "A"]]));
+    expect(g.edges.length).toBe(2);
+    expect(g.nodes.B.type).toBe("Customer");
   });
 });

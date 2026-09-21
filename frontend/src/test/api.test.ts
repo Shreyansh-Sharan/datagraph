@@ -664,6 +664,7 @@ describe("Explore search filters and neighbour names", () => {
         "GET /api/domains/aw/versions/summary": [{ id: vid, version: 1, status: "published", has_ontology: true, has_mapping: true, rule_count: 0, constraint_count: 0, created_at: "2026-09-21T10:00:00Z", created_by: "alice", is_active: true, stats: { classes: 2, attributes: 2, relationships: 1, bindings: 0, rules: 0, constraints: 0, triples: 10 }, mapping: null, last_build: null, review: null, lease: null }],
         "GET /api/domains/cards": [{ name: "aw", version_count: 1, active_version: { version: 1 }, latest_version: { version: 1, status: "published" }, triples: 10, last_build: null, source: { kind: "databricks", connection: null, catalog: null, schema: null, schemas: [] }, source_count: 0, mcp: { exposed: true, disabled_tools: [] } }],
         [`GET /api/versions/${vid}/graph/status`]: { triples: 10, inferred: 0, types: { "http://p/aw#Customer": 7, "http://p/aw#SalesOrder": 3 } },
+        [`GET /api/versions/${vid}/graph/overview?limit=300`]: { nodes: [{ iri: "http://p/aw/Customer/1", label: "Ann", types: ["http://p/aw#Customer"] }, { iri: "http://p/aw/SalesOrder/9", label: "", types: [] }], edges: [{ source: "http://p/aw/Customer/1", predicate: "http://p/aw#placesOrder", target: "http://p/aw/SalesOrder/9" }] },
         [`GET /api/versions/${vid}/graph/search?q=ann&limit=20&match=starts_with&type=${encodeURIComponent("http://p/aw#Customer")}`]: [{ iri: "http://p/aw/Customer/1", label: "Ann", types: ["http://p/aw#Customer"] }],
         [`GET /api/versions/${vid}/graph/entity?iri=${encodeURIComponent("http://p/aw/Customer/1")}`]: { iri: "http://p/aw/Customer/1", label: "Ann", types: ["http://p/aw#Customer"], attributes: [], outgoing: [{ predicate: "http://p/aw#placesOrder", target: "http://p/aw/SalesOrder/9", inferred: false }], incoming: [], neighbours: [{ iri: "http://p/aw/SalesOrder/9", label: "Order 9", types: ["http://p/aw#SalesOrder"] }] },
       };
@@ -673,6 +674,7 @@ describe("Explore search filters and neighbour names", () => {
     const st = await a.graphStatus("aw");
     expect(st.types).toEqual([{ name: "Customer", iri: "http://p/aw#Customer", count: 7 }, { name: "SalesOrder", iri: "http://p/aw#SalesOrder", count: 3 }]);
     expect(st.entities).toBe("10");
+    expect(await a.graphOverview("aw")).toEqual({ nodes: [{ id: "http://p/aw/Customer/1", label: "Ann", type: "Customer" }, { id: "http://p/aw/SalesOrder/9", label: "9", type: "" }], edges: [{ from: "http://p/aw/Customer/1", to: "http://p/aw/SalesOrder/9", label: "placesOrder" }] });
     expect(await a.search("aw", "ann", { type: "http://p/aw#Customer", match: "starts_with" })).toEqual([{ id: "http://p/aw/Customer/1", label: "Ann", type: "Customer" }]);
     const e = await a.entity("aw", "http://p/aw/Customer/1");
     expect(e.out[0].targets[0]).toEqual({ id: "http://p/aw/SalesOrder/9", label: "Order 9", type: "SalesOrder" });   // named, not "9"

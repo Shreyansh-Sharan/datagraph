@@ -2,7 +2,7 @@
 // Methods with a settled contract call the API; the rest fall through to the mock so the
 // app stays usable while integration proceeds. Replace fallbacks method by method.
 import { MockApi } from "./mock";
-import type { AiProgress, AuditEntry, BuildRun, SearchOptions, BuildStep, CatalogTable, ChecklistItem, DqColumnIssue, DriftIssue, GlossaryTerm, MappingKpis, OntoDiff, TableProfile, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, RefreshChange, SnapshotTable, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus } from "./types";
+import type { AiProgress, AuditEntry, BuildRun, GraphSample, SearchOptions, BuildStep, CatalogTable, ChecklistItem, DqColumnIssue, DriftIssue, GlossaryTerm, MappingKpis, OntoDiff, TableProfile, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, RefreshChange, SnapshotTable, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus } from "./types";
 import { tableName } from "./types";
 import { humanAction, relTime } from "./format";
 
@@ -421,6 +421,11 @@ export class RestApi extends MockApi {
       attrs: e.attributes.map(a => ({ k: local(a.predicate), v: a.value, dt: a.datatype ? `xsd:${local(a.datatype)}` : "", inferred: a.inferred })),
       out: group(e.outgoing, x => x.target).map(([pred, ts]) => ({ pred: local(pred), targets: ts.map(hit) })),
       inc: group(e.incoming, x => x.source).map(([pred, ts]) => ({ pred: local(pred), count: `${ts.length}`, targets: ts.slice(0, 20).map(hit) })), far: [] };
+  }
+  override async graphOverview(domain: string, limit = 300): Promise<GraphSample> {
+    const g = await this.req<{ nodes: { iri: string; label: string; types: string[] }[]; edges: { source: string; predicate: string; target: string }[] }>("GET", `/versions/${await this.activeVid(domain)}/graph/overview?limit=${limit}`);
+    const local = (iri: string) => iri.split(/[#/]/).pop() ?? iri;
+    return { nodes: g.nodes.map(n => ({ id: n.iri, label: n.label || local(n.iri), type: n.types[0] ? local(n.types[0]) : "" })), edges: g.edges.map(e => ({ from: e.source, to: e.target, label: local(e.predicate) })) };
   }
   override async graphStatus(domain: string): Promise<GraphStatus> {
     const s = await this.req<{ triples: number; inferred: number; types?: Record<string, number> }>("GET", `/versions/${await this.activeVid(domain)}/graph/status`);

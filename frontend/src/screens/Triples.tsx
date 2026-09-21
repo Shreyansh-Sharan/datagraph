@@ -17,7 +17,7 @@ export function Triples() {
   const set = (patch: Partial<TripleQuery>) => setQuery(q => ({ ...q, offset: 0, ...patch }));
   const sortBy = (col: TripleQuery["sort"]) => set(query.sort === col ? { dir: query.dir === "asc" ? "desc" : "asc" } : { sort: col, dir: "asc" });
   const rows = page.data?.rows ?? [];
-  const entityOf = (iri: string) => iri.split("/")[1] ?? iri;
+  const entityOf = (iri: string) => iri;   // Explore takes the full IRI
   const headers: [TripleQuery["sort"], string][] = [["subject", "Subject"], ["predicate", "Predicate"], ["object", "Object"], ["inferred", "Inferred"]];
 
   return (

@@ -111,6 +111,7 @@ export interface EntityDetail {
   far: { pred: string; target: SearchHit }[]; // depth-2 neighbours
 }
 export interface GraphStatus { triples: string; inferred: string; entities: string; types: { name: string; iri: string; count: number }[] }
+export interface GraphSample { nodes: { id: string; label: string; type: string }[]; edges: { from: string; to: string; label: string }[] }
 export type SearchMatch = "contains" | "exact" | "starts_with";
 export interface SearchOptions { type?: string | null; match?: SearchMatch }   // type: a class IRI from GraphStatus.types
 export interface TripleRow { s: string; p: string; o: string; isIri: boolean; dt: string; inferred: boolean }
@@ -207,6 +208,7 @@ export interface DatagraphApi {
   search(domain: string, q: string, opts?: SearchOptions): Promise<SearchHit[]>;
   entity(domain: string, id: string): Promise<EntityDetail>;
   graphStatus(domain: string): Promise<GraphStatus>;
+  graphOverview(domain: string, limit?: number): Promise<GraphSample>;   // a first picture of the whole graph: a few relationships of every predicate
   triples(domain: string, query: TripleQuery): Promise<TriplePage>;
   analytics(domain: string): Promise<Analytics>;
 

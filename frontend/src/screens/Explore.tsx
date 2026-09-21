@@ -12,6 +12,16 @@ export interface ExploreGraph { nodes: Record<string, { id: string; label: strin
 const EMPTY: ExploreGraph = { nodes: {}, edges: [] };
 
 /** Adds an entity and its direct neighbours to the graph; existing nodes keep their place, types are refined. */
+/** Lays the overview sample on the canvas (nodes keep their place if already there). */
+export function mergeSample(g: ExploreGraph, sample: { nodes: { id: string; label: string; type: string }[]; edges: { from: string; to: string; label: string }[] }): ExploreGraph {
+  const nodes = { ...g.nodes };
+  for (const n of sample.nodes) nodes[n.id] = { id: n.id, label: n.label, type: n.type || nodes[n.id]?.type || "" };
+  const seen = new Set(g.edges.map(x => `${x.from}|${x.label}|${x.to}`));
+  const edges = [...g.edges];
+  for (const e of sample.edges) { const k = `${e.from}|${e.label}|${e.to}`; if (!seen.has(k)) { seen.add(k); edges.push(e); } }
+  return { nodes, edges };
+}
+
 export function mergeNeighbourhood(g: ExploreGraph, e: EntityDetail): ExploreGraph {
   const nodes = { ...g.nodes, [e.id]: { id: e.id, label: e.label, type: e.type || g.nodes[e.id]?.type || "" } };
   const seen = new Set(g.edges.map(x => `${x.from}|${x.label}|${x.to}`));
@@ -34,9 +44,12 @@ export function Explore() {
   const [busy, setBusy] = useState<string | null>(null);
   const status = useLoad(() => api.graphStatus(domain.name), [domain.name]);
   const results = useLoad(() => api.search(domain.name, q, { type: typeIri || null, match: (match as "contains" | "exact" | "starts_with") || "contains" }), [domain.name, q, typeIri, match]);
-  const entityId = entityParam || results.data?.[0]?.id || "";   // nothing chosen yet: start from the first match
+  const entityId = entityParam;   // nothing chosen yet: the canvas shows the overview sample and the panel waits
   const ent = useLoad(() => entityId ? api.entity(domain.name, entityId) : Promise.resolve(null), [domain.name, entityId]);
-  useEffect(() => { setGraph(EMPTY); setExpanded(new Set()); }, [domain.name]);   // a new domain starts an empty canvas
+  const overview = useLoad(() => api.graphOverview(domain.name, 300).catch(() => ({ nodes: [], edges: [] })), [domain.name]);
+  const [seeded, setSeeded] = useState("");
+  useEffect(() => { setGraph(EMPTY); setExpanded(new Set()); setSeeded(""); }, [domain.name]);   // a new domain starts over
+  useEffect(() => { if (overview.data && seeded !== domain.name) { setGraph(g => mergeSample(g, overview.data!)); setSeeded(domain.name); } }, [overview.data, seeded, domain.name]);   // the whole graph first, sampled
   // The selected entity's neighbourhood joins the graph the first time it is opened, or when it is expanded.
   useEffect(() => { const e = ent.data; if (!e) return; setGraph(g => (g.nodes[e.id] && expanded.has(e.id) ? g : mergeNeighbourhood(g, e))); setExpanded(x => (x.has(e.id) ? x : new Set(x).add(e.id))); }, [ent.data]);   // eslint-disable-line react-hooks/exhaustive-deps
   const expand = async (id: string) => {
@@ -74,8 +87,8 @@ export function Explore() {
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 360px", gap: 20, alignItems: "start" }}>
         <Stage nodes={nodes} edges={edges} height={640} groups={groups} onSelect={id => setEntity(id)} onExpand={id => expand(id)}
-          tools={<Button size="sm" style={{ height: 28 }} onClick={() => { setGraph(EMPTY); setExpanded(new Set()); if (e) { setGraph(mergeNeighbourhood(EMPTY, e)); setExpanded(new Set([e.id])); } }}>Clear</Button>}
-          status={busy ? `Expanding ${graph.nodes[busy]?.label ?? busy}…` : e ? `${expanded.size} expanded · click to select, double-click to expand` : "Pick an entity to start"} />
+          tools={<><Button size="sm" style={{ height: 28 }} onClick={() => { setGraph(overview.data ? mergeSample(EMPTY, overview.data) : EMPTY); setExpanded(new Set()); }}>Overview</Button><Button size="sm" style={{ height: 28 }} onClick={() => { setGraph(EMPTY); setExpanded(new Set()); if (e) { setGraph(mergeNeighbourhood(EMPTY, e)); setExpanded(new Set([e.id])); } }}>Just this</Button></>}
+          status={busy ? `Expanding ${graph.nodes[busy]?.label ?? busy}…` : overview.loading ? "Sampling the graph…" : `${expanded.size} expanded · click to select, double-click to expand`} />
         <Card style={{ maxHeight: 560, overflow: "auto" }}>
           {ent.loading && !e && <><Skeleton h={30} w={200} /><Skeleton h={14} style={{ marginTop: 10 }} /><Skeleton h={14} /></>}
           {e && (
