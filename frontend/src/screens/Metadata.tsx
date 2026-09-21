@@ -13,7 +13,7 @@ export function Metadata() {
   const { domain, version } = useDomain();
   const go = useGo();
   const dbx = config.sourceKind === "databricks";
-  const [schema, setSchema] = useParam("schema", domain.schemas[0] ?? domain.schema ?? "");
+  const [schemaParam, setSchema] = useParam("schema", "");
   const [table, setTable] = useParam("table", "dim_customer");
   const [tab, setTab] = useParam("tab", "columns");
   const [gq, setGq] = useParam("gq", "");
@@ -24,6 +24,7 @@ export function Metadata() {
   const [applied, setApplied] = useState<string[]>([]);
 
   const schemas = useLoad(() => api.schemas(domain.name), [domain.name]);
+  const schema = schemaParam || schemas.data?.[0]?.id || "";
   const tables = useLoad(() => api.catalogTables(domain.name, schema), [domain.name, schema]);
   const detail = useLoad(() => api.tableDetail(domain.name, schema, table), [domain.name, schema, table]);
   const profile = useLoad(() => profiled ? api.tableProfile(domain.name, table) : Promise.resolve(null), [domain.name, table, profiled]);

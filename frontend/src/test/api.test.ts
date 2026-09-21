@@ -50,7 +50,8 @@ describe("MockApi", () => {
     const api = new MockApi();
     await expect(api.createDomain({ name: "bad name", description: "", base_iri: "http://x/", quorum: 1 })).rejects.toThrow(/letters, digits/);
     await expect(api.createDomain({ name: "rgm", description: "", base_iri: "http://x/", quorum: 1 })).rejects.toThrow(/already exists/);
-    const d = await api.createDomain({ name: "supply", description: "Supply chain", base_iri: "http://x/supply/", quorum: 2 });
+    await expect(api.createDomain({ name: "supply", description: "", base_iri: "http://x/", quorum: 1 })).rejects.toThrow(/AI connection/);
+    const d = await api.createDomain({ name: "supply", description: "Supply chain", base_iri: "http://x/supply/", quorum: 2, ai_connection_id: "c-gpt" });
     expect(d.versions).toEqual([]);
     expect((await api.domains()).map(x => x.name)).toContain("supply");
   });
@@ -108,7 +109,7 @@ describe("connections and domain settings (mock)", () => {
     const api = new MockApi();
     expect((await api.connectors()).map(s => s.kind).sort()).toEqual(["azure_openai", "databricks", "postgres", "sqlserver"]);
     const cs = await api.connections();
-    expect(cs.map(c => c.kind)).toEqual(["databricks", "azure_openai"]);
+    expect(cs.map(c => c.kind)).toEqual(["databricks", "postgres", "azure_openai"]);
     expect((await new MockApi({ sourceKind: "postgres" }).connections())[0].kind).toBe("postgres");
   });
   it("tests a seeded connection, attaches it to a domain and detaches it", async () => {
@@ -245,8 +246,8 @@ describe("several schemas per domain", () => {
     expect((await api.domain("rgm")).schemas).toEqual(["gold", "silver"]);
     let d = await api.updateDomain("rgm", { schemas: ["silver", "gold", "bronze"] });
     expect(d.schemas).toEqual(["silver", "gold", "bronze"]); expect(d.schema).toBe("silver");
-    expect((await api.schemas("rgm")).map(s => s.id)).toEqual(["silver", "gold", "bronze"]);
-    expect((await api.schemas("rgm"))[0].label).toBe("rgm.silver");
+    expect((await api.schemas("rgm")).map(s => s.id)).toEqual(["rgm.silver", "rgm.gold", "rgm.bronze"]);
+    expect((await api.schemas("rgm"))[0].label).toBe("warehouse · rgm.silver");
     d = await api.updateDomain("rgm", { default_schema: "bronze" });
     expect(d.schemas).toEqual(["bronze", "silver", "gold"]);
     expect((await api.sourceFacts("rgm")).schemas).toEqual(["bronze", "silver", "gold"]);
@@ -262,6 +263,7 @@ describe("several schemas per domain", () => {
         "GET /api/domains/hr/versions/summary": [],
         "GET /api/domains/cards": [{ name: "hr", version_count: 0, active_version: null, latest_version: null, triples: 0, last_build: null, source: { kind: "postgres", connection: null, catalog: null, schema: "people", schemas: ["people", "payroll"] }, mcp: { exposed: true, disabled_tools: [] } }],
         "GET /api/catalog/schemas": ["people", "payroll", "public"],
+        "GET /api/domains/hr/source": { kind: "postgres", connection: null, connection_id: null, catalog: null, schema: "people", schemas: ["people", "payroll"], host: null, auth_mode: "header", auth_header: "X-Actor", materialization: "none", target_schema: null, last_test: null, ai: null, sources: [{ kind: "postgres", connection: null, connection_id: null, catalog: null, schemas: ["people", "payroll"], host: null, last_test: null }] },
       };
       const key = `${init?.method ?? "GET"} ${url}`;
       if (key.startsWith("PUT /api/domains/hr")) return new Response(JSON.stringify(routes["GET /api/domains/hr"]));
@@ -270,9 +272,54 @@ describe("several schemas per domain", () => {
     const api = new RestApi({ base: "/api" });
     const d = await api.domain("hr");
     expect(d.schemas).toEqual(["people", "payroll"]); expect(d.schema).toBe("people");
-    expect((await api.schemas("hr")).map(s => s.label)).toEqual(["people", "payroll"]);
+    expect((await api.schemas("hr")).map(s => [s.id, s.label])).toEqual([["people", "deployment default · people"], ["payroll", "deployment default · payroll"]]);
     expect(await api.catalogSchemas("hr")).toEqual(["people", "payroll", "public"]);
     await api.updateDomain("hr", { schemas: ["payroll", "people"] });
     expect(calls).toContain('PUT /api/domains/hr {"schemas":["payroll","people"]}');
+  });
+});
+
+
+describe("several sources per domain", () => {
+  it("mock: a domain lists sources (connection + catalog + schemas), the first being the primary", async () => {
+    const api = new MockApi();
+    let d = await api.domain("rgm");
+    expect(d.sources).toEqual([{ connectionId: "c-warehouse", catalog: "rgm", schemas: ["gold", "silver"] }]);
+    d = await api.updateDomain("rgm", { sources: [{ connection_id: "c-warehouse", catalog: "rgm", schemas: ["gold"] }, { connection_id: "c-lake", catalog: null, schemas: ["raw", "staging"] }] });
+    expect(d.sources.map(s => s.connectionId)).toEqual(["c-warehouse", "c-lake"]);
+    expect(d).toMatchObject({ connectionId: "c-warehouse", catalog: "rgm", schema: "gold", schemas: ["gold"] });
+    await expect(api.updateDomain("rgm", { sources: [{ connection_id: "c-lake", catalog: null, schemas: [] }, { connection_id: "c-lake", catalog: null, schemas: [] }] })).rejects.toThrow(/twice/);
+    await expect(api.updateDomain("rgm", { sources: [{ connection_id: "c-nope", catalog: null, schemas: [] }] })).rejects.toThrow(/not found/);
+    await expect(api.updateDomain("rgm", { ai_connection_id: null })).rejects.toThrow(/AI connection/);
+    const f = await api.sourceFacts("rgm");
+    expect(f.sources?.map(s => [s.connection, s.schemas])).toEqual([["warehouse", ["gold"]], ["lake", ["raw", "staging"]]]);
+    expect((await api.schemas("rgm")).map(s => s.label)).toEqual(["warehouse · rgm.gold", "lake · raw", "lake · staging"]);
+    expect((await api.catalogTables("rgm", "rgm.gold")).length).toBeGreaterThan(0);   // catalog-qualified ids browse the same tables
+    await api.detachConnection("c-lake");
+    expect((await api.domain("rgm")).sources.map(s => s.connectionId)).toEqual(["c-warehouse"]);
+  });
+  it("rest: maps the backend's sources and sends the AI connection and sources on create", async () => {
+    const calls: string[] = [];
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      calls.push(`${init?.method ?? "GET"} ${url}${init?.body ? " " + init.body : ""}`);
+      const dom = { name: "hr", description: "", base_iri: "http://p/hr/", review_quorum: 1, ai_connection_id: "ai-1", sources: [{ connection_id: "wh", catalog: "rgm", schemas: ["gold", "silver"] }, { connection_id: "lake", catalog: null, schemas: ["raw"] }], connection_id: "wh", default_catalog: "rgm", schemas: ["gold", "silver"], default_schema: "gold" };
+      const routes: Record<string, unknown> = {
+        "GET /api/auth/config": { mode: "header", header: "X-Actor", source: { kind: "databricks", catalog: "finops_metadata" } },
+        "GET /api/domains/hr": dom, "GET /api/domains/hr/versions/summary": [],
+        "GET /api/domains/cards": [{ name: "hr", version_count: 0, active_version: null, latest_version: null, triples: 0, last_build: null, source: { kind: "databricks", connection: "warehouse", catalog: "rgm", schema: "gold", schemas: ["gold", "silver"] }, source_count: 2, mcp: { exposed: true, disabled_tools: [] } }],
+        "GET /api/domains/hr/source": { kind: "databricks", connection: "warehouse", connection_id: "wh", catalog: "rgm", schema: "gold", schemas: ["gold", "silver"], host: null, auth_mode: "header", auth_header: "X-Actor", materialization: "none", target_schema: null, last_test: null, ai: null, connections_backend: "hub",
+          sources: [{ kind: "databricks", connection: "warehouse", connection_id: "wh", catalog: "rgm", schemas: ["gold", "silver"], host: null, last_test: null, missing_connection_id: null }, { kind: "postgres", connection: "lake", connection_id: "lake", catalog: null, schemas: ["raw"], host: null, last_test: null, missing_connection_id: null }] },
+      };
+      const key = `${init?.method ?? "GET"} ${url}`;
+      if (key === "POST /api/domains") return new Response(JSON.stringify(dom), { status: 201 });
+      return new Response(JSON.stringify(routes[key] ?? { detail: `no route ${key}` }), { status: key in routes ? 200 : 404 });
+    }) as typeof fetch;
+    const api = new RestApi({ base: "/api" });
+    const d = await api.domain("hr");
+    expect(d.sources).toEqual([{ connectionId: "wh", catalog: "rgm", schemas: ["gold", "silver"] }, { connectionId: "lake", catalog: null, schemas: ["raw"] }]);
+    expect(d).toMatchObject({ connectionId: "wh", aiConnectionId: "ai-1", catalog: "rgm", schema: "gold" });
+    expect((await api.schemas("hr")).map(s => [s.id, s.label])).toEqual([["rgm.gold", "warehouse · rgm.gold"], ["rgm.silver", "warehouse · rgm.silver"], ["raw", "lake · raw"]]);
+    await api.createDomain({ name: "hr", description: "", base_iri: "http://p/hr/", quorum: 1, ai_connection_id: "ai-1", sources: [{ connection_id: "wh", catalog: null, schemas: [] }] });
+    expect(calls).toContain('POST /api/domains {"name":"hr","description":"","base_iri":"http://p/hr/","review_quorum":1,"ai_connection_id":"ai-1","sources":[{"connection_id":"wh","catalog":null,"schemas":[]}]}');
   });
 });

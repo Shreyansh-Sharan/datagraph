@@ -146,6 +146,14 @@ class HubConnections:
             raise ValueError(f"Unknown connection kind {kind!r}; the hub offers {', '.join(sorted(self._type_index()))}")
         return spec_from_schema(kind, t.get("category", ""), t.get("display_name") or kind, self._call("GET", f"/connection-types/{kind}/schema"))
 
+    def category(self, kind: str) -> str:
+        """"ai" or "source" for a connector type (unknown types count as sources)."""
+        t = self._type_index().get(kind)
+        if t is None:
+            self._types = None
+            t = self._type_index().get(kind)
+        return "ai" if t and t.get("category") == "ai" else "source"
+
     # -- connections ------------------------------------------------------------------
 
     @staticmethod

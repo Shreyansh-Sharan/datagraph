@@ -223,6 +223,11 @@ def test_domain_has_several_sources_and_a_required_ai_connection(client, hub):
     assert client.put("/domains/hr", json={"sources": [{"connection_id": str(uuid.uuid4()), "schemas": []}]}).status_code == 404
     assert client.put("/domains/hr", json={"sources": [{"connection_id": wh["id"], "schemas": []}, {"connection_id": wh["id"], "schemas": []}]}).status_code == 400
     assert client.put("/domains/hr", json={"ai_connection_id": None}).status_code == 400
+    # categories are checked: a warehouse cannot be the AI connection and an AI provider cannot be a source
+    r = client.put("/domains/hr", json={"ai_connection_id": wh["id"]})
+    assert r.status_code == 400 and "AI provider" in r.json()["detail"]
+    r = client.put("/domains/hr", json={"sources": [{"connection_id": ai["id"], "schemas": []}]})
+    assert r.status_code == 400 and "AI connection" in r.json()["detail"]
     # facts and cards describe every source, the primary first
     src = client.get("/domains/hr/source").json()
     assert src["connection"] == "warehouse" and src["catalog"] == "rgm" and src["schemas"] == ["gold", "silver"]

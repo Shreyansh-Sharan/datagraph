@@ -289,9 +289,13 @@ def _check_sources(st, sources: list[dict], ai_connection_id) -> None:
     """Every referenced connection must exist in the connection module; an AI connection is required once the module is configured."""
     for s in sources:
         if s.get("connection_id"):
-            st.connections.get(str(s["connection_id"]))      # NotFound / HubUnavailable
+            c = st.connections.get(str(s["connection_id"]))      # NotFound / HubUnavailable
+            if st.connections.category(c["kind"]) == "ai":
+                raise ValueError(f"{c['name']} is an AI connection; a source must be a warehouse or database connection")
     if ai_connection_id:
-        st.connections.get(str(ai_connection_id))
+        c = st.connections.get(str(ai_connection_id))
+        if st.connections.category(c["kind"]) != "ai":
+            raise ValueError(f"{c['name']} is a {c['kind']} connection; the AI connection must be an AI provider")
     elif st.connections.source != "none":
         raise ValueError("An AI connection is required: pick one for this domain")
 

@@ -28,7 +28,7 @@ export function Home() {
             const act = d.versions.find(v => v.active); const dr = d.versions.find(v => v.status === "draft");
             const state = act ? `v${act.version} active` : dr ? `v${dr.version} draft` : "no version";
             const dot = act ? "var(--blue)" : dr ? "var(--grey)" : "var(--grey-2)";
-            const more = d.schemas.length > 1 ? ` +${d.schemas.length - 1}` : "";
+            const more = d.sources.length > 1 ? ` +${d.sources.length - 1} source${d.sources.length > 2 ? "s" : ""}` : d.schemas.length > 1 ? ` +${d.schemas.length - 1}` : "";
             const cfg = [["Source", dbx ? `databricks · ${d.catalog}.${d.schema}${more}` : `postgres · ${d.catalog}_${d.schema}${more}`], ["Base IRI", d.base_iri], ["Review quorum", String(d.quorum)], ["MCP", d.mcpExposed ? `exposed · ${d.disabledTools.length} tools off` : "hidden"]];
             return (
               <Card key={d.name} style={{ borderRadius: 12, display: "flex", flexDirection: "column", gap: 12 }}>
@@ -63,21 +63,35 @@ export function Home() {
 export function NewDomainDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (d: DomainSummary) => void }) {
   const { api } = useApp();
   const [name, setName] = useState(""); const [description, setDescription] = useState(""); const [baseIri, setBaseIri] = useState("http://polestar.ai/"); const [quorum, setQuorum] = useState(1);
+  const [aiId, setAiId] = useState(""); const [sourceId, setSourceId] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const conns = useLoad(() => open ? api.connections().catch(() => []) : Promise.resolve([]), [open]);
+  const isAi = (kind: string) => kind.includes("openai") || kind.includes("llm");
+  const ais = (conns.data ?? []).filter(c => isAi(c.kind)); const sourceConns = (conns.data ?? []).filter(c => !isAi(c.kind));
   const valid = /^[A-Za-z0-9_-]+$/.test(name);
+  const slug = name.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "");
+  const aiMissing = ais.length > 0 && !aiId;
   const create = async () => {
-    try { onCreated(await api.createDomain({ name, description, base_iri: baseIri.endsWith("/") ? `${baseIri}${name}/` : baseIri, quorum })); setName(""); setDescription(""); setError(null); }
-    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    try {
+      onCreated(await api.createDomain({ name, description, base_iri: baseIri.endsWith("/") ? `${baseIri}${name}/` : baseIri, quorum, ai_connection_id: aiId || null, sources: sourceId ? [{ connection_id: sourceId, catalog: null, schemas: [] }] : [] }));
+      setName(""); setDescription(""); setAiId(""); setSourceId(""); setError(null);
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   };
   return (
-    <Dialog title="New domain" open={open} onClose={onClose} footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" disabled={!valid} onClick={create}>Create domain</Button></>}>
+    <Dialog title="New domain" open={open} onClose={onClose} footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" disabled={!valid || aiMissing} onClick={create}>Create domain</Button></>}>
       <Label>Name</Label>
-      <input id="nd-name" className="input mono full" placeholder="hr" value={name} onChange={e => setName(e.target.value)} aria-invalid={!!name && !valid} />
-      <div className="muted-2 xs" style={{ margin: "4px 0 12px" }}>Letters, digits, - and _ only.</div>
+      <input id="nd-name" className="input mono full" placeholder="hr" aria-label="Name" value={name} onChange={e => setName(e.target.value)} aria-invalid={!!name && !valid} />
+      {name && !valid
+        ? <div className="xs" style={{ margin: "4px 0 12px", color: "var(--orange-text)", fontWeight: 600 }}>{/\s/.test(name) ? "Spaces are not allowed" : "Only letters, digits, - and _ are allowed"}{slug && slug !== name ? <>, try <a href="#" className="mono" onClick={e => { e.preventDefault(); setName(slug); }}>{slug}</a></> : ""}.</div>
+        : <div className="muted-2 xs" style={{ margin: "4px 0 12px" }}>Letters, digits, - and _ only. The name is also the domain's URL and catalog.</div>}
       <Label>Description</Label>
       <input id="nd-desc" className="input full" placeholder="People and departments" value={description} onChange={e => setDescription(e.target.value)} style={{ marginBottom: 12 }} />
       <Label>Base IRI</Label>
       <input id="nd-iri" className="input mono full" value={baseIri} onChange={e => setBaseIri(e.target.value)} style={{ marginBottom: 12 }} />
+      <div className="grid two" style={{ gap: 12, marginBottom: 12 }}>
+        <div><Label>AI connection</Label><select id="nd-ai" aria-label="AI connection" className="select full" value={aiId} onChange={e => setAiId(e.target.value)} aria-invalid={aiMissing}><option value="">{ais.length ? "Choose one…" : "None available"}</option>{ais.map(c => <option key={c.id} value={c.id}>{c.name} · {String(c.config.deployment ?? "")}</option>)}</select>{ais.length > 0 && <div className="muted-2 xs" style={{ marginTop: 4 }}>Required: drafts the ontology and answers Ask.</div>}</div>
+        <div><Label>Source connection</Label><select id="nd-src" aria-label="Source connection" className="select full" value={sourceId} onChange={e => setSourceId(e.target.value)}><option value="">Deployment default</option>{sourceConns.map(c => <option key={c.id} value={c.id}>{c.name} · {c.kind}</option>)}</select><div className="muted-2 xs" style={{ marginTop: 4 }}>Schemas and more sources: Settings, after creation.</div></div>
+      </div>
       <Label>Review quorum</Label>
       <input id="nd-quorum" className="input" type="number" min={1} value={quorum} onChange={e => setQuorum(Number(e.target.value) || 1)} style={{ width: 100 }} />
       {error && <ErrorNotice error={error} />}

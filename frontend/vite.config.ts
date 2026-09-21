@@ -18,5 +18,6 @@ export default defineConfig({
     },
   },
   build: { outDir: "dist", sourcemap: true },
-  test: { environment: "jsdom", globals: true, setupFiles: ["src/test/setup.ts"], css: false },
+  // tests never read .env.local: they run against the mock adapter with the connection module unset
+  test: { environment: "jsdom", globals: true, setupFiles: ["src/test/setup.ts"], css: false, env: { VITE_API_MODE: "mock", VITE_CONNECTIONS_URL: "", VITE_HUB_TARGET: "" } },
 });

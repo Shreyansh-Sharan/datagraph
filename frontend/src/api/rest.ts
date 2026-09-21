@@ -21,7 +21,7 @@ interface BackendSummary extends BackendVersion {
   review: { quorum: number; round: number; approved: number; rejected: number; rows: { reviewer: string; approved: boolean; comment: string | null; at: string }[] } | null;
   lease: { holder: string; expires_at: string | null; expired: boolean } | null;
 }
-interface BackendDomain { name: string; description: string | null; base_iri: string; review_quorum: number; active_version_id?: string | null; connection_id?: string | null; ai_connection_id?: string | null; default_catalog?: string | null; default_schema?: string | null; schemas?: string[]; materialization?: string; target_schema?: string | null; mcp_policy?: { exposed?: boolean; disabled_tools?: string[] } }
+interface BackendDomain { name: string; description: string | null; base_iri: string; review_quorum: number; active_version_id?: string | null; connection_id?: string | null; ai_connection_id?: string | null; default_catalog?: string | null; default_schema?: string | null; schemas?: string[]; sources?: { connection_id: string | null; catalog: string | null; schemas: string[] }[]; materialization?: string; target_schema?: string | null; mcp_policy?: { exposed?: boolean; disabled_tools?: string[] } }
 interface BackendCard { name: string; version_count: number; active_version: { version: number } | null; latest_version: { version: number; status: string } | null; triples: number; last_build: { status: string; finished_at: string | null; triple_count: number | null } | null; source: { kind: string; connection: string | null; catalog: string | null; schema: string | null }; mcp: { exposed: boolean; disabled_tools: string[] } }
 
 export class RestApi extends MockApi {
@@ -82,7 +82,7 @@ export class RestApi extends MockApi {
     const cfg = this.cfg ?? await this.config();
     const versions = vs.map((v, i) => this.toVersion(d, v, vs[i + 1]));
     const c = card ?? (await this.req<BackendCard[]>("GET", "/domains/cards")).find(x => x.name === d.name);
-    return { name: d.name, description: d.description ?? "", base_iri: d.base_iri, quorum: d.review_quorum, schema: d.schemas?.[0] ?? c?.source.schema ?? d.default_schema ?? "", schemas: d.schemas ?? (d.default_schema ? [d.default_schema] : []), catalog: c?.source.catalog ?? d.default_catalog ?? cfg.catalog ?? d.name,
+    return { name: d.name, description: d.description ?? "", base_iri: d.base_iri, quorum: d.review_quorum, schema: d.schemas?.[0] ?? c?.source.schema ?? d.default_schema ?? "", schemas: d.schemas ?? (d.default_schema ? [d.default_schema] : []), sources: (d.sources ?? []).map(x => ({ connectionId: x.connection_id ?? null, catalog: x.catalog ?? null, schemas: [...(x.schemas ?? [])] })), catalog: c?.source.catalog ?? d.default_catalog ?? cfg.catalog ?? d.name,
       materialization: d.materialization ?? cfg.materialization, target: d.target_schema ?? "", mcpExposed: c?.mcp.exposed ?? d.mcp_policy?.exposed ?? true, disabledTools: c?.mcp.disabled_tools ?? d.mcp_policy?.disabled_tools ?? [],
       triples: c ? c.triples.toLocaleString() : "—", lastBuild: c?.last_build ? `${c.last_build.status}${c.last_build.finished_at ? " · " + new Date(c.last_build.finished_at).toLocaleString() : ""}` : "never",
       versions, lease: versions.find(v => v.status === "draft")?.lease ?? null, review: versions.find(v => v.status === "in_review")?.review ?? null, connectionId: d.connection_id ?? null, aiConnectionId: d.ai_connection_id ?? null, targetSchema: d.target_schema ?? null };
@@ -99,7 +99,10 @@ export class RestApi extends MockApi {
   override async detachConnection(id: string): Promise<void> { await this.req("DELETE", `/connections/${id}/references`); }
   override async domain(name: string): Promise<DomainSummary> { return this.toDomain(await this.req<BackendDomain>("GET", `/domains/${encodeURIComponent(name)}`)); }
   override async createDomain(input: NewDomainInput): Promise<DomainSummary> {
-    return this.toDomain(await this.req<BackendDomain>("POST", "/domains", { name: input.name, description: input.description, base_iri: input.base_iri, review_quorum: input.quorum }));
+    const body: Record<string, unknown> = { name: input.name, description: input.description, base_iri: input.base_iri, review_quorum: input.quorum };
+    if (input.ai_connection_id) body.ai_connection_id = input.ai_connection_id;
+    if (input.sources?.length) body.sources = input.sources;
+    return this.toDomain(await this.req<BackendDomain>("POST", "/domains", body));
   }
   private vid(domain: string, version: number): string {
     const id = this.versionIds[`${domain}:${version}`];
@@ -163,8 +166,10 @@ export class RestApi extends MockApi {
   override async setMcp(domain: string, exposed: boolean): Promise<void> { await this.req("PUT", `/domains/${encodeURIComponent(domain)}/mcp-policy`, { exposed, disabled_tools: [] }); }
 
   override async schemas(domain: string): Promise<{ id: string; label: string }[]> {
-    const d = await this.domain(domain); const cfg = this.cfg ?? await this.config();
-    return d.schemas.map(s => ({ id: s, label: cfg.sourceKind === "databricks" && d.catalog ? `${d.catalog}.${s}` : s }));
+    const f = await this.sourceFacts(domain);
+    const entries = f.sources?.length ? f.sources : [{ kind: f.kind, connection: f.connection, catalog: f.catalog, schemas: f.schemas ?? (f.schema ? [f.schema] : []) }];
+    return entries.flatMap(src => { const dbx = src.kind === "databricks" && !!src.catalog;
+      return src.schemas.map(sch => ({ id: dbx ? `${src.catalog}.${sch}` : sch, label: `${src.connection ?? "deployment default"} · ${dbx ? `${src.catalog}.` : ""}${sch}` })); });
   }
   override async catalogSchemas(domain: string): Promise<string[]> {
     const d = await this.domain(domain); const cfg = this.cfg ?? await this.config();
@@ -177,7 +182,7 @@ export class RestApi extends MockApi {
   }
   override async tableDetail(_domain: string, schema: string, table: string): Promise<TableDetail> {
     const cfg = this.cfg ?? await this.config();
-    const full = cfg.sourceKind === "databricks" && cfg.catalog ? tableName("databricks", cfg.catalog, schema, table) : `${schema}.${table}`;
+    const full = schema.includes(".") ? `${schema}.${table}` : cfg.sourceKind === "databricks" && cfg.catalog ? tableName("databricks", cfg.catalog, schema, table) : `${schema}.${table}`;
     const t = await this.req<{ comment: string | null; columns: { name: string; type: string; comment: string | null }[]; primary_key: string[]; foreign_keys: { columns: string[] }[] }>("GET", `/catalog/tables/${encodeURIComponent(full)}`);
     const pk = new Set(t.primary_key ?? []); const fk = new Set((t.foreign_keys ?? []).flatMap(f => f.columns));
     return { name: table, fullName: full, comment: t.comment ?? "", columns: t.columns.map(c => ({ name: c.name, type: c.type, comment: c.comment ?? "", key: pk.has(c.name) ? "pk" : fk.has(c.name) ? "fk" : null, keyInferred: false })) };

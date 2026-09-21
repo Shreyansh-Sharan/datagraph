@@ -76,7 +76,7 @@ const review = (approved: number, quorum: number, rows: [string, string, "approv
 
 export const DOMAINS: DomainSummary[] = [
   {
-    name: "rgm", description: "Revenue growth management", base_iri: "http://polestar.ai/rgm/", quorum: 3, schema: "gold", schemas: ["gold", "silver"], catalog: "rgm", materialization: "view · Liquid Clustering", target: "finops_metadata.rgm_graph", mcpExposed: true, disabledTools: ["run_action", "materialize_cohort"], triples: "263,695", lastBuild: "2 h ago",
+    name: "rgm", description: "Revenue growth management", base_iri: "http://polestar.ai/rgm/", quorum: 3, schema: "gold", schemas: ["gold", "silver"], sources: [{ connectionId: "c-warehouse", catalog: "rgm", schemas: ["gold", "silver"] }], catalog: "rgm", materialization: "view · Liquid Clustering", target: "finops_metadata.rgm_graph", mcpExposed: true, disabledTools: ["run_action", "materialize_cohort"], triples: "263,695", lastBuild: "2 h ago",
     versions: [
       { version: 3, status: "draft", content: "ontology · mapping 78% · 2 rules · 7 constraints", mappingPct: 78, lastBuild: "succeeded · 2 h ago", active: false, created: "3 d ago", by: "alice", stats: { classes: 12, attrs: 52, rels: 11, bindings: 41, rules: 2, constraints: 7, triples: 263695 }, lease: { holder: "alice", expires: "42 min" }, changes: changes([["+", "class KeyAccount ⊂ Customer"], ["+", "Promotion, Shipment classes and 5 attributes"], ["~", "Sale.netRevenue unbound after fct_sales change"], ["+", "constraint Every entity is labelled (info)"]]) },
       { version: 2, status: "in_review", content: "ontology · mapping 100% · 2 rules · 6 constraints", mappingPct: 100, lastBuild: "succeeded · 5 d ago", active: false, created: "9 d ago", by: "marc", stats: { classes: 10, attrs: 47, rels: 9, bindings: 47, rules: 2, constraints: 6, triples: 258102 }, review: review(2, 3, [["priya", "reviewed mapping", "approved"], ["marc", "checked the Sale class", "approved"], ["lena", "", "pending"]]), changes: changes([["+", "rule Discount above list price (violation)"], ["+", "Invoice → Sale relationship bills"], ["~", "Store.format widened to STRING"]]) },
@@ -85,7 +85,7 @@ export const DOMAINS: DomainSummary[] = [
     lease: { holder: "alice", expires: "42 min" }, review: review(2, 3, [["priya", "reviewed mapping", "approved"], ["marc", "checked the Sale class", "approved"], ["lena", "", "pending"]]),
   },
   {
-    name: "hr", description: "People and departments", base_iri: "http://polestar.ai/hr/", quorum: 1, schema: "people", schemas: ["people"], catalog: "hr", materialization: "table · OPTIMIZE nightly", target: "finops_metadata.hr_graph", mcpExposed: true, disabledTools: [], triples: "41,880", lastBuild: "3 d ago",
+    name: "hr", description: "People and departments", base_iri: "http://polestar.ai/hr/", quorum: 1, schema: "people", schemas: ["people"], sources: [{ connectionId: "c-warehouse", catalog: "hr", schemas: ["people"] }], catalog: "hr", materialization: "table · OPTIMIZE nightly", target: "finops_metadata.hr_graph", mcpExposed: true, disabledTools: [], triples: "41,880", lastBuild: "3 d ago",
     versions: [
       { version: 3, status: "published", content: "ontology · mapping 100% · 1 rule · 4 constraints", mappingPct: 100, lastBuild: "succeeded · 3 d ago", active: true, created: "8 d ago", by: "lena", stats: { classes: 6, attrs: 28, rels: 5, bindings: 28, rules: 1, constraints: 4, triples: 41880 }, changes: changes([["+", "class Position"], ["+", "constraint Employee has a manager"]]) },
       { version: 2, status: "archived", content: "ontology · mapping 100%", mappingPct: 100, lastBuild: "succeeded · 40 d ago", active: false, created: "45 d ago", by: "lena", stats: { classes: 5, attrs: 24, rels: 4, bindings: 24, rules: 0, constraints: 3, triples: 39012 }, changes: changes([["+", "Location class"]]) },
@@ -93,7 +93,7 @@ export const DOMAINS: DomainSummary[] = [
     ],
     lease: null, review: review(1, 1, [["lena", "approved v3", "approved"]]),
   },
-  { name: "finops", description: "Cloud cost allocation", base_iri: "http://polestar.ai/finops/", quorum: 2, schema: "billing", schemas: ["billing"], catalog: "finops_metadata", materialization: "view", target: "finops_metadata.finops_graph", mcpExposed: false, disabledTools: [], triples: "—", lastBuild: "never", versions: [], lease: null, review: null },
+  { name: "finops", description: "Cloud cost allocation", base_iri: "http://polestar.ai/finops/", quorum: 2, schema: "billing", schemas: ["billing"], sources: [{ connectionId: null, catalog: "finops_metadata", schemas: ["billing"] }], catalog: "finops_metadata", materialization: "view", target: "finops_metadata.finops_graph", mcpExposed: false, disabledTools: [], triples: "—", lastBuild: "never", versions: [], lease: null, review: null },
 ];
 
 export const AUDIT: Record<string, [string, string, number, string][]> = {
@@ -164,5 +164,6 @@ export const CONNECTIONS = (kind: "databricks" | "postgres"): ConnectionRec[] =>
   kind === "databricks"
     ? { id: "c-warehouse", name: "warehouse", kind: "databricks", config: { host: "adb-7405604451793801.1.azuredatabricks.net", http_path: "/sql/1.0/warehouses/8157f8991449cd80", catalog: "finops_metadata" }, has_secret: true, last_test: { ok: true, title: "Connected", detail: "pratham.rana on finops_metadata.default · 17 tables", latency_ms: 1842, at: "2026-09-21T09:12:00Z" }, created_by: "alice", created_at: "2026-09-14T10:00:00Z", updated_at: "2026-09-21T09:12:00Z" }
     : { id: "c-warehouse", name: "warehouse", kind: "postgres", config: { host: "localhost", port: 5439, database: "ontoforge", user: "ontoforge", schema: "public", sslmode: "prefer" }, has_secret: true, last_test: { ok: true, title: "Connected", detail: "PostgreSQL 16.4 · 17 tables in public", latency_ms: 38, at: "2026-09-21T09:12:00Z" }, created_by: "alice", created_at: "2026-09-14T10:00:00Z", updated_at: "2026-09-21T09:12:00Z" },
+  { id: "c-lake", name: "lake", kind: "postgres", config: { host: "lake.internal", port: 5432, database: "lake", user: "reader", sslmode: "require" }, has_secret: true, last_test: null, created_by: "marc", created_at: "2026-09-19T10:00:00Z", updated_at: "2026-09-19T10:00:00Z" },
   { id: "c-gpt", name: "gpt-5.1", kind: "azure_openai", config: { endpoint: "https://polestar-openai.openai.azure.com", deployment: "gpt-5.1", api_version: "2024-08-01-preview" }, has_secret: true, last_test: { ok: true, title: "Connected", detail: "42 models available · deployment gpt-5.1", latency_ms: 412, at: "2026-09-20T16:40:00Z" }, created_by: "alice", created_at: "2026-09-15T08:00:00Z", updated_at: "2026-09-20T16:40:00Z" },
 ];

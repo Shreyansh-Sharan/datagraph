@@ -74,13 +74,22 @@ Wired to the API today: config, me, domains and cards, the **version mechanism**
 audit, catalog, ontology, mapping status, table preview, per-class SQL, builds with polling, search,
 entity, graph status, triples, connections (read-only, via the hub), domain settings, tasks, bundle export.
 
-### Schemas
+### Sources and schemas
 
-A domain reads from several schemas of one connection; a connection identifies the server and the
-credentials, not a schema. The Configure screen's Source card edits the ordered list (`schemas` on
-`PUT /domains/{name}`; the first entry is the default the catalog browser opens and short table names
-resolve against). `GET /catalog/schemas` lists what the source offers, so the picker suggests real
-names. The Metadata screen's schema picker is the domain's list.
+A domain reads from **several sources**. Each source is one connection from the connection module
+(or the deployment's env source) with its own catalog and an ordered list of schemas; the first
+source is the primary one, whose first schema is where the catalog browser opens and short table
+names resolve. A connection identifies the server and the credentials, never a schema, so one
+connection can carry many schemas and several domains can share it.
+
+Every domain also needs **one AI connection** once the connection module is configured: the New
+domain dialog asks for it and the Configure screen refuses to save without it.
+
+The Configure screen's Source card edits the list (`sources` on `PUT /domains/{name}`); the older
+single-source keys (`connection_id`, `default_catalog`, `schemas`, `default_schema`) still work and
+act on the primary source. `GET /catalog/schemas` lists what the source offers so the schema input
+suggests real names. The Metadata picker lists every source's schemas, labelled
+`connection · catalog.schema`.
 
 ### The version mechanism
 

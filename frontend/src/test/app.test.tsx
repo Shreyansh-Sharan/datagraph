@@ -47,7 +47,7 @@ describe("datagraph shell", () => {
 describe("Configure screen", () => {
   it("shows the domain's source facts and pickers, and points at the connection module when it is not configured", async () => {
     renderAt("#/d/rgm/settings");
-    expect(await screen.findByLabelText("Source connection")).toHaveValue("c-warehouse");
+    expect(await screen.findByLabelText("Source connection 1")).toHaveValue("c-warehouse");
     expect(screen.getByLabelText("AI connection")).toHaveValue("c-gpt");
     expect(await screen.findByText("Databricks · finops_metadata")).toBeInTheDocument();
     expect(screen.getByText(/connection module is not configured/)).toBeInTheDocument();
@@ -102,13 +102,51 @@ describe("Configure screen · schemas", () => {
     const list = await screen.findByRole("list", { name: "Schemas" });
     const chips = () => within(list).getAllByRole("listitem").map(li => li.querySelector(".mono")?.textContent + (li.textContent?.includes("default") ? " (default)" : ""));
     expect(chips()).toEqual(["gold (default)", "silver"]);
-    await user.type(screen.getByLabelText("Add schema"), "bronze");
-    await user.click(screen.getByRole("button", { name: "Add" }));
+    await user.type(screen.getByLabelText("Schema name for source 1"), "bronze");
+    await user.click(screen.getByRole("button", { name: "Add schema to source 1" }));
     await user.click(within(list).getByRole("button", { name: "Make silver the default" }));
     await user.click(within(list).getByRole("button", { name: "Remove gold" }));
     expect(chips()).toEqual(["silver (default)", "bronze"]);
     await user.click(screen.getByRole("button", { name: "Save source settings" }));
     expect(await screen.findByText("Source settings saved")).toBeInTheDocument();
     expect((await api.domain("rgm")).schemas).toEqual(["silver", "bronze"]);
+  });
+});
+
+
+describe("Configure screen · sources", () => {
+  it("adds a second source with its own connection and schemas, and requires an AI connection", async () => {
+    const api = new MockApi();
+    renderAt("#/d/rgm/settings", api);
+    const user = userEvent.setup();
+    expect(await screen.findByLabelText("Source connection 1")).toHaveValue("c-warehouse");
+    await user.click(screen.getByRole("button", { name: "Add source" }));
+    await user.selectOptions(screen.getByLabelText("Source connection 2"), "c-lake");
+    await user.type(screen.getByLabelText("Schema name for source 2"), "raw");
+    await user.click(screen.getByRole("button", { name: "Add schema to source 2" }));
+    await user.click(screen.getByRole("button", { name: "Save source settings" }));
+    expect(await screen.findByText("Source settings saved")).toBeInTheDocument();
+    expect((await api.domain("rgm")).sources).toEqual([{ connectionId: "c-warehouse", catalog: "rgm", schemas: ["gold", "silver"] }, { connectionId: "c-lake", catalog: null, schemas: ["raw"] }]);
+    await user.selectOptions(screen.getByLabelText("AI connection"), "");
+    expect(screen.getByText(/AI connection is required/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save source settings" })).toBeDisabled();
+  });
+});
+
+describe("New domain dialog", () => {
+  it("needs a valid name and an AI connection before it can create", async () => {
+    renderAt("#/");
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "New domain" }));
+    const dlg = screen.getByRole("dialog", { name: "New domain" });
+    await user.type(within(dlg).getByLabelText("Name"), "adventure works");
+    expect(within(dlg).getByText(/Spaces are not allowed/)).toBeInTheDocument();
+    await user.clear(within(dlg).getByLabelText("Name"));
+    await user.type(within(dlg).getByLabelText("Name"), "adventureworks");
+    expect(within(dlg).getByRole("button", { name: "Create domain" })).toBeDisabled();
+    await user.selectOptions(within(dlg).getByLabelText("AI connection"), "c-gpt");
+    expect(within(dlg).getByRole("button", { name: "Create domain" })).toBeEnabled();
+    await user.click(within(dlg).getByRole("button", { name: "Create domain" }));
+    expect(await screen.findByText("Domain adventureworks created")).toBeInTheDocument();
   });
 });

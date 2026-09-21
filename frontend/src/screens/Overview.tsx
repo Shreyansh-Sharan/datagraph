@@ -26,7 +26,7 @@ export function Overview() {
     { label: "Build", value: lastBuild ? lastBuild.status[0].toUpperCase() + lastBuild.status.slice(1) : "never", sub: built ? `${lastBuild.triples} triples` : "—", ok: !!built, screen: "build" },
     { label: "Drift", value: "1 issue", sub: "fct_sales.channel_id missing", ok: false, screen: "metadata" },
   ];
-  const config_ = [["Base IRI", domain.base_iri], ["Review quorum", String(domain.quorum)], ["Source", dbx ? `databricks · ${domain.catalog}` : `postgres · ${domain.catalog}_${domain.schema}`], ["Schemas", domain.schemas.length ? domain.schemas.join(", ") : "—"], ["Materialization", domain.materialization], ["MCP", domain.mcpExposed ? `exposed · ${domain.disabledTools.length} tools off` : "hidden"]];
+  const config_ = [["Base IRI", domain.base_iri], ["Review quorum", String(domain.quorum)], ["Source", dbx ? `databricks · ${domain.catalog}` : `postgres · ${domain.catalog}_${domain.schema}`], ["Sources", domain.sources.length ? domain.sources.map(s => `${s.catalog ? s.catalog + "." : ""}${s.schemas.join(", ") || "—"}`).join(" · ") : "—"], ["Materialization", domain.materialization], ["MCP", domain.mcpExposed ? `exposed · ${domain.disabledTools.length} tools off` : "hidden"]];
 
   return (
     <>

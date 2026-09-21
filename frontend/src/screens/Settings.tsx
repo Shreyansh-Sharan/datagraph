@@ -5,7 +5,7 @@ import { Icon } from "@/components/icons";
 import { useApp, useLoad } from "@/state/app";
 import { useDomain } from "@/state/domain";
 import { CONNECTIONS_URL } from "@/config";
-import type { ConnResult } from "@/api";
+import type { ConnResult, DomainSource } from "@/api";
 
 const KIND_LABEL: Record<string, string> = { postgres: "Postgres", databricks: "Databricks", sqlserver: "SQL Server", mssql: "SQL Server", azure_openai: "Azure OpenAI", azureopenai: "Azure OpenAI" };
 const isAiKind = (kind: string, types?: ConnectorSummary[]) => (types?.find(t => t.type === kind)?.category ?? (kind.includes("openai") ? "ai" : "source")) === "ai";
@@ -23,32 +23,34 @@ export function Settings() {
   const [description, setDescription] = useState(domain.description);
   const [quorum, setQuorum] = useState(domain.quorum);
   const [baseIri, setBaseIri] = useState(domain.base_iri);
-  const [connectionId, setConnectionId] = useState(domain.connectionId ?? "");
   const [aiId, setAiId] = useState(domain.aiConnectionId ?? "");
-  const [defCatalog, setDefCatalog] = useState("");
-  const [schemas, setSchemas] = useState<string[]>(domain.schemas ?? []);
-  const [newSchema, setNewSchema] = useState("");
-  const available = useLoad(() => api.catalogSchemas(domain.name).catch(() => [] as string[]), [domain.name, connectionId]);
+  const [sources, setSources] = useState<DomainSource[]>(domain.sources ?? []);
+  const [newSchema, setNewSchema] = useState<Record<number, string>>({});
+  const available = useLoad(() => api.catalogSchemas(domain.name).catch(() => [] as string[]), [domain.name]);
   const [mat, setMat] = useState<"none" | "view" | "table">("none");
   const [target, setTarget] = useState("");
-  useEffect(() => { setDescription(domain.description); setQuorum(domain.quorum); setBaseIri(domain.base_iri); setConnectionId(domain.connectionId ?? ""); setAiId(domain.aiConnectionId ?? ""); setSchemas(domain.schemas ?? []); }, [domain]);
-  useEffect(() => { if (facts.data) { setDefCatalog(facts.data.catalog ?? ""); setMat((facts.data.materialization as "none" | "view" | "table") || "none"); setTarget(facts.data.target_schema ?? ""); } }, [facts.data]);
+  useEffect(() => { setDescription(domain.description); setQuorum(domain.quorum); setBaseIri(domain.base_iri); setAiId(domain.aiConnectionId ?? ""); setSources((domain.sources ?? []).map(x => ({ ...x, schemas: [...x.schemas] }))); }, [domain]);
+  useEffect(() => { if (facts.data) { setMat((facts.data.materialization as "none" | "view" | "table") || "none"); setTarget(facts.data.target_schema ?? ""); } }, [facts.data]);
 
   const isAi = (kind: string) => (specs.data?.find(s => s.kind === kind)?.category ?? (kind.includes("openai") ? "ai" : "source")) === "ai";
   const kindLabel = (k: string) => specs.data?.find(s => s.kind === k)?.label ?? KIND_LABEL[k] ?? k;
-  const sources = (conns.data ?? []).filter(c => !isAi(c.kind));
+  const sourceConns = (conns.data ?? []).filter(c => !isAi(c.kind));
   const ais = (conns.data ?? []).filter(c => isAi(c.kind));
+  const aiMissing = ais.length > 0 && !aiId;
   const f = facts.data;
-  const sourceRows: [string, string][] = f ? [["Kind", f.kind], ["Connection", f.connection ?? "deployment default (env)"], ...(f.host ? [["Host", f.host] as [string, string]] : []), ["Catalog · schemas", `${f.catalog ?? "—"} · ${(f.schemas?.length ? f.schemas : [f.schema ?? "—"]).join(", ")}`], ["Auth mode", `${f.auth_mode} · ${f.auth_header}`], ["Materialization", f.materialization + (f.target_schema ? ` → ${f.target_schema}` : "")], ["AI", f.ai ? `${f.ai.connection ?? f.ai.kind} · ${f.ai.deployment ?? "—"}` : "none"]] : [];
+  const describe = (x: { connection: string | null; catalog: string | null; schemas: string[] }) => `${x.connection ?? "deployment default"} · ${x.catalog ?? "—"} · ${x.schemas.length ? x.schemas.join(", ") : "—"}`;
+  const factSources = f ? (f.sources?.length ? f.sources : [{ connection: f.connection, catalog: f.catalog, schemas: f.schemas ?? (f.schema ? [f.schema] : []) }]) : [];
+  const sourceRows: [string, string][] = f ? [["Kind", f.kind], ...factSources.map((x, i) => [i === 0 ? "Primary source" : `Source ${i + 1}`, describe(x)] as [string, string]), ...(f.host ? [["Host", f.host] as [string, string]] : []), ["Auth mode", `${f.auth_mode} · ${f.auth_header}`], ["Materialization", f.materialization + (f.target_schema ? ` → ${f.target_schema}` : "")], ["AI", f.ai ? `${f.ai.connection ?? f.ai.kind} · ${f.ai.deployment ?? "—"}` : "none"]] : [];
+  const editSource = (i: number, patch: Partial<DomainSource>) => setSources(sources.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+  const addSchemaTo = (i: number) => { const x = (newSchema[i] ?? "").trim(); if (!x || sources[i].schemas.includes(x)) return; editSource(i, { schemas: [...sources[i].schemas, x] }); setNewSchema({ ...newSchema, [i]: "" }); };
 
-  const addSchema = () => { const x = newSchema.trim(); if (!x || schemas.includes(x)) return; setSchemas([...schemas, x]); setNewSchema(""); };
   const test = async () => {
     if (testing) return; setTesting(true); setConn(null);
     try { setConn(f?.connection_id ? await api.testConnectionById(f.connection_id) : await api.testConnection()); conns.reload(); } catch (e) { setConn({ ok: false, title: "Connection failed", detail: e instanceof Error ? e.message : String(e) }); } finally { setTesting(false); }
   };
   const saveSource = async () => {
     try {
-      patch(await api.updateDomain(domain.name, { connection_id: connectionId || null, ai_connection_id: aiId || null, default_catalog: defCatalog || null, schemas, materialization: mat, target_schema: target || null }));
+      patch(await api.updateDomain(domain.name, { ...(aiId || ais.length ? { ai_connection_id: aiId || null } : {}), sources: sources.map(x => ({ connection_id: x.connectionId, catalog: x.catalog, schemas: x.schemas })), materialization: mat, target_schema: target || null }));
       facts.reload(); say("Source settings saved");
     } catch (e) { say(e instanceof Error ? e.message : String(e)); }
   };
@@ -71,28 +73,41 @@ export function Settings() {
             {f?.missing_connection_id && <div className="notice error" style={{ marginTop: 10 }}><div className="row" style={{ fontWeight: 700, color: "var(--orange)" }}><Dot color="var(--orange)" size={8} />The attached connection no longer exists in the connection module</div><div className="muted xs" style={{ marginTop: 4 }}>Pick another one below and save.</div></div>}
             {conn && <TestNotice r={conn} />}
             <div style={{ marginTop: 16, display: "grid", gap: 12 }}>
-              <div className="grid two" style={{ gap: 12 }}>
-                <div><Label>Source connection</Label><select id="src-conn" aria-label="Source connection" className="select full" value={connectionId} onChange={e => setConnectionId(e.target.value)}><option value="">Deployment default ({KIND_LABEL[config.sourceKind]})</option>{sources.map(c => <option key={c.id} value={c.id}>{c.name} · {kindLabel(c.kind)}</option>)}</select></div>
-                <div><Label>AI connection</Label><select id="ai-conn" aria-label="AI connection" className="select full" value={aiId} onChange={e => setAiId(e.target.value)}><option value="">None</option>{ais.map(c => <option key={c.id} value={c.id}>{c.name} · {String(c.config.deployment ?? "")}</option>)}</select></div>
+              <div>
+                <Label>AI connection</Label>
+                <select id="ai-conn" aria-label="AI connection" className="select full" value={aiId} onChange={e => setAiId(e.target.value)} aria-invalid={aiMissing}><option value="">None</option>{ais.map(c => <option key={c.id} value={c.id}>{c.name} · {String(c.config.deployment ?? "")}</option>)}</select>
+                {aiMissing && <div className="xs" style={{ marginTop: 4, color: "var(--orange-text)", fontWeight: 600 }}>An AI connection is required for every domain: it drafts the ontology and answers Ask.</div>}
               </div>
-              <div className="grid two" style={{ gap: 12 }}>
-                <div><Label>Default catalog</Label><input className="input mono full" value={defCatalog} onChange={e => setDefCatalog(e.target.value)} placeholder="rgm" /></div>
-                <div>
-                  <Label>Schemas</Label>
-                  <SchemaList schemas={schemas} onChange={setSchemas} />
-                  <div className="row" style={{ gap: 6, marginTop: 6 }}>
-                    <input className="input mono sm" list="schema-options" aria-label="Add schema" placeholder="schema name" value={newSchema} onChange={e => setNewSchema(e.target.value)} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addSchema(); } }} style={{ flex: 1, minWidth: 0 }} />
-                    <datalist id="schema-options">{(available.data ?? []).filter(x => !schemas.includes(x)).map(x => <option key={x} value={x} />)}</datalist>
-                    <Button size="sm" onClick={addSchema} disabled={!newSchema.trim() || schemas.includes(newSchema.trim())}>Add</Button>
+              <div>
+                <div className="row between" style={{ marginBottom: 6 }}><Label block={false}>Sources</Label><Button size="xs" onClick={() => setSources([...sources, { connectionId: sourceConns.find(c => !sources.some(x => x.connectionId === c.id))?.id ?? null, catalog: null, schemas: [] }])}>Add source</Button></div>
+                {sources.length === 0 && <p className="muted small" style={{ margin: "0 0 6px" }}>No source yet: the deployment's default source is used. Add one to read from a connection.</p>}
+                {sources.map((src, i) => (
+                  <div key={i} className="source-row">
+                    <div className="row" style={{ gap: 8 }}>
+                      <span className="pill" style={{ flex: "none" }}>{i === 0 ? "primary" : `source ${i + 1}`}</span>
+                      <select aria-label={`Source connection ${i + 1}`} className="select sm" style={{ flex: 2, minWidth: 0 }} value={src.connectionId ?? ""} onChange={e => editSource(i, { connectionId: e.target.value || null })}>
+                        <option value="">Deployment default ({KIND_LABEL[config.sourceKind]})</option>
+                        {sourceConns.map(c => <option key={c.id} value={c.id} disabled={sources.some((o, j) => j !== i && o.connectionId === c.id)}>{c.name} · {kindLabel(c.kind)}</option>)}
+                      </select>
+                      <input aria-label={`Catalog of source ${i + 1}`} className="input mono sm" style={{ flex: 1, minWidth: 0 }} placeholder="catalog" value={src.catalog ?? ""} onChange={e => editSource(i, { catalog: e.target.value || null })} />
+                      {i > 0 && <button type="button" className="chip-act" aria-label={`Make source ${i + 1} primary`} title="Make primary" onClick={() => setSources([src, ...sources.filter((_, j) => j !== i)])}><Icon name="check" size={10} /></button>}
+                      <button type="button" className="chip-act" aria-label={`Remove source ${i + 1}`} title="Remove source" onClick={() => setSources(sources.filter((_, j) => j !== i))}>×</button>
+                    </div>
+                    <div style={{ marginTop: 8 }}><SchemaList schemas={src.schemas} onChange={schemas => editSource(i, { schemas })} /></div>
+                    <div className="row" style={{ gap: 6, marginTop: 6 }}>
+                      <input className="input mono sm" list={`schema-options-${i}`} aria-label={`Schema name for source ${i + 1}`} placeholder="schema name" value={newSchema[i] ?? ""} onChange={e => setNewSchema({ ...newSchema, [i]: e.target.value })} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addSchemaTo(i); } }} style={{ flex: 1, minWidth: 0 }} />
+                      <datalist id={`schema-options-${i}`}>{(available.data ?? []).filter(x => !src.schemas.includes(x)).map(x => <option key={x} value={x} />)}</datalist>
+                      <Button size="sm" aria-label={`Add schema to source ${i + 1}`} onClick={() => addSchemaTo(i)} disabled={!(newSchema[i] ?? "").trim() || src.schemas.includes((newSchema[i] ?? "").trim())}>Add</Button>
+                    </div>
                   </div>
-                  <div className="muted-2 xs" style={{ marginTop: 4 }}>The first schema is the default: the catalog opens there and short table names resolve against it.</div>
-                </div>
+                ))}
+                <div className="muted-2 xs" style={{ marginTop: 4 }}>The primary source is listed first: the catalog browser opens there and short table names resolve against its first schema. Each source has its own schemas.</div>
               </div>
               <div className="grid two" style={{ gap: 12 }}>
                 <div><Label>Materialization</Label><select aria-label="Materialization" className="select full" value={mat} onChange={e => setMat(e.target.value as "none" | "view" | "table")}><option value="none">none (graph in Postgres only)</option><option value="view">view (publish triple views)</option><option value="table">table (publish tables, clustered)</option></select></div>
                 <div><Label>Target schema</Label><input className="input mono full" value={target} onChange={e => setTarget(e.target.value)} placeholder="finops_metadata.rgm_graph" /></div>
               </div>
-              {can("builder") && <div className="row" style={{ justifyContent: "flex-end" }}><Button variant="primary" size="sm" onClick={saveSource}>Save source settings</Button></div>}
+              {can("builder") && <div className="row" style={{ justifyContent: "flex-end" }}><Button variant="primary" size="sm" onClick={saveSource} disabled={aiMissing}>Save source settings</Button></div>}
             </div>
             <p className="muted-3" style={{ margin: "12px 0 0", fontSize: 11.5 }}>Credentials live in the connection module and never pass through datagraph.</p>
           </Card>
