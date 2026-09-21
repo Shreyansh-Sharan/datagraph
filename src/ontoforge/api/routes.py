@@ -57,6 +57,7 @@ class DomainIn(BaseModel):
     description: str | None = None
     base_iri: str
     review_quorum: int = 1
+    schemas: list[str] = []
 
 
 class DomainUpdateIn(BaseModel):
@@ -66,7 +67,8 @@ class DomainUpdateIn(BaseModel):
     connection_id: UUID | None = None
     ai_connection_id: UUID | None = None
     default_catalog: str | None = None
-    default_schema: str | None = None
+    schemas: list[str] | None = None          # every schema the domain reads, first = default
+    default_schema: str | None = None         # legacy single-schema form: moves that schema to the front
     materialization: str | None = None
     target_schema: str | None = None
 
@@ -258,12 +260,16 @@ def health(request: Request):
 
 @router.get("/domains")
 def list_domains(request: Request):
-    return _st(request).registry.list_domains()
+    return [_domain_json(d) for d in _st(request).registry.list_domains()]
 
 
 @router.post("/domains", status_code=201)
 def create_domain(body: DomainIn, request: Request, me: Principal = Depends(builder)):
-    return _st(request).registry.create_domain(body.name, body.description, base_iri=body.base_iri, review_quorum=body.review_quorum)
+    return _domain_json(_st(request).registry.create_domain(body.name, body.description, base_iri=body.base_iri, review_quorum=body.review_quorum, schemas=body.schemas))
+
+
+def _domain_json(d: Domain) -> dict:
+    return {**asdict(d), "default_schema": d.default_schema}
 
 
 def _source_facts(st, d: Domain) -> dict:
@@ -283,11 +289,11 @@ def _source_facts(st, d: Domain) -> dict:
     if c:
         cfg = c["config"]
         facts = {"kind": c["kind"], "connection": c["name"], "connection_id": c["id"], "catalog": d.default_catalog or cfg.get("catalog"),
-                 "schema": d.default_schema or cfg.get("schema"), "host": cfg.get("host") or cfg.get("endpoint"), "last_test": c.get("last_test")}
+                 "schema": d.default_schema or cfg.get("schema"), "schemas": list(d.schemas), "host": cfg.get("host") or cfg.get("endpoint"), "last_test": c.get("last_test")}
     else:
         facts = {"kind": settings.source_kind, "connection": None, "connection_id": None,
                  "catalog": d.default_catalog or (settings.databricks_catalog if settings.source_kind == "databricks" else None),
-                 "schema": d.default_schema or (settings.databricks_schema if settings.source_kind == "databricks" else None), "host": None, "last_test": None}
+                 "schema": d.default_schema or (settings.databricks_schema if settings.source_kind == "databricks" else None), "schemas": list(d.schemas), "host": None, "last_test": None}
         if d.connection_id:
             facts["missing_connection_id"] = str(d.connection_id)
     facts.update({"auth_mode": settings.auth_mode, "auth_header": settings.auth_header, "materialization": d.materialization, "target_schema": d.target_schema,
@@ -319,14 +325,14 @@ def domain_cards(request: Request):
                     "latest_version": {"version": latest.version, "status": latest.status.value} if latest else None,
                     "triples": st.store.count(served.id) if served else 0,
                     "last_build": {"status": build.status, "finished_at": build.finished_at, "triple_count": build.triple_count} if build else None,
-                    "source": {"kind": src["kind"], "connection": src["connection"], "catalog": src["catalog"], "schema": src["schema"]},
+                    "source": {"kind": src["kind"], "connection": src["connection"], "catalog": src["catalog"], "schema": src["schema"], "schemas": src["schemas"]},
                     "mcp": {"exposed": d.mcp_exposed, "disabled_tools": list(d.mcp_policy.get("disabled_tools", []))}})
     return out
 
 
 @router.get("/domains/{name}")
 def get_domain(name: str, request: Request):
-    return _st(request).registry.get_domain(name)
+    return _domain_json(_st(request).registry.get_domain(name))
 
 
 @router.delete("/domains/{name}", status_code=204)
@@ -853,6 +859,12 @@ def graphql_schema(version_id: UUID, request: Request):
 
 # -- catalog / autodraft ---------------------------------------------------------
 
+@router.get("/catalog/schemas")
+def catalog_schemas(request: Request, catalog: str | None = None):
+    """Schemas the source offers (system ones left out), for picking a domain's schemas."""
+    return _st(request).source.catalog.list_schemas(catalog)
+
+
 @router.get("/catalog/tables")
 def catalog_tables(request: Request, schema_name: str | None = None):
     return _st(request).source.catalog.list_tables(schema_name)
@@ -1166,7 +1178,12 @@ def update_domain(name: str, body: DomainUpdateIn, request: Request, me: Princip
     for key in ("connection_id", "ai_connection_id"):
         if changes.get(key):
             st.connections.get(str(changes[key]))   # NotFound when the backend does not know it
-    return st.registry.update_domain(st.registry.get_domain(name).id, changes, actor=me.name)
+    domain = st.registry.get_domain(name)
+    if "default_schema" in changes:   # legacy single-schema form: that schema becomes the first of the list
+        first = (changes.pop("default_schema") or "").strip()
+        current = changes.get("schemas") if changes.get("schemas") is not None else list(domain.schemas)
+        changes["schemas"] = ([first] if first else []) + [x for x in current if x != first]
+    return _domain_json(st.registry.update_domain(domain.id, changes, actor=me.name))
 
 
 @router.get("/domains/{name}/source")

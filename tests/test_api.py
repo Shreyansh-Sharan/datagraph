@@ -190,3 +190,30 @@ def test_delete_draft_version(client):
     assert client.get(f"/versions/{v['id']}").status_code == 404
     assert client.get("/domains/hr/versions/summary").json() == []
     assert client.delete(f"/versions/{v['id']}").status_code == 404
+
+
+# -- several schemas per domain -----------------------------------------------------
+
+def test_domain_carries_several_schemas_with_the_first_as_default(client):
+    d = make_domain(client)
+    assert d["schemas"] == [] and d["default_schema"] is None
+    r = client.put("/domains/hr", json={"schemas": [" gold ", "silver", "gold"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["schemas"] == ["gold", "silver"] and r.json()["default_schema"] == "gold"
+    # the old single-schema setting still works and means "make this the default"
+    assert client.put("/domains/hr", json={"default_schema": "silver"}).json()["schemas"] == ["silver", "gold"]
+    assert client.put("/domains/hr", json={"default_schema": "bronze"}).json()["schemas"] == ["bronze", "silver", "gold"]
+    assert client.put("/domains/hr", json={"schemas": [""]}).status_code == 400
+    src = client.get("/domains/hr/source").json()
+    assert src["schema"] == "bronze" and src["schemas"] == ["bronze", "silver", "gold"]
+    card = client.get("/domains/cards").json()[0]
+    assert card["source"]["schema"] == "bronze" and card["source"]["schemas"] == ["bronze", "silver", "gold"]
+    assert client.put("/domains/hr", json={"schemas": []}).json()["default_schema"] is None
+    created = client.post("/domains", json={"name": "sales", "base_iri": BASE, "schemas": ["gold", "silver"]}).json()
+    assert created["schemas"] == ["gold", "silver"]
+
+
+def test_catalog_lists_the_schemas_of_the_source(client, db):
+    names = client.get("/catalog/schemas").json()
+    assert db.schema in names
+    assert not [n for n in names if n.startswith("pg_") or n == "information_schema"]

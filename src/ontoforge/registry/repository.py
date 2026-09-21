@@ -20,6 +20,18 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def clean_schemas(schemas: list[str]) -> list[str]:
+    """Trimmed, de-duplicated (first occurrence wins, so order = priority), never blank."""
+    out: list[str] = []
+    for raw in schemas:
+        name = (raw or "").strip()
+        if not name:
+            raise ValueError("A schema name cannot be blank")
+        if name not in out:
+            out.append(name)
+    return out
+
+
 class Registry:
     def __init__(self, db: Database) -> None:
         self.db = db
@@ -27,12 +39,12 @@ class Registry:
     # -- domains -------------------------------------------------------------
 
     def create_domain(self, name: str, description: str | None = None, *, base_iri: str,
-                      review_quorum: int = 1) -> Domain:
+                      review_quorum: int = 1, schemas: list[str] | None = None) -> Domain:
         with self._cur() as cur:
             try:
                 row = cur.execute(
-                    "INSERT INTO domains (name, description, base_iri, review_quorum) VALUES (%s, %s, %s, %s) RETURNING *",
-                    (name, description, base_iri, review_quorum)).fetchone()
+                    "INSERT INTO domains (name, description, base_iri, review_quorum, schemas) VALUES (%s, %s, %s, %s, %s) RETURNING *",
+                    (name, description, base_iri, review_quorum, clean_schemas(schemas or []))).fetchone()
             except psycopg.errors.UniqueViolation:
                 raise LifecycleError(f"Domain {name!r} already exists") from None
             return Domain(**row)
@@ -107,6 +119,8 @@ class Registry:
             raise ValueError(f"materialization must be one of {', '.join(MATERIALIZATIONS)}")
         if "review_quorum" in changes and (changes["review_quorum"] is None or int(changes["review_quorum"]) < 0):
             raise ValueError("review_quorum must be 0 or more")
+        if "schemas" in changes:
+            changes = {**changes, "schemas": clean_schemas(changes["schemas"] or [])}
         if not changes:
             return self.get_domain_by_id(domain_id)
         cols = ", ".join(f"{k} = %s" for k in changes)

@@ -83,6 +83,12 @@ class PostgresCatalog(CatalogAdapter):
         with self.db.transaction() as cur:
             return cur.execute(_KEYS_SQL, (schema, name)).fetchall()
 
+    def list_schemas(self, catalog: str | None = None) -> list[str]:
+        with self.db.transaction() as cur:
+            return [r[0] for r in cur.execute(
+                "SELECT schema_name FROM information_schema.schemata "
+                "WHERE schema_name NOT LIKE 'pg\\_%' AND schema_name <> 'information_schema' ORDER BY 1")]
+
     def list_tables(self, schema: str | None = None) -> list[str]:
         with self.db.transaction() as cur:
             return [r[0] for r in cur.execute(

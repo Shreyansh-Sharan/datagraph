@@ -51,9 +51,13 @@ class Domain:
     connection_id: UUID | None = None        # source warehouse (None: the deployment's env source)
     ai_connection_id: UUID | None = None     # AI provider for drafts/assist (None: the deployment's env provider)
     default_catalog: str | None = None
-    default_schema: str | None = None
+    schemas: list[str] = field(default_factory=list)   # source schemas this domain reads; the first is the default
     materialization: str = "none"            # none | view | table
     target_schema: str | None = None
+
+    @property
+    def default_schema(self) -> str | None:
+        return self.schemas[0] if self.schemas else None
 
     @property
     def mcp_exposed(self) -> bool:
@@ -165,5 +169,5 @@ class AuditEntry:
     created_at: datetime
 
 
-DOMAIN_SETTINGS = ("description", "review_quorum", "base_iri", "connection_id", "ai_connection_id", "default_catalog", "default_schema", "materialization", "target_schema")
+DOMAIN_SETTINGS = ("description", "review_quorum", "base_iri", "connection_id", "ai_connection_id", "default_catalog", "schemas", "materialization", "target_schema")
 MATERIALIZATIONS = ("none", "view", "table")

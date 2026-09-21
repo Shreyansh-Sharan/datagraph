@@ -19,6 +19,10 @@ class CatalogAdapter(ABC):
     def list_tables(self, schema: str | None = None) -> list[str]:
         return []
 
+    def list_schemas(self, catalog: str | None = None) -> list[str]:
+        """User schemas of the source (system ones left out); empty when the adapter cannot tell."""
+        return []
+
     def column_details(self, table: str) -> list[dict]:
         """[{name, type, comment}] — default derives from column_types without comments."""
         return [{"name": n, "type": t, "comment": None} for n, t in self.column_types(table).items()]

@@ -164,7 +164,7 @@ def test_domain_settings_reference_hub_connections(client, hub):
     assert src["kind"] == "databricks" and src["connection"] == "warehouse" and src["catalog"] == "rgm" and src["schema"] == "gold" and src["host"] == "adb-1.azuredatabricks.net"
     assert src["ai"] == {"connection": "gpt", "kind": "azureopenai", "deployment": "gpt-5.1"} and src["connections_backend"] == "hub"
     card = client.get("/domains/cards").json()[0]
-    assert card["source"] == {"kind": "databricks", "connection": "warehouse", "catalog": "rgm", "schema": "gold"}
+    assert card["source"] == {"kind": "databricks", "connection": "warehouse", "catalog": "rgm", "schema": "gold", "schemas": ["gold"]}
     # the package deleted it in the hub; the UI then asks datagraph to drop the references
     assert client.delete(f"/connections/{conn['id']}/references").status_code == 204
     assert client.get("/domains/hr").json()["connection_id"] is None

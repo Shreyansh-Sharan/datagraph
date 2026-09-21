@@ -35,6 +35,14 @@ class DatabricksCatalog(CatalogAdapter):
     def column_types(self, table: str) -> dict[str, str]:
         return {name: sql_type for name, sql_type in self.run_query(_COLUMNS_SQL, self._parts(table))}
 
+    def list_schemas(self, catalog: str | None = None) -> list[str]:
+        cat = catalog or self.default_catalog
+        if not cat:
+            raise IdentifierError("A catalog is required to list schemas")
+        rows = self.run_query("SELECT schema_name FROM system.information_schema.schemata WHERE catalog_name = ? "
+                              "AND schema_name NOT IN ('information_schema') ORDER BY schema_name", (cat,))
+        return [r[0] for r in rows]
+
     def list_tables(self, schema: str | None = None) -> list[str]:
         catalog, sch = self._schema_parts(schema)
         rows = self.run_query("SELECT table_name FROM system.information_schema.tables WHERE table_catalog = ? AND table_schema = ? "
