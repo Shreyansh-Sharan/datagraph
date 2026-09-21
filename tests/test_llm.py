@@ -345,7 +345,7 @@ def test_relations_without_a_provider_use_declared_keys_and_names_only():
     assert sorted(r.property_iri.split("#")[-1] for r in out.relations) == ["hasEmployee", "worksIn"]
     assert {u.split(" ")[0] for u in s.report["unmappable"]} == {"reportsTo", "manages", "collaboratesWith"}   # need the model
     # a self-relationship never uses the class's own key column as the foreign key
-    assert all(r.target_key != ("empno",) for r in out.relations)
+    assert all(r.target_key != ("empno",) for r in out.relations if r.source_class == r.target_class)
 
 
 def test_api_fill_relations(db):
