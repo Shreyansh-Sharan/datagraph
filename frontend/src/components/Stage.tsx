@@ -109,7 +109,7 @@ function StageInner({ nodes: allNodes, edges: allEdges, height, dotted, onSelect
     const hot = selectedId !== undefined && (e.from === selectedId || e.to === selectedId);
     return { id: `e${i}-${e.from}-${e.to}`, source: e.from, target: e.to, type: layout === "given" ? "straight" : "default", label: showAllLabels || hot ? e.label : undefined,
       style: { stroke: e.color ?? "#B9C4FF", strokeWidth: hot ? Math.max(2, e.width ?? 1.5) : e.width ?? 1.5, strokeDasharray: e.dashed ? "5 4" : undefined, opacity: selectedId && !hot ? 0.45 : 1 },
-      labelStyle: { fontSize: 10.5, fontWeight: 600, fill: e.labelColor ?? "#7A7A80" }, labelBgStyle: { fill: "#fff", fillOpacity: 0.95 }, labelBgPadding: [5, 2] as [number, number], labelBgBorderRadius: 4, zIndex: hot ? 1 : 0 };
+      labelStyle: { fontSize: 10.5, fontWeight: 600, fill: e.labelColor ?? "#7A7A80" }, labelBgStyle: { fill: "#fff", fillOpacity: 0.95 }, labelBgPadding: [5, 2] as [number, number], labelBgBorderRadius: 4 };
   }), [edges, ids, selectedId, showAllLabels, layout]);
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<Edge>(wantedEdges);
   useEffect(() => { setRfEdges(wantedEdges); }, [wantedEdges, setRfEdges]);
