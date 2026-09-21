@@ -212,11 +212,11 @@ describe("Mapping screen", () => {
 
 
 describe("Metadata screen · list", () => {
-  it("groups the schema picker by connection and counts the snapshot per schema", async () => {
+  it("groups the schema tree by connection and counts the snapshot per schema", async () => {
     renderAt("#/d/rgm/metadata?v=3");
-    const picker = await screen.findByLabelText("Schema");
-    expect(within(picker).getByRole("group", { name: "warehouse" })).toBeInTheDocument();
-    expect(within(picker).getAllByRole("option").map(o => o.textContent)).toEqual(["rgm.gold", "rgm.silver"]);
+    const tree = await screen.findByRole("tree", { name: "Schemas and tables" });
+    expect(within(tree).getByText("warehouse")).toBeInTheDocument();
+    expect(within(tree).getAllByRole("treeitem", { name: /^rgm\./ }).map(t => t.getAttribute("aria-label"))).toEqual(["rgm.gold", "rgm.silver"]);
     expect(await screen.findByText("8 of 10 in snapshot")).toBeInTheDocument();
   });
 });
@@ -242,14 +242,15 @@ describe("Ontology screen · drafting", () => {
 
 
 describe("Metadata screen · schema picker", () => {
-  it("switching the schema from the picker changes the table list", async () => {
+  it("clicking a schema in the tree opens its first table", async () => {
     renderAt("#/d/rgm/metadata?v=3");
     const user = userEvent.setup();
     expect(await screen.findByText("dim_customer")).toBeInTheDocument();
-    await user.selectOptions(await screen.findByLabelText("Schema"), "rgm.silver");
-    expect(await screen.findByText("promo_calendar")).toBeInTheDocument();
-    expect(screen.queryByText("dim_customer")).toBeNull();
+    const tree = screen.getByRole("tree", { name: "Schemas and tables" });
+    await user.click(await within(tree).findByText("rgm.silver"));
     expect(window.location.hash).toContain("schema=rgm.silver");
+    expect(window.location.hash).toContain("table=promo_calendar");
+    expect(await screen.findByRole("heading", { level: 1, name: "Metadata" })).toBeInTheDocument();
   });
 });
 
@@ -289,5 +290,27 @@ describe("Mapping screen · fill relationships", () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Fill relationships" }));
     expect(await screen.findByText(/relationships? mapped · \d+ from declared keys/)).toBeInTheDocument();
+  });
+});
+
+describe("Metadata screen · schema tree", () => {
+  it("lists every schema with its tables at once, searches across them and imports a selection spanning schemas", async () => {
+    const api = new MockApi();
+    renderAt("#/d/rgm/metadata?v=3", api);
+    const user = userEvent.setup();
+    const tree = await screen.findByRole("tree", { name: "Schemas and tables" });
+    expect(await within(tree).findByText("rgm.gold")).toBeInTheDocument();
+    expect(within(tree).getByText("rgm.silver")).toBeInTheDocument();
+    expect(await within(tree).findByText("8 of 10 in snapshot")).toBeInTheDocument();     // per-schema counts, no clicking through
+    expect(await within(tree).findByText("promo_calendar")).toBeInTheDocument();          // silver's tables are there without selecting silver first
+    await user.type(screen.getByLabelText("Search tables"), "price");
+    expect(within(tree).getByText("price_list_raw")).toBeInTheDocument();
+    expect(within(tree).queryByText("dim_customer")).toBeNull();
+    await user.clear(screen.getByLabelText("Search tables"));
+    await user.click(within(tree).getByLabelText("Select dim_date"));
+    await user.click(within(tree).getByLabelText("Select all in rgm.silver"));            // ticks silver's tables not yet imported
+    await user.click(screen.getByRole("button", { name: "Import 3 selected" }));
+    expect(await screen.findByText("Imported 3 tables into the snapshot of v3")).toBeInTheDocument();
+    expect(await within(tree).findByText("4 of 4 in snapshot")).toBeInTheDocument();
   });
 });

@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Card, Dot, ErrorNotice, Pill, Skeleton, Spinner, Tabs } from "@/components/ui";
 import { Icon } from "@/components/icons";
 import { useApp, useLoad } from "@/state/app";
 import { useDomain, useGo, useParam, useSetParams } from "@/state/domain";
-import { tableName } from "@/api";
+import { tableName, type CatalogTable } from "@/api";
 
 type Tab = "columns" | "dq" | "onto" | "glossary";
 const BLUE = "#2249FF", ORANGE = "#FF7000", GREY = "#B3B3B7", DARK = "#1636E0";
@@ -17,7 +17,7 @@ export function Metadata() {
   const dbx = config.sourceKind === "databricks";
   const [schemaParam] = useParam("schema", "");
   const setParams = useSetParams();
-  const [tableParam, setTable] = useParam("table", "");
+  const [tableParam] = useParam("table", "");
   const [selected, setSelected] = useState<string[]>([]);
   const [importing, setImporting] = useState(false);
   const [tab, setTab] = useParam("tab", "columns");
@@ -29,9 +29,27 @@ export function Metadata() {
   const [applied, setApplied] = useState<string[]>([]);
 
   const schemas = useLoad(() => api.schemas(domain.name), [domain.name]);
-  const schema = schemaParam || schemas.data?.[0]?.id || "";
-  const tables = useLoad(() => schema ? api.catalogTables(domain.name, schema, version?.version) : Promise.resolve([]), [domain.name, schema, version?.version]);
-  const table = tableParam || tables.data?.[0]?.name || "";
+  const schemaIds = (schemas.data ?? []).map(s => s.id).join("|");
+  const [bySchema, setBySchema] = useState<Record<string, { loading: boolean; error: string | null; data: CatalogTable[] | null }>>({});
+  const [tick, setTick] = useState(0);
+  useEffect(() => {   // every schema at once: the tree shows the whole source, not one schema at a time
+    const ids = schemaIds ? schemaIds.split("|") : [];
+    let alive = true;
+    setBySchema(Object.fromEntries(ids.map(id => [id, { loading: true, error: null, data: null }])));
+    for (const id of ids) {
+      api.catalogTables(domain.name, id, version?.version)
+        .then(data => { if (alive) setBySchema(b => ({ ...b, [id]: { loading: false, error: null, data } })); })
+        .catch(e => { if (alive) setBySchema(b => ({ ...b, [id]: { loading: false, error: e instanceof Error ? e.message : String(e), data: null } })); });
+    }
+    return () => { alive = false; };
+  }, [api, domain.name, schemaIds, version?.version, tick]);
+  const tables = { reload: () => setTick(t => t + 1), loading: Object.values(bySchema).some(x => x.loading) };
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const firstWithTables = (schemas.data ?? []).find(x => (bySchema[x.id]?.data?.length ?? 0) > 0)?.id;
+  const schema = schemaParam || firstWithTables || schemas.data?.[0]?.id || "";
+  const catList = bySchema[schema]?.data ?? [];
+  const table = tableParam || catList[0]?.name || "";
+  const keyOf = (sid: string, name: string) => `${sid}|${name}`;
   const detail = useLoad(() => table ? api.tableDetail(domain.name, schema, table) : Promise.resolve(null), [domain.name, schema, table]);
   const profile = useLoad(() => profiled ? api.tableProfile(domain.name, table) : Promise.resolve(null), [domain.name, table, profiled]);
   const dq = useLoad(() => api.tableDq(domain.name, table), [domain.name, table]);
@@ -46,7 +64,6 @@ export function Metadata() {
   const dqIssues = (dq.data ?? []).filter(d => d.kind !== "—");
   const diffsLeft = (diffs.data ?? []).filter(d => !applied.includes(`${table}:${d.column}`));
   const termByCol = Object.fromEntries((glossary.data ?? []).flatMap(g => g.cols.map(c => [c.split(".")[1], g.term])));
-  const catList = tables.data ?? [];
   const imported = catList.find(t => t.name === table)?.imported ?? false;
   const prof = profile.data;
 
@@ -61,11 +78,17 @@ export function Metadata() {
   const profileCols = profiled ? " 1.1fr .8fr 1fr" : "";
   const gridCols = `1.5fr .8fr 1.8fr .9fr${profileCols}`;
 
-  const toggle = (name: string) => setSelected(sel => (sel.includes(name) ? sel.filter(x => x !== name) : [...sel, name]));
+  const toggle = (key: string) => setSelected(sel => (sel.includes(key) ? sel.filter(x => x !== key) : [...sel, key]));
+  const toggleSchema = (sid: string, names: string[]) => setSelected(sel => { const keys = names.map(n => keyOf(sid, n)); const all = keys.every(k => sel.includes(k)); return all ? sel.filter(k => !keys.includes(k)) : [...new Set([...sel, ...keys])]; });
   const importSelected = async () => {
     if (!version || !selected.length || importing) return;
     setImporting(true);
-    try { await api.importTables(domain.name, version.version, schema, selected); say(`Imported ${selected.length} table${selected.length === 1 ? "" : "s"} into the snapshot of v${version.version}`); setSelected([]); tables.reload(); }
+    try {
+      const groups: Record<string, string[]> = {};
+      for (const k of selected) { const [sid, name] = k.split("|"); (groups[sid] ||= []).push(name); }
+      for (const [sid, names] of Object.entries(groups)) await api.importTables(domain.name, version.version, sid, names);
+      say(`Imported ${selected.length} table${selected.length === 1 ? "" : "s"} into the snapshot of v${version.version}`); setSelected([]); tables.reload();
+    }
     catch (e) { say(e instanceof Error ? e.message : String(e)); }
     finally { setImporting(false); }
   };
@@ -90,25 +113,43 @@ export function Metadata() {
         </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "300px minmax(0,1fr)", gap: 20, alignItems: "start" }}>
-        <Card flush style={{ position: "sticky", top: 0 }}>
-          <div style={{ padding: 12, display: "grid", gap: 8, borderBottom: "1px solid var(--line)" }}>
-            <select aria-label="Schema" className="select mono sm" style={{ fontWeight: 600, width: "100%" }} value={schema} onChange={e => setParams({ schema: e.target.value, table: "" })}>
-              {[...new Set((schemas.data ?? []).map(s => s.group ?? ""))].map(g => <optgroup key={g} label={g}>{(schemas.data ?? []).filter(s => (s.group ?? "") === g).map(s => <option key={s.id} value={s.id}>{s.label}</option>)}</optgroup>)}
-            </select>
-            <input aria-label="Search tables" className="input sm" placeholder="Search tables" value={search} onChange={e => setSearch(e.target.value)} />
+        <Card flush style={{ position: "sticky", top: 0, maxHeight: "calc(100vh - 140px)", overflowY: "auto" }}>
+          <div style={{ padding: 12, borderBottom: "1px solid var(--line)" }}>
+            <input aria-label="Search tables" className="input sm" style={{ width: "100%" }} placeholder="Search tables in every schema" value={search} onChange={e => setSearch(e.target.value)} />
           </div>
-          <div className="row between label-caps" style={{ padding: "8px 14px 4px", fontSize: 10.5, color: "var(--muted-3)" }}><span>{catList.length} tables</span><span>{catList.filter(t => t.imported).length} of {catList.length} in snapshot</span></div>
-          {tables.error && <div style={{ padding: 12 }}><ErrorNotice error={tables.error} action={<span className="small">{/PERMISSION|denied|USE CATALOG/i.test(tables.error) ? "Ask the workspace admin for USE CATALOG / USE SCHEMA / SELECT on this catalog." : "Reload the page; if it persists, check that the API is running the current version."}</span>} /></div>}
-          {tables.loading && <div style={{ padding: 12, display: "grid", gap: 8 }}><Skeleton h={30} /><Skeleton h={30} /><Skeleton h={30} /></div>}
-          {catList.filter(t => !search || t.name.includes(search.toLowerCase())).map(t => { const on = t.name === (table || catList[0]?.name); return (
-            <div key={t.name} className="row" style={{ gap: 0, borderTop: "1px solid var(--line-2)", background: on ? "var(--blue-soft)" : undefined }}>
-              <input type="checkbox" aria-label={`Select ${t.name}`} checked={selected.includes(t.name)} onChange={() => toggle(t.name)} disabled={!editable || t.imported} title={t.imported ? "Already in the snapshot" : !editable ? "Only the lease holder of a draft can import" : "Select for import"} style={{ marginLeft: 12 }} />
-            <a href="#" onClick={e => { e.preventDefault(); setTable(t.name); }} style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 10, padding: "9px 14px 9px 10px", color: "var(--ink)", background: on ? "var(--blue-soft)" : "transparent", textDecoration: "none" }}>
-              <Icon name="metadata" stroke={on ? BLUE : "#7A7A80"} />
-              <span style={{ flex: 1, minWidth: 0 }}><span className="mono" style={{ display: "block", fontSize: 12, fontWeight: on ? 600 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</span><span className="muted-2" style={{ display: "block", fontSize: 11 }}>{t.cols} cols · {t.cls ?? "no class"}</span></span>
-              {t.imported && <Dot color={BLUE} title="In snapshot" />}
-            </a>
-            </div>); })}
+          {schemas.loading && <div style={{ padding: 12, display: "grid", gap: 8 }}><Skeleton h={30} /><Skeleton h={30} /></div>}
+          {schemas.data?.length === 0 && <p className="muted small" style={{ padding: 12 }}>No schema on this domain yet: pick the source's schemas on the Configure screen.</p>}
+          <div role="tree" aria-label="Schemas and tables">
+            {(schemas.data ?? []).map((sc, i) => {
+              const st = bySchema[sc.id]; const all = st?.data ?? []; const q = search.trim().toLowerCase();
+              const rows = q ? all.filter(t => t.name.toLowerCase().includes(q)) : all;
+              if (q && rows.length === 0) return null;
+              const open = expanded[sc.id] ?? true; const openable = all.filter(t => !t.imported).map(t => t.name);
+              const allPicked = openable.length > 0 && openable.every(n => selected.includes(keyOf(sc.id, n)));
+              const prevGroup = i > 0 ? schemas.data?.[i - 1]?.group : undefined;
+              return (
+                <div key={sc.id} role="treeitem" aria-expanded={open} aria-label={sc.label}>
+                  {sc.group && sc.group !== prevGroup && <div className="label-caps" style={{ padding: "10px 14px 2px", fontSize: 10.5, color: "var(--muted-3)" }}>{sc.group}</div>}
+                  <div className="row" style={{ gap: 6, padding: "8px 10px 8px 8px", borderTop: "1px solid var(--line-2)", background: sc.id === schema ? "var(--surface-2)" : undefined }}>
+                    <button type="button" className="chip-act" aria-label={`${open ? "Collapse" : "Expand"} ${sc.label}`} onClick={() => setExpanded(x => ({ ...x, [sc.id]: !open }))}>{open ? "▾" : "▸"}</button>
+                    <input type="checkbox" aria-label={`Select all in ${sc.label}`} checked={allPicked} disabled={!editable || openable.length === 0} title={openable.length ? `Select the ${openable.length} table${openable.length === 1 ? "" : "s"} not yet in the snapshot` : "Every table is in the snapshot"} onChange={() => toggleSchema(sc.id, openable)} />
+                    <a href="#" className="mono" style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 700, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} onClick={e => { e.preventDefault(); setExpanded(x => ({ ...x, [sc.id]: true })); if (all[0]) setParams({ schema: sc.id, table: all[0].name }); }}>{sc.label}</a>
+                    <span className="muted-3" style={{ fontSize: 10.5, whiteSpace: "nowrap" }}>{st?.loading ? <Spinner blue /> : st?.error ? "failed" : `${all.filter(t => t.imported).length} of ${all.length} in snapshot`}</span>
+                  </div>
+                  {st?.error && open && <div style={{ padding: "0 12px 10px" }}><ErrorNotice error={st.error} action={<span className="small">{/PERMISSION|denied|USE CATALOG/i.test(st.error) ? "Ask the workspace admin for USE CATALOG / USE SCHEMA / SELECT on this catalog." : "Reload the page; if it persists, check that the API is running the current version."}</span>} /></div>}
+                  {open && rows.map(t => { const on = sc.id === schema && t.name === table; const k = keyOf(sc.id, t.name); return (
+                    <div key={k} role="treeitem" aria-selected={on} className="row" style={{ gap: 0, background: on ? "var(--blue-soft)" : undefined }}>
+                      <input type="checkbox" aria-label={`Select ${t.name}`} checked={selected.includes(k)} onChange={() => toggle(k)} disabled={!editable || t.imported} title={t.imported ? "Already in the snapshot" : !editable ? "Only the lease holder of a draft can import" : "Select for import"} style={{ marginLeft: 30 }} />
+                      <a href="#" onClick={e => { e.preventDefault(); setParams({ schema: sc.id, table: t.name }); }} style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 8, padding: "7px 14px 7px 8px", color: "var(--ink)" }}>
+                        <Icon name="metadata" stroke={on ? BLUE : "#7A7A80"} />
+                        <span style={{ flex: 1, minWidth: 0 }}><span className="mono" style={{ display: "block", fontSize: 12, fontWeight: on ? 600 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</span><span className="muted-2" style={{ display: "block", fontSize: 10.5 }}>{t.cols} cols{t.cls ? ` · ${t.cls}` : ""}</span></span>
+                        {t.imported && <Dot color={BLUE} title="In snapshot" />}
+                      </a>
+                    </div>); })}
+                  {open && !st?.loading && !st?.error && all.length === 0 && <p className="muted-2 xs" style={{ padding: "4px 14px 10px 44px" }}>No tables.</p>}
+                </div>);
+            })}
+          </div>
         </Card>
         <Card flush>
           <div style={{ padding: "16px 20px 0", display: "flex", alignItems: "flex-start", gap: 16 }}>
