@@ -19,8 +19,9 @@ export interface Config {
 export interface Me { name: string; role: Role }
 
 export interface VersionStats { classes: number; attrs: number; rels: number; bindings: number; rules: number; constraints: number; triples: number }
-export interface Review { approved: number; quorum: number; rows: { who: string; note: string; state: "approved" | "pending" | "rejected" }[] }
-export interface Lease { holder: string; expires: string }
+export interface ReviewRow { who: string; note: string; state: "approved" | "pending" | "rejected"; when?: string }
+export interface Review { approved: number; quorum: number; rows: ReviewRow[]; rejected?: number; round?: number }
+export interface Lease { holder: string; expires: string; expiresAt?: string | null; expired?: boolean }
 
 export interface VersionInfo {
   id?: string;                  // backend uuid when known
@@ -141,6 +142,11 @@ export interface DatagraphApi {
   addComment(domain: string, text: string): Promise<Comment[]>;
   transition(domain: string, version: number, to: VersionStatus | "active"): Promise<DomainSummary>;
   createDraft(domain: string, from?: number): Promise<DomainSummary>;
+  review(domain: string, version: number, approved: boolean, comment?: string): Promise<DomainSummary>;   // a rejection sends the version back to draft
+  takeLease(domain: string, version: number, force?: boolean): Promise<DomainSummary>;
+  releaseLease(domain: string, version: number): Promise<DomainSummary>;
+  deleteDraft(domain: string, version: number): Promise<DomainSummary>;
+  exportBundle(domain: string, version: number): Promise<unknown>;   // portable JSON of one version, for download
   setMcp(domain: string, exposed: boolean): Promise<void>;
 
   schemas(domain: string): Promise<{ id: string; label: string }[]>;

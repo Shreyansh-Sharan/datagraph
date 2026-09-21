@@ -100,20 +100,79 @@ export class MockApi implements DatagraphApi {
   async audit(domain: string): Promise<AuditEntry[]> { return (D.AUDIT[domain] || []).map(([who, what, version, when]) => ({ who, what, version, when })); }
   async comments(domain: string) { return clone(this.commentStore[domain] || []); }
   async addComment(domain: string, text: string) { (this.commentStore[domain] ||= []).push({ who: "alice", when: "just now", text }); return this.comments(domain); }
-  async transition(domain: string, version: number, to: VersionStatus | "active") {
+  private ver(domain: string, version: number) {
     const d = this.dom(domain);
     const v = d.versions.find(x => x.version === version);
     if (!v) throw new Error(`v${version} not found`);
-    if (to === "active") { d.versions.forEach(x => { x.active = false; }); v.active = true; }
-    else { v.status = to; if (to === "draft") v.review = null; if (to !== "draft") v.lease = null; }
+    return { d, v };
+  }
+  /** Domain-level lease and review mirror the draft and the version in review. */
+  private sync(d: DomainSummary) {
+    d.lease = d.versions.find(v => v.status === "draft")?.lease ?? null;
+    d.review = d.versions.find(v => v.status === "in_review")?.review ?? null;
     return clone(d);
+  }
+  async transition(domain: string, version: number, to: VersionStatus | "active") {
+    const { d, v } = this.ver(domain, version);
+    if (to === "active") { if (v.status !== "published") throw new Error("Only a published version can be served"); d.versions.forEach(x => { x.active = false; }); v.active = true; return this.sync(d); }
+    const allowed: Record<VersionStatus, VersionStatus[]> = { draft: ["in_review"], in_review: ["draft", "published"], published: ["archived"], archived: [] };
+    if (!allowed[v.status].includes(to)) throw new Error(`Cannot move from ${v.status} to ${to}`);
+    if (to === "published" && (v.review?.approved ?? 0) < d.quorum) throw new Error(`Publishing needs ${d.quorum} approval(s); have ${v.review?.approved ?? 0}`);
+    if (to === "draft" && d.versions.some(x => x.status === "draft" && x !== v)) throw new Error("Another draft exists for this domain");
+    v.status = to;
+    if (to === "draft") v.review = null;
+    if (to === "in_review") { v.lease = null; v.review = { approved: 0, rejected: 0, quorum: d.quorum, round: (v.review?.round ?? 0) + 1, rows: [] }; }
+    if (to === "archived") v.active = false;
+    return this.sync(d);
+  }
+  async review(domain: string, version: number, approved: boolean, comment?: string) {
+    const { d, v } = this.ver(domain, version);
+    if (v.status !== "in_review") throw new Error("Reviews can only be added while a version is in review");
+    const me = (await this.me()).name;
+    const rv = v.review ?? { approved: 0, rejected: 0, quorum: d.quorum, round: 1, rows: [] };
+    rv.rows = rv.rows.filter(r => r.who !== me);
+    rv.rows.push({ who: me, note: comment ?? "", state: approved ? "approved" : "rejected", when: "just now" });
+    rv.approved = rv.rows.filter(r => r.state === "approved").length;
+    rv.rejected = rv.rows.filter(r => r.state === "rejected").length;
+    rv.quorum = d.quorum;
+    v.review = rv;
+    if (!approved) {
+      (this.commentStore[domain] ||= []).push({ who: me, when: "just now", text: `Rejected: ${comment ?? "no reason given"}` });
+      return this.transition(domain, version, "draft");
+    }
+    return this.sync(d);
+  }
+  async takeLease(domain: string, version: number, force = false) {
+    const { d, v } = this.ver(domain, version);
+    if (v.status !== "draft") throw new Error("Only a draft can be leased");
+    const me = (await this.me()).name;
+    if (v.lease && v.lease.holder !== me && !force) throw new Error(`Version is being edited by ${v.lease.holder}`);
+    v.lease = { holder: me, expires: "15 min" };
+    return this.sync(d);
+  }
+  async releaseLease(domain: string, version: number) {
+    const { d, v } = this.ver(domain, version);
+    const me = (await this.me()).name;
+    if (v.lease && v.lease.holder !== me) throw new Error(`Lease is held by ${v.lease.holder}`);
+    v.lease = null;
+    return this.sync(d);
+  }
+  async exportBundle(domain: string, version: number): Promise<unknown> {
+    const { d, v } = this.ver(domain, version);
+    return { format: "datagraph.bundle/1", domain: { name: d.name, description: d.description, base_iri: d.base_iri }, versions: [clone(v)] };
+  }
+  async deleteDraft(domain: string, version: number) {
+    const { d, v } = this.ver(domain, version);
+    if (v.status !== "draft") throw new Error("Only draft versions can be deleted");
+    d.versions = d.versions.filter(x => x !== v);
+    return this.sync(d);
   }
   async createDraft(domain: string, from?: number) {
     const d = this.dom(domain);
     const src = d.versions.find(v => v.version === from) || d.versions.find(v => v.active) || d.versions[0];
     const n = (d.versions[0]?.version || 0) + 1;
     d.versions.unshift({ version: n, status: "draft", content: src ? src.content : "empty", mappingPct: src?.mappingPct ?? null, lastBuild: "never", active: false, created: "just now", by: "alice", stats: src ? { ...src.stats, triples: 0 } : { classes: 0, attrs: 0, rels: 0, bindings: 0, rules: 0, constraints: 0, triples: 0 }, lease: { holder: "alice", expires: "15 min" }, changes: src ? [{ sign: "+", text: `draft created from v${src.version}` }] : [] });
-    return clone(d);
+    return this.sync(d);
   }
   async setMcp(domain: string, exposed: boolean) { this.dom(domain).mcpExposed = exposed; }
 

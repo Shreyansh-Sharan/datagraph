@@ -66,8 +66,32 @@ Sub-state lives in the query string so every screen deep-links.
 
 ## Integration plan
 
-`RestApi extends MockApi`: each method with a settled backend contract is overridden to call the API
-(config, me, domains, versions, lifecycle, comments, audit, catalog, ontology, mapping status, table
-preview, per-class SQL, builds with polling, search, entity, graph status, triples, test connection,
-principals). Everything else still returns design data. Replace the fallbacks method by method; the
-screens do not change. Backend shapes are documented in `docs/UI-BLUEPRINT.html` §8.
+`RestApi extends MockApi`: each method with a settled backend contract is overridden to call the API;
+everything else still returns design data. Replace the fallbacks method by method; the screens do not
+change. Backend shapes are documented in `docs/UI-BLUEPRINT.html` §8.
+
+Wired to the API today: config, me, domains and cards, the **version mechanism** (see below), comments,
+audit, catalog, ontology, mapping status, table preview, per-class SQL, builds with polling, search,
+entity, graph status, triples, connections (read-only, via the hub), domain settings, tasks, bundle export.
+
+### The version mechanism
+
+`GET /domains/{name}/versions/summary` is the one call behind the Versions and Overview screens: per
+version it carries the content stats, mapping completion, last build and served triples, the current
+review round (approvals count once per reviewer and restart when a version re-enters review) and the
+draft's edit lease. The actions map one to one onto the backend:
+
+| Action | Who | Backend |
+|---|---|---|
+| Take / release / force-take lease | builder / holder / admin | `POST` / `DELETE /versions/{id}/lease` |
+| Submit for review, send back, publish, archive | builder / reviewer | `POST /versions/{id}/transition` (publishing needs the quorum) |
+| Approve, reject with comment | reviewer | `POST /versions/{id}/reviews`; a rejection also transitions back to draft |
+| Set active | reviewer | `POST /domains/{name}/active` |
+| Create draft (from a version) | builder | `POST /domains/{name}/versions` |
+| Delete draft (typed confirmation) | builder | `DELETE /versions/{id}` |
+| Export bundle | anyone | `GET /domains/{name}/export?version_id=` |
+
+`useLifecycle()` in `src/components/lifecycle.tsx` wraps all of them: it patches the domain state with
+the response and turns backend refusals (quorum not met, lease held by someone else, another draft
+exists) into toasts. The mock adapter enforces the same rules, so the screens behave identically in
+`mock` and `rest` mode.

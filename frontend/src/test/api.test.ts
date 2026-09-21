@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { MockApi } from "@/api/mock";
+import { RestApi } from "@/api/rest";
 import { compileClassSql, tableName } from "@/api/types";
 import { answer } from "@/screens/askEngine";
 import * as D from "@/api/mockData";
@@ -37,6 +38,8 @@ describe("MockApi", () => {
     const api = new MockApi();
     let d = await api.transition("rgm", 3, "in_review");
     expect(d.versions.find(v => v.version === 3)?.status).toBe("in_review");
+    await expect(api.transition("rgm", 2, "published")).rejects.toThrow(/needs 3 approval/);
+    await api.review("rgm", 2, true);
     d = await api.transition("rgm", 2, "published");
     d = await api.transition("rgm", 2, "active");
     expect(d.versions.filter(v => v.active).map(v => v.version)).toEqual([2]);
@@ -118,5 +121,120 @@ describe("connections and domain settings (mock)", () => {
     await api.detachConnection("c-warehouse");
     expect((await api.sourceFacts("hr")).connection).toBeNull();
     await expect(api.updateDomain("hr", { materialization: "sideways" as never })).rejects.toThrow(/materialization/);
+  });
+});
+
+describe("version mechanism (mock)", () => {
+  it("counts approvals per reviewer and refuses to publish before the quorum", async () => {
+    const api = new MockApi();
+    let d = await api.review("rgm", 2, true);                       // priya, marc already approved; quorum 3
+    const v2 = () => d.versions.find(v => v.version === 2)!;
+    expect(v2().review).toMatchObject({ approved: 3, quorum: 3 });
+    expect(v2().review!.rows.find(r => r.who === "alice")?.state).toBe("approved");
+    d = await api.review("rgm", 2, true);                            // same reviewer twice counts once
+    expect(v2().review!.approved).toBe(3);
+    await api.transition("rgm", 3, "in_review");
+    await expect(api.transition("rgm", 3, "published")).rejects.toThrow(/needs 3 approval/i);
+    d = await api.transition("rgm", 2, "published");
+    expect(v2().status).toBe("published");
+  });
+  it("rejecting records the comment and sends the version back to draft", async () => {
+    const api = new MockApi();
+    await api.transition("rgm", 3, "in_review");                     // no other draft, so v2 could be reopened... use v3
+    const d = await api.review("rgm", 3, false, "Channel is unmapped");
+    const v3 = d.versions.find(v => v.version === 3)!;
+    expect(v3.status).toBe("draft");
+    expect(v3.review).toBeNull();
+    expect((await api.comments("rgm")).at(-1)).toMatchObject({ who: "alice", text: "Rejected: Channel is unmapped" });
+  });
+  it("releases, takes and force-takes the edit lease", async () => {
+    const api = new MockApi();
+    let d = await api.releaseLease("rgm", 3);
+    expect(d.versions[0].lease).toBeNull();
+    d = await api.takeLease("rgm", 3);
+    expect(d.versions[0].lease).toMatchObject({ holder: "alice" });
+    d = await api.takeLease("rgm", 3, true);
+    expect(d.versions[0].lease).toMatchObject({ holder: "alice" });
+    expect(d.lease).toMatchObject({ holder: "alice" });
+  });
+  it("deletes a draft and nothing else", async () => {
+    const api = new MockApi();
+    await expect(api.deleteDraft("rgm", 1)).rejects.toThrow(/only draft/i);
+    const d = await api.deleteDraft("rgm", 3);
+    expect(d.versions.map(v => v.version)).toEqual([2, 1]);
+    expect(d.lease).toBeNull();
+  });
+});
+
+describe("version mechanism (rest)", () => {
+  const summary = [
+    { id: "v3", version: 3, status: "draft", has_ontology: true, has_mapping: true, rule_count: 2, constraint_count: 7, created_at: "2026-09-18T10:00:00Z", created_by: "alice", is_active: false,
+      stats: { classes: 12, attributes: 52, relationships: 11, bindings: 41, rules: 2, constraints: 7, triples: 0 }, mapping: { completion: 0.7812, classes_mapped: 10, classes: 12, complete_classes: 9 },
+      last_build: { id: "b1", status: "failed", started_at: "2026-09-20T09:00:00Z", finished_at: "2026-09-20T09:01:00Z", triple_count: null, error: "boom" },
+      review: null, lease: { holder: "alice", expires_at: "2026-09-21T10:42:00Z", expired: false } },
+    { id: "v2", version: 2, status: "in_review", has_ontology: true, has_mapping: true, rule_count: 2, constraint_count: 6, created_at: "2026-09-12T10:00:00Z", created_by: "marc", is_active: false,
+      stats: { classes: 10, attributes: 47, relationships: 9, bindings: 47, rules: 2, constraints: 6, triples: 258102 }, mapping: { completion: 1, classes_mapped: 10, classes: 10, complete_classes: 10 },
+      last_build: { id: "b0", status: "succeeded", started_at: "2026-09-16T09:00:00Z", finished_at: "2026-09-16T09:03:00Z", triple_count: 258102, error: null },
+      review: { quorum: 3, round: 1, approved: 2, rejected: 0, rows: [{ reviewer: "priya", approved: true, comment: "reviewed mapping", at: "2026-09-17T10:00:00Z" }, { reviewer: "marc", approved: true, comment: null, at: "2026-09-17T11:00:00Z" }] }, lease: null },
+    { id: "v1", version: 1, status: "published", has_ontology: true, has_mapping: true, rule_count: 1, constraint_count: 5, created_at: "2026-08-21T10:00:00Z", created_by: "alice", is_active: true,
+      stats: { classes: 9, attributes: 44, relationships: 8, bindings: 44, rules: 1, constraints: 5, triples: 241880 }, mapping: { completion: 1, classes_mapped: 9, classes: 9, complete_classes: 9 },
+      last_build: { id: "b-1", status: "succeeded", started_at: "2026-09-09T09:00:00Z", finished_at: "2026-09-09T09:03:00Z", triple_count: 241880, error: null },
+      review: { quorum: 3, round: 1, approved: 3, rejected: 0, rows: [] }, lease: null },
+  ];
+  const routes: Record<string, unknown> = {
+    "GET /api/auth/config": { mode: "header", header: "X-Actor", source: { kind: "databricks", catalog: "finops_metadata" } },
+    "GET /api/domains/rgm": { name: "rgm", description: "Revenue growth management", base_iri: "http://p/rgm/", review_quorum: 3, active_version_id: "v1" },
+    "GET /api/domains/rgm/versions/summary": summary,
+    "GET /api/domains/cards": [{ name: "rgm", version_count: 3, active_version: { version: 1 }, latest_version: { version: 3, status: "draft" }, triples: 241880, last_build: null, source: { kind: "databricks", connection: null, catalog: "rgm", schema: "gold" }, mcp: { exposed: true, disabled_tools: [] } }],
+    "GET /api/versions/v3/audit": [{ actor: "alice", action: "lease.acquired", created_at: "2026-09-21T10:27:00Z", detail: { forced: false } }, { actor: "alice", action: "version.created", created_at: "2026-09-18T10:00:00Z", detail: {} }],
+    "GET /api/versions/v2/audit": [], "GET /api/versions/v1/audit": [],
+  };
+  const calls: string[] = [];
+  const api = () => {
+    calls.length = 0;
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      const key = `${init?.method ?? "GET"} ${url}`; calls.push(key + (init?.body ? " " + init.body : ""));
+      if (key.startsWith("POST /api/versions/v2/reviews")) return new Response(JSON.stringify({ id: 1 }), { status: 201 });
+      if (key.startsWith("POST /api/versions/v3/lease") || key.startsWith("POST /api/versions/v3/transition") || key.startsWith("POST /api/versions/v2/transition")) return new Response(JSON.stringify(summary[0]));
+      if (key.startsWith("DELETE /api/versions/v3")) return new Response(null, { status: 204 });
+      if (key === "POST /api/domains/rgm/active") return new Response(JSON.stringify(routes["GET /api/domains/rgm"]));
+      const hit = routes[key]; if (hit === undefined) return new Response(JSON.stringify({ detail: `no route ${key}` }), { status: 404 });
+      return new Response(JSON.stringify(hit));
+    }) as typeof fetch;
+    return new RestApi({ base: "/api" });
+  };
+  it("maps the summary onto the UI version model", async () => {
+    const d = await api().domain("rgm");
+    expect(d.versions.map(v => v.version)).toEqual([3, 2, 1]);
+    const [v3, v2, v1] = d.versions;
+    expect(v3).toMatchObject({ mappingPct: 78, active: false, by: "alice", stats: { classes: 12, attrs: 52, rels: 11, bindings: 41, rules: 2, constraints: 7, triples: 0 }, lease: { holder: "alice" } });
+    expect(v3.lastBuild).toMatch(/^failed/);
+    expect(v3.content).toBe("ontology · mapping 78% · 2 rules · 7 constraints");
+    expect(v3.changes).toEqual(expect.arrayContaining([{ sign: "+", text: "2 classes" }, { sign: "+", text: "5 attributes" }, { sign: "+", text: "1 constraint" }]));
+    expect(v2.review).toMatchObject({ approved: 2, quorum: 3, rows: [{ who: "priya", note: "reviewed mapping", state: "approved" }, { who: "marc", note: "", state: "approved" }] });
+    expect(v2.lastBuild).toMatch(/^succeeded/);
+    expect(v1.active).toBe(true);
+    expect(d.review).toMatchObject({ approved: 2, quorum: 3 });          // the version in review
+    expect(d.lease).toMatchObject({ holder: "alice" });                 // the draft's lease
+  });
+  it("calls the lifecycle endpoints with the version ids it learnt", async () => {
+    const a = api(); await a.domain("rgm");
+    await a.review("rgm", 2, false, "rename Sale");
+    expect(calls).toContain('POST /api/versions/v2/reviews {"approved":false,"comment":"rename Sale"}');
+    expect(calls).toContain('POST /api/versions/v2/transition {"to":"draft"}');
+    await a.takeLease("rgm", 3, true);
+    expect(calls).toContain('POST /api/versions/v3/lease {"ttl_seconds":900,"force":true}');
+    await a.releaseLease("rgm", 3);
+    expect(calls).toContain("DELETE /api/versions/v3/lease");
+    await a.deleteDraft("rgm", 3);
+    expect(calls).toContain("DELETE /api/versions/v3");
+    await a.transition("rgm", 1, "active");
+    expect(calls).toContain('POST /api/domains/rgm/active {"version_id":"v1"}');
+  });
+  it("renders audit actions as sentences with relative times", async () => {
+    const rows = await api().audit("rgm");
+    expect(rows[0]).toMatchObject({ who: "alice", what: "took the lease on", version: 3 });
+    expect(rows[1].what).toBe("created draft");
+    expect(rows[1].when).toMatch(/ago$/);
   });
 });

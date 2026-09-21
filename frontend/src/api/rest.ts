@@ -2,8 +2,9 @@
 // Methods with a settled contract call the API; the rest fall through to the mock so the
 // app stays usable while integration proceeds. Replace fallbacks method by method.
 import { MockApi } from "./mock";
-import type { AuditEntry, BuildRun, CatalogTable, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, SourceFacts, TableDetail, TablePreview, TriplePage, TripleQuery, VersionInfo, VersionStatus } from "./types";
+import type { AuditEntry, BuildRun, CatalogTable, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus } from "./types";
 import { tableName } from "./types";
+import { humanAction, relTime } from "./format";
 
 export class ApiError extends Error {
   constructor(public status: number, public detail: string) { super(detail); }
@@ -11,7 +12,15 @@ export class ApiError extends Error {
 
 export interface RestOptions { base?: string; actor?: string; token?: string }
 
-interface BackendVersion { id: string; version: number; status: VersionStatus; has_ontology: boolean; has_mapping: boolean; rule_count: number; constraint_count: number; created_at?: string; created_by?: string; lease?: { holder: string; expires_at: string } | null }
+interface BackendVersion { id: string; version: number; status: VersionStatus; has_ontology: boolean; has_mapping: boolean; rule_count: number; constraint_count: number; created_at?: string; updated_at?: string; editor?: string | null; lease_expires_at?: string | null }
+interface BackendStats { classes: number; attributes: number; relationships: number; bindings: number; rules: number; constraints: number; triples: number }
+interface BackendSummary extends BackendVersion {
+  created_by: string | null; is_active: boolean; stats: BackendStats;
+  mapping: { completion: number; classes_mapped: number; classes: number; complete_classes: number } | null;
+  last_build: { id: string; status: string; started_at: string; finished_at: string | null; triple_count: number | null; error: string | null } | null;
+  review: { quorum: number; round: number; approved: number; rejected: number; rows: { reviewer: string; approved: boolean; comment: string | null; at: string }[] } | null;
+  lease: { holder: string; expires_at: string | null; expired: boolean } | null;
+}
 interface BackendDomain { name: string; description: string | null; base_iri: string; review_quorum: number; active_version_id?: string | null; connection_id?: string | null; ai_connection_id?: string | null; default_catalog?: string | null; default_schema?: string | null; materialization?: string; target_schema?: string | null; mcp_policy?: { exposed?: boolean; disabled_tools?: string[] } }
 interface BackendCard { name: string; version_count: number; active_version: { version: number } | null; latest_version: { version: number; status: string } | null; triples: number; last_build: { status: string; finished_at: string | null; triple_count: number | null } | null; source: { kind: string; connection: string | null; catalog: string | null; schema: string | null }; mcp: { exposed: boolean; disabled_tools: string[] } }
 
@@ -49,20 +58,34 @@ export class RestApi extends MockApi {
   }
   override async me(): Promise<Me> { const m = await this.req<{ name: string; role: Role }>("GET", "/me"); return { name: m.name, role: m.role }; }
 
-  private toVersion(d: BackendDomain, v: BackendVersion): VersionInfo {
+  private toVersion(d: BackendDomain, v: BackendSummary, prev?: BackendSummary): VersionInfo {
     this.versionIds[`${d.name}:${v.version}`] = v.id;
-    const parts = [v.has_ontology ? "ontology" : "no ontology", v.has_mapping ? "mapping" : "no mapping", `${v.rule_count} rules`, `${v.constraint_count} constraints`];
-    return { id: v.id, version: v.version, status: v.status, content: parts.join(" · "), mappingPct: null, lastBuild: "—", active: d.active_version_id === v.id, created: v.created_at ?? "", by: v.created_by ?? "", stats: { classes: 0, attrs: 0, rels: 0, bindings: 0, rules: v.rule_count, constraints: v.constraint_count, triples: 0 }, lease: v.lease ? { holder: v.lease.holder, expires: v.lease.expires_at } : null, review: null, changes: [] };
+    const pct = v.mapping ? Math.round(v.mapping.completion * 100) : null;
+    const n = (k: number, one: string, many = one + "s") => `${k} ${k === 1 ? one : many}`;
+    const parts = [v.has_ontology ? "ontology" : "no ontology", pct == null ? "no mapping" : `mapping ${pct}%`, n(v.stats.rules, "rule"), n(v.stats.constraints, "constraint")];
+    const changes: VersionInfo["changes"] = [];
+    if (prev) for (const [k, one, many] of [["classes", "class", "classes"], ["attributes", "attribute"], ["relationships", "relationship"], ["bindings", "mapped binding"], ["rules", "rule"], ["constraints", "constraint"]] as [keyof BackendStats, string, string?][]) {
+      const delta = v.stats[k] - prev.stats[k];
+      if (delta) changes.push({ sign: delta > 0 ? "+" : "-", text: n(Math.abs(delta), one, many) });
+    }
+    const b = v.last_build;
+    return { id: v.id, version: v.version, status: v.status, content: parts.join(" · "), mappingPct: pct,
+      lastBuild: b ? `${b.status} · ${relTime(b.finished_at ?? b.started_at)}` : "never", active: v.is_active,
+      created: relTime(v.created_at), by: v.created_by ?? "", 
+      stats: { classes: v.stats.classes, attrs: v.stats.attributes, rels: v.stats.relationships, bindings: v.stats.bindings, rules: v.stats.rules, constraints: v.stats.constraints, triples: v.stats.triples },
+      lease: v.lease ? { holder: v.lease.holder, expires: v.lease.expired ? "expired" : relTime(v.lease.expires_at).replace(/^in /, ""), expiresAt: v.lease.expires_at, expired: v.lease.expired } : null,
+      review: v.review ? { approved: v.review.approved, rejected: v.review.rejected, quorum: v.review.quorum, round: v.review.round, rows: v.review.rows.map(r => ({ who: r.reviewer, note: r.comment ?? "", state: r.approved ? "approved" : "rejected", when: relTime(r.at) })) } : null,
+      changes };
   }
   private async toDomain(d: BackendDomain, card?: BackendCard): Promise<DomainSummary> {
-    const vs = await this.req<BackendVersion[]>("GET", `/domains/${encodeURIComponent(d.name)}/versions`);
+    const vs = (await this.req<BackendSummary[]>("GET", `/domains/${encodeURIComponent(d.name)}/versions/summary`)).sort((a, b) => b.version - a.version);
     const cfg = this.cfg ?? await this.config();
-    const versions = vs.map(v => this.toVersion(d, v)).sort((a, b) => b.version - a.version);
+    const versions = vs.map((v, i) => this.toVersion(d, v, vs[i + 1]));
     const c = card ?? (await this.req<BackendCard[]>("GET", "/domains/cards")).find(x => x.name === d.name);
     return { name: d.name, description: d.description ?? "", base_iri: d.base_iri, quorum: d.review_quorum, schema: c?.source.schema ?? d.default_schema ?? "", catalog: c?.source.catalog ?? d.default_catalog ?? cfg.catalog ?? d.name,
       materialization: d.materialization ?? cfg.materialization, target: d.target_schema ?? "", mcpExposed: c?.mcp.exposed ?? d.mcp_policy?.exposed ?? true, disabledTools: c?.mcp.disabled_tools ?? d.mcp_policy?.disabled_tools ?? [],
       triples: c ? c.triples.toLocaleString() : "—", lastBuild: c?.last_build ? `${c.last_build.status}${c.last_build.finished_at ? " · " + new Date(c.last_build.finished_at).toLocaleString() : ""}` : "never",
-      versions, lease: versions.find(v => v.lease)?.lease ?? null, review: null, connectionId: d.connection_id ?? null, aiConnectionId: d.ai_connection_id ?? null, targetSchema: d.target_schema ?? null };
+      versions, lease: versions.find(v => v.status === "draft")?.lease ?? null, review: versions.find(v => v.status === "in_review")?.review ?? null, connectionId: d.connection_id ?? null, aiConnectionId: d.ai_connection_id ?? null, targetSchema: d.target_schema ?? null };
   }
   override async domains(): Promise<DomainSummary[]> {
     const [ds, cards] = await Promise.all([this.req<BackendDomain[]>("GET", "/domains"), this.req<BackendCard[]>("GET", "/domains/cards")]);
@@ -89,10 +112,43 @@ export class RestApi extends MockApi {
     return this.domain(domain);
   }
   override async createDraft(domain: string): Promise<DomainSummary> { await this.req("POST", `/domains/${encodeURIComponent(domain)}/versions`); return this.domain(domain); }
+  override async review(domain: string, version: number, approved: boolean, comment?: string): Promise<DomainSummary> {
+    await this.req("POST", `/versions/${this.vid(domain, version)}/reviews`, { approved, comment: comment ?? null });
+    if (!approved) await this.req("POST", `/versions/${this.vid(domain, version)}/transition`, { to: "draft" });
+    return this.domain(domain);
+  }
+  override async takeLease(domain: string, version: number, force = false): Promise<DomainSummary> {
+    await this.req("POST", `/versions/${this.vid(domain, version)}/lease`, { ttl_seconds: 900, force });
+    return this.domain(domain);
+  }
+  override async releaseLease(domain: string, version: number): Promise<DomainSummary> {
+    await this.req("DELETE", `/versions/${this.vid(domain, version)}/lease`);
+    return this.domain(domain);
+  }
+  override async deleteDraft(domain: string, version: number): Promise<DomainSummary> {
+    await this.req("DELETE", `/versions/${this.vid(domain, version)}`);
+    delete this.versionIds[`${domain}:${version}`];
+    return this.domain(domain);
+  }
+  override async exportBundle(domain: string, version: number): Promise<unknown> {
+    return this.req("GET", `/domains/${encodeURIComponent(domain)}/export?version_id=${this.vid(domain, version)}`);
+  }
+  override async tasks(): Promise<Task[]> {
+    type T = { domain: string; version_id: string; version: number; status: VersionStatus; editor: string | null; approvals: number; quorum: number };
+    const t = await this.req<{ drafts: T[]; to_review: T[]; publishable: T[] }>("GET", "/tasks");
+    const me = this.ropts.actor ?? "alice";
+    return [
+      ...t.to_review.map(x => ({ title: `Review ${x.domain} v${x.version}`, sub: `${x.approvals} of ${x.quorum} approvals · your review is pending`, when: "now", icon: "tasks", go: { screen: "versions", domain: x.domain, version: x.version } })),
+      ...t.publishable.map(x => ({ title: `Publish ${x.domain} v${x.version}`, sub: `Quorum met · ${x.approvals} of ${x.quorum} approvals`, when: "now", icon: "check", go: { screen: "versions", domain: x.domain, version: x.version } })),
+      ...t.drafts.filter(x => x.editor === me).map(x => ({ title: `Your draft ${x.domain} v${x.version}`, sub: "You hold the edit lease", when: "now", icon: "settings", go: { screen: "overview", domain: x.domain, version: x.version } })),
+    ];
+  }
   override async audit(domain: string): Promise<AuditEntry[]> {
-    const d = await this.domain(domain); const latest = d.versions[0]; if (!latest) return [];
-    const rows = await this.req<{ actor: string; action: string; at: string }[]>("GET", `/versions/${this.vid(domain, latest.version)}/audit`);
-    return rows.map(r => ({ who: r.actor, what: r.action, version: latest.version, when: r.at }));
+    const d = await this.domain(domain);
+    type Row = { actor: string | null; action: string; created_at: string; detail: Record<string, unknown> | null };
+    const trails = await Promise.all(d.versions.map(async v => (await this.req<Row[]>("GET", `/versions/${this.vid(domain, v.version)}/audit`)).map(r => ({ ...r, version: v.version }))));
+    return trails.flat().sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .map(r => ({ who: r.actor ?? "system", what: humanAction(r.action, r.detail), version: r.version, when: relTime(r.created_at) }));
   }
   override async comments(domain: string): Promise<Comment[]> {
     const d = await this.domain(domain); const latest = d.versions[0]; if (!latest) return [];

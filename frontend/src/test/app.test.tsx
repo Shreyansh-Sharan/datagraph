@@ -54,3 +54,42 @@ describe("Configure screen", () => {
     expect(screen.queryByRole("button", { name: "New connection" })).toBeNull();
   });
 });
+
+describe("Versions screen", () => {
+  it("approves a version in review, then publishes it once the quorum is met", async () => {
+    renderAt("#/d/rgm/versions");
+    const user = userEvent.setup();
+    expect(await screen.findByText("2 of 3")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Approve" }));
+    expect(await screen.findByText("3 of 3")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Publish" }));
+    expect((await screen.findAllByText("v2 published")).length).toBeGreaterThan(0);
+  });
+  it("deletes a draft after the version number is typed, then rejects the reviewed version back to draft with a comment", async () => {
+    const api = new MockApi();
+    renderAt("#/d/rgm/versions", api);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Delete draft" }));
+    const dlg = screen.getByRole("dialog", { name: "Delete draft v3" });
+    expect(within(dlg).getByRole("button", { name: "Delete draft" })).toBeDisabled();
+    await user.type(within(dlg).getByLabelText("Type 3 to confirm"), "3");
+    await user.click(within(dlg).getByRole("button", { name: "Delete draft" }));
+    expect(await screen.findByText("Draft v3 deleted")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Reject with comment" }));
+    const rej = screen.getByRole("dialog", { name: "Reject v2" });
+    await user.type(within(rej).getByLabelText("Comment"), "Channel is unmapped");
+    await user.click(within(rej).getByRole("button", { name: "Reject and reopen draft" }));
+    expect(await screen.findByText("v2 sent back to draft")).toBeInTheDocument();
+    const d = await api.domain("rgm");
+    expect(d.versions.map(v => [v.version, v.status])).toEqual([[2, "draft"], [1, "published"]]);
+    expect((await api.comments("rgm")).at(-1)?.text).toBe("Rejected: Channel is unmapped");
+  });
+  it("releases the draft lease from the overview", async () => {
+    renderAt("#/d/rgm");
+    const user = userEvent.setup();
+    expect(await screen.findByText(/Held by/)).toHaveTextContent("alice");
+    await user.click(screen.getByRole("button", { name: "Release lease" }));
+    expect(await screen.findByText("Lease on v3 released")).toBeInTheDocument();
+    expect(screen.queryByText(/Held by/)).toBeNull();
+  });
+});
