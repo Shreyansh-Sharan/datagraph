@@ -247,7 +247,7 @@ describe("Metadata screen · schema picker", () => {
     const user = userEvent.setup();
     expect(await screen.findByText("dim_customer")).toBeInTheDocument();
     const tree = screen.getByRole("tree", { name: "Schemas and tables" });
-    await user.click(await within(tree).findByText("rgm.silver"));
+    await user.click(await within(tree).findByText("silver"));
     expect(window.location.hash).toContain("schema=rgm.silver");
     expect(window.location.hash).toContain("table=promo_calendar");
     expect(await screen.findByRole("heading", { level: 1, name: "Metadata" })).toBeInTheDocument();
@@ -299,8 +299,8 @@ describe("Metadata screen · schema tree", () => {
     renderAt("#/d/rgm/metadata?v=3", api);
     const user = userEvent.setup();
     const tree = await screen.findByRole("tree", { name: "Schemas and tables" });
-    expect(await within(tree).findByText("rgm.gold")).toBeInTheDocument();
-    expect(within(tree).getByText("rgm.silver")).toBeInTheDocument();
+    expect(await within(tree).findByText("gold")).toBeInTheDocument();       // the catalog is the group's, so only the schema is spelled out
+    expect(within(tree).getByText("silver")).toBeInTheDocument();
     expect(await within(tree).findByText("8 of 10 in snapshot")).toBeInTheDocument();     // per-schema counts, no clicking through
     expect(await within(tree).findByText("promo_calendar")).toBeInTheDocument();          // silver's tables are there without selecting silver first
     await user.type(screen.getByLabelText("Search tables"), "price");
