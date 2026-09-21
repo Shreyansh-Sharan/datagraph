@@ -827,14 +827,8 @@ def graph_entity(version_id: UUID, request: Request, iri: str):
     detail = st.store.describe(version_id, iri)
     if detail is None:
         raise NotFound(f"Entity {iri}")
-    summary = {"datasets": [], "actions": [], "virtual_attributes": [], "bridges": []}
-    for t in detail.types:
-        info = st.attachments.for_class(version_id, t)
-        summary["datasets"] += [d["table"] for d in info["datasets"]]
-        summary["actions"] += [a["name"] for a in info["actions"]]
-        summary["virtual_attributes"] += info["virtual_attributes"]
-        summary["bridges"] += [b["target_domain"] for b in info["bridges"]]
-    return {**asdict(detail), "attachments": {k: sorted(v) for k, v in summary.items()}}
+    linked = [r.target for r in detail.outgoing if r.target] + [r.source for r in detail.incoming if r.source]
+    return {**asdict(detail), "neighbours": [asdict(e) for e in st.store.entities(version_id, linked)]}
 
 
 @router.get("/versions/{version_id}/graph/entity/virtual")

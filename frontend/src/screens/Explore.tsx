@@ -26,12 +26,14 @@ export function Explore() {
   const { api, say } = useApp();
   const { domain } = useDomain();
   const [q, setQ] = useParam("q", "");
+  const [typeIri, setTypeIri] = useParam("type", "");
+  const [match, setMatch] = useParam("match", "contains");
   const [entityParam, setEntity] = useParam("entity", "");
   const [graph, setGraph] = useState<ExploreGraph>(EMPTY);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<string | null>(null);
   const status = useLoad(() => api.graphStatus(domain.name), [domain.name]);
-  const results = useLoad(() => api.search(domain.name, q), [domain.name, q]);
+  const results = useLoad(() => api.search(domain.name, q, { type: typeIri || null, match: (match as "contains" | "exact" | "starts_with") || "contains" }), [domain.name, q, typeIri, match]);
   const entityId = entityParam || results.data?.[0]?.id || "";   // nothing chosen yet: start from the first match
   const ent = useLoad(() => entityId ? api.entity(domain.name, entityId) : Promise.resolve(null), [domain.name, entityId]);
   useEffect(() => { setGraph(EMPTY); setExpanded(new Set()); }, [domain.name]);   // a new domain starts an empty canvas
@@ -61,8 +63,8 @@ export function Explore() {
         <h1 style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-.02em", lineHeight: 1.15, flex: "none" }}>Explore</h1>
         <div className="row" style={{ flex: 1, maxWidth: 760, marginLeft: 16 }}>
           <div className="search-wrap"><Icon name="search" stroke="#7A7A80" /><input id="explore-q" aria-label="Find an entity" className="input" placeholder="Find an entity by label or IRI" value={q} onChange={ev => setQ(ev.target.value)} /></div>
-          <select aria-label="Entity type" className="select"><option>Any type</option><option>Customer</option><option>Product</option><option>Sale</option></select>
-          <select aria-label="Match" className="select"><option>contains</option><option>exact</option><option>starts</option></select>
+          <select aria-label="Entity type" className="select" value={typeIri} onChange={ev => setTypeIri(ev.target.value)}><option value="">Any type</option>{(status.data?.types ?? []).map(t => <option key={t.iri} value={t.iri}>{t.name} · {t.count.toLocaleString()}</option>)}</select>
+          <select aria-label="Match" className="select" value={match} onChange={ev => setMatch(ev.target.value)}><option value="contains">contains</option><option value="exact">exact</option><option value="starts_with">starts with</option></select>
         </div>
         <span className="mono muted small" style={{ marginLeft: "auto" }}>{status.data ? `${status.data.triples} triples · ${status.data.entities} entities` : ""}</span>
       </div>

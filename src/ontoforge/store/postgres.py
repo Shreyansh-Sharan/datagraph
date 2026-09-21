@@ -199,6 +199,11 @@ class TripleStore:
 
     # -- helpers -------------------------------------------------------------
 
+    def entities(self, version_id: UUID, iris: list[str]) -> list[Entity]:
+        """Label and types of each IRI (for naming the neighbours of an entity in one round trip)."""
+        with self.db.transaction() as cur:
+            return self._entities(cur, version_id, sorted(set(iris)))
+
     def _entities(self, cur, version_id: UUID, iris: list[str]) -> list[Entity]:
         if not iris:
             return []

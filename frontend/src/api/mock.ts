@@ -2,7 +2,7 @@
 // UI behaves like the real thing (lifecycle transitions, builds with live steps, comments).
 import * as D from "./mockData";
 import { compileClassSql, tableName } from "./types";
-import type { AiProgress, DomainSource, DriftIssue, RefreshChange, SnapshotTable, SourceFactsEntry, SourceInput,
+import type { AiProgress, DomainSource, DriftIssue, SearchOptions, RefreshChange, SnapshotTable, SourceFactsEntry, SourceInput,
   Analytics, ApiKey, AuditEntry, BuildRun, BuildStep, CatalogTable, ChecklistItem, ClassMapping, Comment, Config, ConnResult, Constraint,
   DatagraphApi, DomainSummary, DqColumnIssue, EntityDetail, GlossaryTerm, GraphStatus, Lock, MappingKpis, Me, NewDomainInput, OntoCheck,
   OntoClass, OntoDiff, Principal, Role, Rule, SearchHit, SourceKind, TableDetail, TablePreview, TableProfile, Task, TriplePage, TripleQuery,
@@ -376,9 +376,9 @@ export class MockApi implements DatagraphApi {
     return [{ label: "Mapping completion", value: "78%", ok: false, go: { screen: "mapping" } }, { label: "Ontology checks", value: "0 errors", ok: true, go: { screen: "ontology", arg: "checks" } }, { label: "Schema drift", value: "1 issue", ok: false, go: { screen: "metadata", arg: "fct_sales" } }];
   }
 
-  async search(_domain: string, q: string): Promise<SearchHit[]> { const t = q.toLowerCase(); return D.SEARCH.filter(h => !t || h.label.toLowerCase().includes(t) || h.id.toLowerCase().includes(t)); }
+  async search(_domain: string, q: string, opts?: SearchOptions): Promise<SearchHit[]> { const t = q.toLowerCase(); const typeName = opts?.type ? opts.type.split(/[#/]/).pop() : null; const ok = (v: string) => opts?.match === "exact" ? v.toLowerCase() === t : opts?.match === "starts_with" ? v.toLowerCase().startsWith(t) : v.toLowerCase().includes(t); return D.SEARCH.filter(h => (!typeName || h.type === typeName) && (!t || ok(h.label) || ok(h.id))); }
   async entity(_domain: string, id: string): Promise<EntityDetail> { return clone(D.ENTITIES[id] || D.ENTITIES["C-10482"]); }
-  async graphStatus(_domain: string): Promise<GraphStatus> { return { triples: "263,695", inferred: "23,207", entities: "12,445" }; }
+  async graphStatus(_domain: string): Promise<GraphStatus> { const counts = D.SEARCH.reduce<Record<string, number>>((a, h) => { a[h.type] = (a[h.type] ?? 0) + 1; return a; }, {}); return { triples: "263,695", inferred: "23,207", entities: "12,445", types: Object.entries(counts).map(([name, count]) => ({ name, iri: `http://polestar.ai/rgm#${name}`, count })) }; }
   async triples(_domain: string, qy: TripleQuery): Promise<TriplePage> {
     let rows = D.TRIPLES.filter(t => qy.filter === "all" || (qy.filter === "inferred" ? t[4] : !t[4])).filter(t => !qy.q || t.join(" ").toLowerCase().includes(qy.q.toLowerCase()));
     const ix = { subject: 0, predicate: 1, object: 2, inferred: 4 }[qy.sort];

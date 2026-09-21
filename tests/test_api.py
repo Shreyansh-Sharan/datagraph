@@ -79,6 +79,10 @@ def test_build_and_explore(client):
     assert hits[0]["iri"] == BASE + "Employee/1"
     entity = client.get(f"/versions/{v['id']}/graph/entity", params={"iri": BASE + "Employee/1"}).json()
     assert {a["predicate"] for a in entity["attributes"]} >= {EX + "name", EX + "salary"}
+    # neighbours come with their labels and types, so a graph view can name them
+    linked = {r["target"] for r in entity["outgoing"]} | {r["source"] for r in entity["incoming"]}
+    assert linked and {n["iri"] for n in entity["neighbours"]} == linked
+    assert all(n["label"] and n["types"] for n in entity["neighbours"])
     sub = client.get(f"/versions/{v['id']}/graph/neighbourhood", params={"iri": BASE + "Employee/1", "depth": 2}).json()
     assert len(sub["nodes"]) >= 4 and len(sub["edges"]) >= 3
     assert client.get(f"/versions/{v['id']}/graph/entity", params={"iri": "http://nope"}).status_code == 404

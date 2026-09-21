@@ -2,7 +2,7 @@
 // Methods with a settled contract call the API; the rest fall through to the mock so the
 // app stays usable while integration proceeds. Replace fallbacks method by method.
 import { MockApi } from "./mock";
-import type { AiProgress, AuditEntry, BuildRun, BuildStep, CatalogTable, ChecklistItem, DqColumnIssue, DriftIssue, GlossaryTerm, MappingKpis, OntoDiff, TableProfile, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, RefreshChange, SnapshotTable, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus } from "./types";
+import type { AiProgress, AuditEntry, BuildRun, SearchOptions, BuildStep, CatalogTable, ChecklistItem, DqColumnIssue, DriftIssue, GlossaryTerm, MappingKpis, OntoDiff, TableProfile, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, RefreshChange, SnapshotTable, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus } from "./types";
 import { tableName } from "./types";
 import { humanAction, relTime } from "./format";
 
@@ -405,23 +405,28 @@ export class RestApi extends MockApi {
   }
 
   private async activeVid(domain: string): Promise<string> { const d = await this.domain(domain); const v = d.versions.find(x => x.active) ?? d.versions[0]; return this.vid(domain, v.version); }
-  override async search(domain: string, q: string): Promise<SearchHit[]> {
-    const hits = await this.req<{ iri: string; label: string; types: string[] }[]>("GET", `/versions/${await this.activeVid(domain)}/graph/search?q=${encodeURIComponent(q)}&limit=20`);
+  override async search(domain: string, q: string, opts?: SearchOptions): Promise<SearchHit[]> {
+    const params = new URLSearchParams({ q, limit: "20", match: opts?.match ?? "contains" });
+    if (opts?.type) params.set("type", opts.type);
+    const hits = await this.req<{ iri: string; label: string; types: string[] }[]>("GET", `/versions/${await this.activeVid(domain)}/graph/search?${params}`);
     return hits.map(h => ({ id: h.iri, label: h.label, type: (h.types[0] ?? "").split(/[#/]/).pop() ?? "" }));
   }
   override async entity(domain: string, id: string): Promise<EntityDetail> {
-    const e = await this.req<{ iri: string; label: string; types: string[]; attributes: { predicate: string; value: string; datatype: string | null; inferred: boolean }[]; outgoing: { predicate: string; target: string; inferred: boolean }[]; incoming: { predicate: string; source: string; inferred: boolean }[] }>("GET", `/versions/${await this.activeVid(domain)}/graph/entity?iri=${encodeURIComponent(id)}`);
+    const e = await this.req<{ neighbours?: { iri: string; label: string; types: string[] }[]; iri: string; label: string; types: string[]; attributes: { predicate: string; value: string; datatype: string | null; inferred: boolean }[]; outgoing: { predicate: string; target: string; inferred: boolean }[]; incoming: { predicate: string; source: string; inferred: boolean }[] }>("GET", `/versions/${await this.activeVid(domain)}/graph/entity?iri=${encodeURIComponent(id)}`);
     const local = (iri: string) => iri.split(/[#/]/).pop() ?? iri;
+    const known = new Map((e.neighbours ?? []).map(n => [n.iri, n]));
+    const hit = (iri: string) => { const n = known.get(iri); return { id: iri, label: n?.label || local(iri), type: n?.types?.[0] ? local(n.types[0]) : "" }; };
     const group = <T extends { predicate: string }>(xs: T[], pick: (x: T) => string) => Object.entries(xs.reduce<Record<string, string[]>>((acc, x) => { (acc[x.predicate] ||= []).push(pick(x)); return acc; }, {}));
     return { id: e.iri, label: e.label, type: local(e.types[0] ?? ""), iri: e.iri,
       attrs: e.attributes.map(a => ({ k: local(a.predicate), v: a.value, dt: a.datatype ? `xsd:${local(a.datatype)}` : "", inferred: a.inferred })),
-      out: group(e.outgoing, x => x.target).map(([pred, ts]) => ({ pred: local(pred), targets: ts.map(t => ({ id: t, label: local(t), type: "" })) })),
-      inc: group(e.incoming, x => x.source).map(([pred, ts]) => ({ pred: local(pred), count: `${ts.length}`, targets: ts.slice(0, 20).map(t => ({ id: t, label: local(t), type: "" })) })), far: [] };
+      out: group(e.outgoing, x => x.target).map(([pred, ts]) => ({ pred: local(pred), targets: ts.map(hit) })),
+      inc: group(e.incoming, x => x.source).map(([pred, ts]) => ({ pred: local(pred), count: `${ts.length}`, targets: ts.slice(0, 20).map(hit) })), far: [] };
   }
   override async graphStatus(domain: string): Promise<GraphStatus> {
     const s = await this.req<{ triples: number; inferred: number; types?: Record<string, number> }>("GET", `/versions/${await this.activeVid(domain)}/graph/status`);
     const entities = Object.values(s.types ?? {}).reduce((a, b) => a + b, 0);   // one typed subject per entity
-    return { triples: s.triples.toLocaleString(), inferred: s.inferred.toLocaleString(), entities: entities.toLocaleString() };
+    const types = Object.entries(s.types ?? {}).map(([iri, count]) => ({ name: iri.split(/[#/]/).pop() ?? iri, iri, count })).sort((a, b) => b.count - a.count);
+    return { triples: s.triples.toLocaleString(), inferred: s.inferred.toLocaleString(), entities: entities.toLocaleString(), types };
   }
   override async triples(domain: string, q: TripleQuery): Promise<TriplePage> {
     const inferred = q.filter === "all" ? "" : `&inferred=${q.filter === "inferred"}`;

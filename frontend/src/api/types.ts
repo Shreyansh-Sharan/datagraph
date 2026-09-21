@@ -110,7 +110,9 @@ export interface EntityDetail {
   inc: { pred: string; count: string; targets: SearchHit[] }[];
   far: { pred: string; target: SearchHit }[]; // depth-2 neighbours
 }
-export interface GraphStatus { triples: string; inferred: string; entities: string }
+export interface GraphStatus { triples: string; inferred: string; entities: string; types: { name: string; iri: string; count: number }[] }
+export type SearchMatch = "contains" | "exact" | "starts_with";
+export interface SearchOptions { type?: string | null; match?: SearchMatch }   // type: a class IRI from GraphStatus.types
 export interface TripleRow { s: string; p: string; o: string; isIri: boolean; dt: string; inferred: boolean }
 export interface TripleQuery { q: string; filter: "all" | "asserted" | "inferred"; sort: "subject" | "predicate" | "object" | "inferred"; dir: "asc" | "desc"; limit: number; offset: number }
 export interface TriplePage { total: string; rows: TripleRow[] }
@@ -202,7 +204,7 @@ export interface DatagraphApi {
   cancelBuild(runId: string): Promise<BuildRun>;
   checklist(domain: string, version: number): Promise<ChecklistItem[]>;
 
-  search(domain: string, q: string): Promise<SearchHit[]>;
+  search(domain: string, q: string, opts?: SearchOptions): Promise<SearchHit[]>;
   entity(domain: string, id: string): Promise<EntityDetail>;
   graphStatus(domain: string): Promise<GraphStatus>;
   triples(domain: string, query: TripleQuery): Promise<TriplePage>;
