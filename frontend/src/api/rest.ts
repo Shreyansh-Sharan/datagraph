@@ -22,6 +22,7 @@ interface BackendSummary extends BackendVersion {
   lease: { holder: string; expires_at: string | null; expired: boolean } | null;
 }
 interface BackendDomain { name: string; description: string | null; base_iri: string; review_quorum: number; active_version_id?: string | null; connection_id?: string | null; ai_connection_id?: string | null; default_catalog?: string | null; default_schema?: string | null; schemas?: string[]; sources?: { connection_id: string | null; catalog: string | null; schemas: string[] }[]; materialization?: string; target_schema?: string | null; mcp_policy?: { exposed?: boolean; disabled_tools?: string[] } }
+interface AiJob<T> { id: string; status: "running" | "succeeded" | "failed"; progress: string | null; started_at: string | null; progress_at: string | null; result: T | null; error: string | null }
 interface BackendSpec { base_iri: string; classes: { class_iri: string; table: string | null; sql_query: string | null; key_columns: string[]; iri_template: string | null; attributes: { property_iri: string; column: string; datatype: string | null; language: string | null }[]; excluded: string[] }[]; relations: { property_iri: string; source_class: string; target_class: string; source_key: string[] | null; target_key: string[] | null; table: string | null; sql_query: string | null; direction: string }[] }
 interface BackendCard { name: string; version_count: number; active_version: { version: number } | null; latest_version: { version: number; status: string } | null; triples: number; last_build: { status: string; finished_at: string | null; triple_count: number | null } | null; source: { kind: string; connection: string | null; catalog: string | null; schema: string | null }; mcp: { exposed: boolean; disabled_tools: string[] } }
 
@@ -258,19 +259,30 @@ export class RestApi extends MockApi {
     const entry = spec.classes.find(c => c.class_iri === iri); if (!entry) throw new Error(`${cls} is not mapped to a table yet`);
     return { spec, entry, names };
   }
-  /** Starts a long AI task in the background and polls its job, relaying each status, until it settles. */
-  private async aiJob<T>(path: string, body: unknown, onProgress?: (p: AiProgress) => void): Promise<T> {
-    type Job = { id: string; status: "running" | "succeeded" | "failed"; progress: string | null; started_at: string | null; progress_at: string | null; result: T | null; error: string | null };
-    let job = await this.req<Job>("POST", `${path}?background=true`, body);
+  /** Follows a background job, relaying each new status, until it settles. */
+  private async followJob<T>(job: AiJob<T>, onProgress?: (p: AiProgress) => void): Promise<AiJob<T>> {
     let last = "";
+    const relay = (j: AiJob<T>) => { if (j.status === "running" && j.progress && j.progress !== last) { last = j.progress; onProgress?.({ progress: j.progress, startedAt: j.started_at, progressAt: j.progress_at, status: "running" }); } };
     const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
+    relay(job);
     while (job.status === "running") {
       await wait(this.ropts.pollMs ?? 2000);
-      job = await this.req<Job>("GET", `/jobs/${job.id}`);
-      if (job.status === "running" && job.progress && job.progress !== last) { last = job.progress; onProgress?.({ progress: job.progress, startedAt: job.started_at, progressAt: job.progress_at, status: "running" }); }
+      job = await this.req<AiJob<T>>("GET", `/jobs/${job.id}`);
+      relay(job);
     }
+    return job;
+  }
+  /** Starts a long AI task in the background and follows its job to the result (or the error). */
+  private async aiJob<T>(path: string, body: unknown, onProgress?: (p: AiProgress) => void): Promise<T> {
+    const job = await this.followJob(await this.req<AiJob<T>>("POST", `${path}?background=true`, body), onProgress);
     if (job.status === "failed") throw new Error(job.error ?? "The AI task failed");
     return job.result as T;
+  }
+  override async runningAiJob(domain: string, version: number, kind: "suggest-mapping" | "draft-ontology", onProgress?: (p: AiProgress) => void): Promise<AiProgress | null> {
+    const latest = await this.req<AiJob<unknown> | null>("GET", `/versions/${this.vid(domain, version)}/jobs?kind=${kind}`);
+    if (!latest || latest.status !== "running") return null;
+    const job = await this.followJob(latest, onProgress);
+    return { progress: job.status === "failed" ? (job.error ?? "failed") : (job.progress ?? "Done"), startedAt: job.started_at, progressAt: job.progress_at, status: job.status };
   }
   override async draftOntology(domain: string, version: number, opts: { ai: boolean; description?: string; tables?: string[] }, onProgress?: (p: AiProgress) => void): Promise<{ classes: number; properties: number; warnings: number }> {
     const d = await this.domain(domain); const vid = this.vid(domain, version);

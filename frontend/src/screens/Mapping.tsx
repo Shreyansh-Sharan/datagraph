@@ -31,6 +31,15 @@ export function Mapping() {
   const [aiStatus, setAiStatus] = useState<{ progress: string; since: number } | null>(null);
   const [tick, setTick] = useState(0);
   useEffect(() => { if (!aiStatus) return; const t = setInterval(() => setTick(x => x + 1), 1000); return () => clearInterval(t); }, [aiStatus]);
+  // A suggestion started earlier (or from another tab) is still running on the server: show it and reload when it ends.
+  useEffect(() => {
+    let alive = true;
+    api.runningAiJob(domain.name, v, "suggest-mapping", p => { if (alive) setAiStatus({ progress: p.progress, since: p.startedAt ? new Date(p.startedAt).getTime() : Date.now() }); })
+      .then(end => { if (!alive || !end) return; setAiStatus(null); mapping.reload(); kpis.reload(); say(end.status === "succeeded" ? "AI suggestion finished: mapping updated" : `AI suggestion failed: ${end.progress}`); })
+      .catch(() => { /* status is a courtesy */ });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [domain.name, v]);
 
   const list = classes.data ?? []; const M = mapping.data ?? {};
   const sel = list.find(c => c.id === clsId) ?? list[0];

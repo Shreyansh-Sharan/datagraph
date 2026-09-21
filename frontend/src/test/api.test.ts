@@ -619,8 +619,30 @@ describe("AI tasks report progress", () => {
     const seen: string[] = [];
     const r = await a.suggestMapping("aw", 1, p => seen.push(p.progress));
     expect(r).toEqual({ classes: 66, relations: 40 });
-    expect(seen).toEqual(["Describing table 3 of 68: customer", "Asking the AI provider to map 66 classes onto 68 table(s)"]);
+    expect(seen).toEqual(["Queued", "Describing table 3 of 68: customer", "Asking the AI provider to map 66 classes onto 68 table(s)"]);
     await expect(a.draftOntology("aw", 1, { ai: true }, () => {})).rejects.toThrow(/returned no JSON/);
+  });
+  it("rest: picks up a suggestion already running for the version and follows it to the end", async () => {
+    const vid = "eeeeeeee-0000-0000-0000-000000000002"; let polls = 0;
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      const key = `${init?.method ?? "GET"} ${url}`;
+      const routes: Record<string, unknown> = {
+        "GET /api/auth/config": { mode: "header", header: "X-Actor", source: { kind: "databricks", catalog: "finops_metadata" } },
+        "GET /api/domains/aw": { name: "aw", description: "", base_iri: "http://p/aw/", review_quorum: 1, materialization: "none", sources: [] },
+        "GET /api/domains/aw/versions/summary": [{ id: vid, version: 1, status: "draft", has_ontology: true, has_mapping: false, rule_count: 0, constraint_count: 0, created_at: "2026-09-21T10:00:00Z", created_by: "alice", is_active: false, stats: { classes: 2, attributes: 2, relationships: 1, bindings: 0, rules: 0, constraints: 0, triples: 0 }, mapping: null, last_build: null, review: null, lease: null }],
+        "GET /api/domains/cards": [{ name: "aw", version_count: 1, active_version: null, latest_version: { version: 1, status: "draft" }, triples: 0, last_build: null, source: { kind: "databricks", connection: null, catalog: null, schema: null, schemas: [] }, source_count: 0, mcp: { exposed: true, disabled_tools: [] } }],
+        [`GET /api/versions/${vid}/jobs?kind=suggest-mapping`]: { id: "job-9", kind: "suggest-mapping", version_id: vid, status: "running", progress: "Describing table 40 of 68: product", started_at: "2026-09-21T10:00:00Z", progress_at: "2026-09-21T10:01:40Z", finished_at: null, result: null, error: null },
+      };
+      if (key === "GET /api/jobs/job-9") { polls++; return new Response(JSON.stringify({ id: "job-9", kind: "suggest-mapping", version_id: vid, status: polls >= 2 ? "succeeded" : "running", progress: polls >= 2 ? "Done" : "Asking the AI provider to map 66 classes onto 68 table(s)", started_at: "2026-09-21T10:00:00Z", progress_at: "2026-09-21T10:03:00Z", finished_at: polls >= 2 ? "2026-09-21T10:05:00Z" : null, result: polls >= 2 ? { classes: 66, relations: 40 } : null, error: null })); }
+      return new Response(JSON.stringify(routes[key] ?? { detail: `no route ${key}` }), { status: key in routes ? 200 : 404 });
+    }) as typeof fetch;
+    const a = new RestApi({ base: "/api", pollMs: 1 }); await a.domain("aw");
+    const seen: string[] = [];
+    const end = await a.runningAiJob("aw", 1, "suggest-mapping", p => seen.push(p.progress));
+    expect(seen[0]).toBe("Describing table 40 of 68: product");
+    expect(seen).toContain("Asking the AI provider to map 66 classes onto 68 table(s)");
+    expect(end).toMatchObject({ status: "succeeded" });
+    expect(await new MockApi().runningAiJob("rgm", 3, "suggest-mapping")).toBeNull();
   });
   it("mock: reports a couple of stages too", async () => {
     const api = new MockApi({ latency: 0 });
