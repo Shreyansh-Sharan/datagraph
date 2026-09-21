@@ -90,7 +90,8 @@ function StageInner({ nodes: allNodes, edges: allEdges, height, dotted, onSelect
   const [focused, setFocused] = useState(allNodes.length > FOCUS_ABOVE);
   const flow = useReactFlow();
   const selectedId = allNodes.find(n => n.selected)?.id;
-  const focusOn = focused && layout !== "given" && selectedId !== undefined && allNodes.length > 1;
+  const hasNeighbours = selectedId !== undefined && allEdges.some(e => e.from === selectedId || e.to === selectedId);
+  const focusOn = focused && layout !== "given" && selectedId !== undefined && allNodes.length > 1 && hasNeighbours;   // a lone class is no neighbourhood: show everything
   const { nodes, edges } = useMemo(() => {
     if (!focusOn) return { nodes: allNodes, edges: allEdges };
     const keep = new Set([selectedId!, ...allEdges.filter(e => e.from === selectedId || e.to === selectedId).flatMap(e => [e.from, e.to])]);
@@ -116,7 +117,8 @@ function StageInner({ nodes: allNodes, edges: allEdges, height, dotted, onSelect
   const relayout = useCallback(() => setDirection(d => (d === "TB" ? "LR" : "TB")), []);
   useEffect(() => { const t = setTimeout(() => flow.fitView({ padding: 0.15, duration: 200, maxZoom: 1.25 }), 30); return () => clearTimeout(t); }, [flow, nodes.length, direction, layout, selectedId, focusOn]);
   const focus = layout === "given" || allNodes.length <= 1 ? undefined : { on: focusOn, toggle: () => setFocused(f => !f) };
-  const shown = focusOn ? `${nodes.length} of ${allNodes.length} shown · ${allNodes.find(n => n.id === selectedId)?.label ?? ""} and its neighbours` : null;
+  const selectedLabel = allNodes.find(n => n.id === selectedId)?.label ?? "";
+  const shown = focusOn ? `${nodes.length} of ${allNodes.length} shown · ${selectedLabel} and its neighbours` : focused && selectedId !== undefined && !hasNeighbours && allNodes.length > FOCUS_ABOVE ? `${selectedLabel} has no relationships · showing all ${allNodes.length}` : null;
 
   return (
     <div className={`stage ${dotted ? "dotted" : ""}`} style={{ height }}>

@@ -17,6 +17,20 @@ export function Ontology() {
   const classes = useLoad(() => api.ontology(domain.name, version!.version).catch(e => { if (/no ontology/i.test(String(e))) return []; throw e; }), [domain.name, version?.version]);
   const checks = useLoad(() => api.ontologyChecks(domain.name, version!.version).catch(() => []), [domain.name, version?.version]);
   const [draft, setDraft] = useState<"ai" | "tables" | null>(null);
+  const [running, setRunning] = useState<{ progress: string; since: number } | null>(null);
+  const [tick, setTick] = useState(0);
+  useEffect(() => { if (!running) return; const t = setInterval(() => setTick(x => x + 1), 1000); return () => clearInterval(t); }, [running]);
+  // A draft started earlier (the dialog was closed, or another tab) is still running on the server: show it, reload when it ends.
+  useEffect(() => {
+    let alive = true;
+    api.runningAiJob(domain.name, version!.version, "draft-ontology", p => { if (alive) setRunning({ progress: p.progress, since: p.startedAt ? new Date(p.startedAt).getTime() : Date.now() }); })
+      .then(end => { if (!alive || !end) return; setRunning(null); classes.reload(); checks.reload(); say(end.status === "succeeded" ? "AI draft finished: ontology replaced" : `AI draft failed: ${end.progress}`); })
+      .catch(() => { /* status is a courtesy */ });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [domain.name, version?.version]);
+  const runningFor = running ? Math.max(0, Math.round((Date.now() - running.since) / 1000)) : 0;
+  void tick;
   const list = classes.data ?? [];
   const drafted = (r: { classes: number; properties: number; warnings: number }) => { classes.reload(); checks.reload(); setDraft(null); say(`Drafted ${r.classes} classes and ${r.properties} properties${r.warnings ? ` · ${r.warnings} warning${r.warnings === 1 ? "" : "s"} to review` : ""}`); };
   const sel = list.find(c => c.id === clsId) ?? list[0];
@@ -33,6 +47,7 @@ export function Ontology() {
         <div className="actions"><Button onClick={() => say("Import an ontology file (Turtle, JSON-LD, RDF/XML)")}>Import</Button><Button disabled={!editable} title={editable ? undefined : "Take the lease on a draft to change the ontology"} onClick={() => setDraft("ai")}>Draft with AI</Button><Button variant="primary" disabled={!editable} title={editable ? undefined : "Take the lease on a draft to change the ontology"} onClick={() => setDraft("tables")}>Draft from tables</Button></div>
       </div>
       <div style={{ marginBottom: 14 }}><Tabs<View> value={(view as View) || "map"} onChange={v => setView(v)} items={[{ id: "map", label: "Map" }, { id: "list", label: "Classes" }, { id: "checks", label: `Checks · ${checks.data?.length ?? 0}` }]} /></div>
+      {running && <div className="notice" role="status" aria-live="polite" style={{ marginBottom: 14 }}><div className="row" style={{ gap: 8, fontWeight: 600 }}><Spinner blue />Drafting the ontology with AI · {running.progress} · {runningFor >= 60 ? `${Math.floor(runningFor / 60)} min ${runningFor % 60} s` : `${runningFor} s`}</div><div className="muted xs" style={{ marginTop: 4 }}>The map below is the current ontology; it is replaced when the draft finishes.</div></div>}
       {classes.loading && <Skeleton h={520} />}
       {classes.error && <ErrorNotice error={classes.error} />}
       {!classes.loading && !classes.error && list.length === 0 && (

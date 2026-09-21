@@ -263,3 +263,20 @@ describe("Mapping screen · AI status", () => {
     expect(await screen.findByText(/AI suggested bindings/)).toBeInTheDocument();
   });
 });
+
+
+describe("Ontology screen · running draft", () => {
+  it("shows a draft already running on the server and reloads when it ends", async () => {
+    class Busy extends MockApi {
+      override async runningAiJob(_d: string, _v: number, kind: "suggest-mapping" | "draft-ontology", onProgress?: (p: { progress: string; startedAt: string | null; progressAt: string | null; status: "running" | "succeeded" | "failed" }) => void) {
+        if (kind !== "draft-ontology") return null;
+        onProgress?.({ progress: "Describing table 24 of 68: location", startedAt: null, progressAt: null, status: "running" });
+        await new Promise(r => setTimeout(r, 80));
+        return { progress: "Done", startedAt: null, progressAt: null, status: "succeeded" as const };
+      }
+    }
+    renderAt("#/d/rgm/ontology?v=3", new Busy());
+    expect(await screen.findByText(/Describing table 24 of 68/)).toBeInTheDocument();
+    expect(await screen.findByText("AI draft finished: ontology replaced")).toBeInTheDocument();
+  });
+});

@@ -48,6 +48,12 @@ describe("Stage", () => {
 
 
 describe("Stage focus", () => {
+  it("shows everything when the selected class has no relationships", () => {
+    const many = Array.from({ length: 40 }, (_, i) => ({ id: `C${i}`, label: `Class${i}`, glyph: "C", x: 0, y: 0, fill: "#2249FF", selected: i === 7 }));
+    render(<Stage nodes={many} edges={[{ from: "C0", to: "C1", label: "a" }]} height={400} />);
+    expect(document.querySelectorAll(".react-flow__node").length).toBe(40);
+    expect(screen.getByText(/Class7 has no relationships · showing all 40/)).toBeInTheDocument();
+  });
   it("opens a big graph on the selected node's neighbourhood and can show everything", async () => {
     const many = Array.from({ length: 40 }, (_, i) => ({ id: `C${i}`, label: `Class${i}`, glyph: "C", x: 0, y: 0, fill: "#2249FF", selected: i === 0 }));
     const links = [{ from: "C0", to: "C1", label: "a" }, { from: "C2", to: "C0", label: "b" }, { from: "C5", to: "C6", label: "c" }];
