@@ -2,7 +2,7 @@
 // UI behaves like the real thing (lifecycle transitions, builds with live steps, comments).
 import * as D from "./mockData";
 import { compileClassSql, tableName } from "./types";
-import type { DomainSource, SourceFactsEntry, SourceInput,
+import type { DomainSource, RefreshChange, SnapshotTable, SourceFactsEntry, SourceInput,
   Analytics, ApiKey, AuditEntry, BuildRun, BuildStep, CatalogTable, ChecklistItem, ClassMapping, Comment, Config, ConnResult, Constraint,
   DatagraphApi, DomainSummary, DqColumnIssue, EntityDetail, GlossaryTerm, GraphStatus, Lock, MappingKpis, Me, NewDomainInput, OntoCheck,
   OntoClass, OntoDiff, Principal, Role, Rule, SearchHit, SourceKind, TableDetail, TablePreview, TableProfile, Task, TriplePage, TripleQuery,
@@ -20,6 +20,7 @@ export class MockApi implements DatagraphApi {
   private live: Record<string, { run: BuildRun; timers: ReturnType<typeof setTimeout>[] }> = {};
   private nextRun = 0xb105;
   private conns: ConnectionRec[] = [];
+  private snapshots: Record<string, Set<string>> = {};   // "domain:version" -> qualified table names imported on top of the design data
   readonly kind: SourceKind;
   readonly role: Role;
   protected mockOpts: MockOptions;
@@ -218,11 +219,27 @@ export class MockApi implements DatagraphApi {
       return schemas.map(sch => ({ id: dbx && cat ? `${cat}.${sch}` : sch, label: `${c?.name ?? "deployment default"} · ${dbx && cat ? `${cat}.` : ""}${sch}` })); });
   }
   async catalogSchemas(domain: string) { return [...new Set([...Object.keys(D.CATALOG), ...this.dom(domain).schemas])]; }
-  async catalogTables(_domain: string, schema: string): Promise<CatalogTable[]> {
+  async catalogTables(domain: string, schema: string, version?: number): Promise<CatalogTable[]> {
     if (this.kind === "databricks" && this.mockOpts.catalogDenied) throw new Error("[INSUFFICIENT_PERMISSIONS] User does not have USE CATALOG on Catalog 'finops_metadata'.");
     const plain = schema.split(".").pop() ?? schema;
-    return this.wait((D.CATALOG[plain] || []).map(([name, cols, imported]) => ({ name, cols, imported, cls: D.TABLE_CLASS[name] || null })));
+    const extra = version !== undefined ? this.snapshots[`${domain}:${version}`] : undefined;
+    return this.wait((D.CATALOG[plain] || []).map(([name, cols, imported]) => ({ name, cols, imported: imported || !!extra?.has(`${schema}.${name}`), cls: D.TABLE_CLASS[name] || null })));
   }
+  async snapshot(domain: string, version: number): Promise<SnapshotTable[]> {
+    const { d } = this.ver(domain, version);
+    const design = d.sources.flatMap(src => src.schemas.flatMap(sch => (D.CATALOG[sch] || []).filter(([, , imported]) => imported).map(([name, cols]) => ({ table: `${src.catalog ? src.catalog + "." : ""}${sch}.${name}`, columns: cols, comment: null, primaryKey: [] }))));
+    const extra = [...(this.snapshots[`${domain}:${version}`] ?? [])].map(t => ({ table: t, columns: D.CATALOG[t.split(".").slice(-2)[0]]?.find(([n]) => n === t.split(".").pop())?.[1] ?? 0, comment: null, primaryKey: [] }));
+    return [...design, ...extra];
+  }
+  async importTables(domain: string, version: number, schema: string, tables: string[]): Promise<SnapshotTable[]> {
+    const { v } = this.ver(domain, version);
+    if (v.status !== "draft") throw new Error("Only draft versions can be edited");
+    if (v.lease && v.lease.holder !== (await this.me()).name) throw new Error(`Version is being edited by ${v.lease.holder}`);
+    const set = (this.snapshots[`${domain}:${version}`] ||= new Set());
+    for (const t of tables) set.add(`${schema}.${t}`);
+    return this.snapshot(domain, version);
+  }
+  async refreshSnapshot(_domain: string, _version: number): Promise<RefreshChange[]> { return []; }
   async tableDetail(domain: string, schemaId: string, table: string): Promise<TableDetail> {
     const schema = schemaId.split(".").pop() ?? schemaId;
     const d = this.dom(domain); const ct = D.COLUMNS[table] || D.GENERIC_COLS;

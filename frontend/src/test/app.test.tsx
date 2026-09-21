@@ -150,3 +150,24 @@ describe("New domain dialog", () => {
     expect(await screen.findByText("Domain adventureworks created")).toBeInTheDocument();
   });
 });
+
+
+describe("Metadata screen · scan", () => {
+  it("imports the ticked tables into the draft's snapshot", async () => {
+    const api = new MockApi();
+    renderAt("#/d/rgm/metadata?v=3", api);
+    const user = userEvent.setup();
+    expect(await screen.findByText("8 in snapshot")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Import selected" })).toBeDisabled();
+    await user.click(screen.getByLabelText("Select dim_date"));
+    await user.click(screen.getByLabelText("Select fct_returns"));
+    await user.click(screen.getByRole("button", { name: "Import 2 selected" }));
+    expect(await screen.findByText("Imported 2 tables into the snapshot of v3")).toBeInTheDocument();
+    expect(await screen.findByText("10 in snapshot")).toBeInTheDocument();
+  });
+  it("cannot import into a published version", async () => {
+    renderAt("#/d/hr/metadata?v=3");
+    expect(await screen.findByRole("button", { name: "Import selected" })).toBeDisabled();
+    expect(screen.getByText(/Only the lease holder of a draft can import/)).toBeInTheDocument();
+  });
+});

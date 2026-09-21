@@ -95,6 +95,14 @@ session). When the module is not configured or cannot browse, a typed schema nam
 means every schema it offers. The Metadata picker lists every source's schemas, labelled
 `connection · catalog.schema`.
 
+### The scan (metadata snapshot)
+
+The Metadata screen browses the source's tables per schema and imports the ticked ones into the
+draft's snapshot (`POST /versions/{id}/metadata/import` with `schema_name` and `tables`): columns,
+types, keys and comments are captured, and the list marks what the snapshot holds
+(`GET /versions/{id}/metadata`). "Refresh snapshot" re-reads the source and reports added, removed
+or retyped columns. Both need a draft whose lease you hold, like every other edit.
+
 ### The version mechanism
 
 `GET /domains/{name}/versions/summary` is the one call behind the Versions and Overview screens: per

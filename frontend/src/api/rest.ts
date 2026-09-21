@@ -2,7 +2,7 @@
 // Methods with a settled contract call the API; the rest fall through to the mock so the
 // app stays usable while integration proceeds. Replace fallbacks method by method.
 import { MockApi } from "./mock";
-import type { AuditEntry, BuildRun, CatalogTable, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus } from "./types";
+import type { AuditEntry, BuildRun, CatalogTable, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, RefreshChange, SnapshotTable, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus } from "./types";
 import { tableName } from "./types";
 import { humanAction, relTime } from "./format";
 
@@ -178,9 +178,22 @@ export class RestApi extends MockApi {
     const q = cfg.sourceKind === "databricks" && d.catalog ? `?catalog=${encodeURIComponent(d.catalog)}` : "";
     return this.req<string[]>("GET", `/catalog/schemas${q}`);
   }
-  override async catalogTables(_domain: string, schema: string): Promise<CatalogTable[]> {
-    const names = await this.req<string[]>("GET", `/catalog/tables?schema_name=${encodeURIComponent(schema)}`);
-    return names.map(n => ({ name: n.split(".").pop() ?? n, cols: 0, imported: false, cls: null }));
+  override async catalogTables(domain: string, schema: string, version?: number): Promise<CatalogTable[]> {
+    const [names, snap] = await Promise.all([this.req<string[]>("GET", `/catalog/tables?schema_name=${encodeURIComponent(schema)}`), version !== undefined ? this.snapshot(domain, version).catch(() => [] as SnapshotTable[]) : Promise.resolve([] as SnapshotTable[])]);
+    const held = new Map(snap.map(t => [t.table.toLowerCase(), t]));
+    return names.map(n => { const name = n.split(".").pop() ?? n; const t = held.get(`${schema}.${name}`.toLowerCase()) ?? held.get(name.toLowerCase()); return { name, cols: t?.columns ?? 0, imported: !!t, cls: null }; });
+  }
+  private toSnapshot(t: { table: string; comment: string | null; columns: unknown[]; primary_key: string[]; captured_at?: string | null }): SnapshotTable {
+    return { table: t.table, columns: t.columns.length, comment: t.comment, primaryKey: t.primary_key ?? [], capturedAt: t.captured_at ?? null };
+  }
+  override async snapshot(domain: string, version: number): Promise<SnapshotTable[]> {
+    return (await this.req<Parameters<RestApi["toSnapshot"]>[0][]>("GET", `/versions/${this.vid(domain, version)}/metadata`)).map(t => this.toSnapshot(t));
+  }
+  override async importTables(domain: string, version: number, schema: string, tables: string[]): Promise<SnapshotTable[]> {
+    return (await this.req<Parameters<RestApi["toSnapshot"]>[0][]>("POST", `/versions/${this.vid(domain, version)}/metadata/import`, { tables, schema_name: schema })).map(t => this.toSnapshot(t));
+  }
+  override async refreshSnapshot(domain: string, version: number): Promise<RefreshChange[]> {
+    return this.req<RefreshChange[]>("POST", `/versions/${this.vid(domain, version)}/metadata/refresh`);
   }
   override async tableDetail(_domain: string, schema: string, table: string): Promise<TableDetail> {
     const cfg = this.cfg ?? await this.config();

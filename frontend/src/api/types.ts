@@ -70,6 +70,8 @@ export interface Comment { who: string; when: string; text: string }
 
 // -- catalog / metadata ----------------------------------------------------------
 export interface CatalogTable { name: string; cols: number; imported: boolean; cls: string | null }
+export interface SnapshotTable { table: string; columns: number; comment: string | null; primaryKey: string[]; capturedAt?: string | null }   // one table in a version's metadata snapshot
+export interface RefreshChange { table: string; missing: boolean; added: string[]; removed: string[]; modified: { column: string; from: string; to: string }[]; keys_changed: boolean }
 export interface CatalogColumn { name: string; type: string; comment: string; key: "pk" | "fk" | null; keyInferred: boolean }
 export interface TableDetail { name: string; fullName: string; comment: string; columns: CatalogColumn[] }
 export interface TableProfile { rows: string; fresh: string; dup: string; cols: Record<string, [number, number]> } // [null %, distinct]
@@ -157,7 +159,10 @@ export interface DatagraphApi {
 
   schemas(domain: string): Promise<{ id: string; label: string }[]>;   // the domain's own schemas, labelled for the picker
   catalogSchemas(domain: string): Promise<string[]>;                     // what the source offers, for choosing them
-  catalogTables(domain: string, schema: string): Promise<CatalogTable[]>;
+  catalogTables(domain: string, schema: string, version?: number): Promise<CatalogTable[]>;   // with a version: marks what its snapshot holds
+  snapshot(domain: string, version: number): Promise<SnapshotTable[]>;
+  importTables(domain: string, version: number, schema: string, tables: string[]): Promise<SnapshotTable[]>;   // the scan: capture columns, keys and comments into the draft
+  refreshSnapshot(domain: string, version: number): Promise<RefreshChange[]>;
   tableDetail(domain: string, schema: string, table: string): Promise<TableDetail>;
   tableProfile(domain: string, table: string): Promise<TableProfile>;
   tableDq(domain: string, table: string): Promise<DqColumnIssue[]>;

@@ -10,11 +10,13 @@ const BLUE = "#2249FF", ORANGE = "#FF7000", GREY = "#B3B3B7", DARK = "#1636E0";
 
 export function Metadata() {
   const { api, config, say } = useApp();
-  const { domain, version } = useDomain();
+  const { domain, version, editable } = useDomain();
   const go = useGo();
   const dbx = config.sourceKind === "databricks";
   const [schemaParam, setSchema] = useParam("schema", "");
-  const [table, setTable] = useParam("table", "dim_customer");
+  const [tableParam, setTable] = useParam("table", "");
+  const [selected, setSelected] = useState<string[]>([]);
+  const [importing, setImporting] = useState(false);
   const [tab, setTab] = useParam("tab", "columns");
   const [gq, setGq] = useParam("gq", "");
   const [search, setSearch] = useState("");
@@ -25,8 +27,9 @@ export function Metadata() {
 
   const schemas = useLoad(() => api.schemas(domain.name), [domain.name]);
   const schema = schemaParam || schemas.data?.[0]?.id || "";
-  const tables = useLoad(() => api.catalogTables(domain.name, schema), [domain.name, schema]);
-  const detail = useLoad(() => api.tableDetail(domain.name, schema, table), [domain.name, schema, table]);
+  const tables = useLoad(() => schema ? api.catalogTables(domain.name, schema, version?.version) : Promise.resolve([]), [domain.name, schema, version?.version]);
+  const table = tableParam || tables.data?.[0]?.name || "";
+  const detail = useLoad(() => table ? api.tableDetail(domain.name, schema, table) : Promise.resolve(null), [domain.name, schema, table]);
   const profile = useLoad(() => profiled ? api.tableProfile(domain.name, table) : Promise.resolve(null), [domain.name, table, profiled]);
   const dq = useLoad(() => api.tableDq(domain.name, table), [domain.name, table]);
   const glossary = useLoad(() => api.glossary(domain.name), [domain.name]);
@@ -54,6 +57,19 @@ export function Metadata() {
   const profileCols = profiled ? " 1.1fr .8fr 1fr" : "";
   const gridCols = `1.5fr .8fr 1.8fr .9fr${profileCols}`;
 
+  const toggle = (name: string) => setSelected(sel => (sel.includes(name) ? sel.filter(x => x !== name) : [...sel, name]));
+  const importSelected = async () => {
+    if (!version || !selected.length || importing) return;
+    setImporting(true);
+    try { await api.importTables(domain.name, version.version, schema, selected); say(`Imported ${selected.length} table${selected.length === 1 ? "" : "s"} into the snapshot of v${version.version}`); setSelected([]); tables.reload(); }
+    catch (e) { say(e instanceof Error ? e.message : String(e)); }
+    finally { setImporting(false); }
+  };
+  const refresh = async () => {
+    if (!version) return;
+    try { const changes = (await api.refreshSnapshot(domain.name, version.version)).filter(c => c.missing || c.added.length || c.removed.length || c.modified.length || c.keys_changed); tables.reload(); detail.reload(); say(changes.length ? `Snapshot refreshed · ${changes.length} table${changes.length === 1 ? "" : "s"} changed: ${changes.map(c => c.table.split(".").pop()).join(", ")}` : "Snapshot refreshed · no changes"); }
+    catch (e) { say(e instanceof Error ? e.message : String(e)); }
+  };
   const applyDiff = (d: { column: string; action: string }) => {
     if (d.action === "Bind in Mapping" || d.action === "Open in Mapping") return go("mapping", { cls: cls ?? "" });
     setApplied(a => [...a, `${table}:${d.column}`]); say(`${d.action}: ${d.column} → ${cls || "new class"} (draft v${version?.version})`);
@@ -63,7 +79,11 @@ export function Metadata() {
     <>
       <div className="page-head">
         <div><h1>Metadata</h1><p>Catalog snapshot for {domain.name} v{version?.version} from {dbx ? "Databricks" : "Postgres"}. Profile tables, keep the glossary current, and push changes into the ontology.</p></div>
-        <div className="actions"><Button onClick={() => { tables.reload(); say("Snapshot refreshed") }}>Refresh snapshot</Button><Button variant="primary" onClick={() => say(`Imported ${table} into the snapshot`)}>Import selected</Button></div>
+        <div className="actions">
+          {!editable && <span className="muted small">Only the lease holder of a draft can import or refresh.</span>}
+          <Button onClick={refresh} disabled={!editable}>Refresh snapshot</Button>
+          <Button variant="primary" onClick={importSelected} disabled={!editable || !selected.length || importing}>{importing && <Spinner />}{selected.length ? `Import ${selected.length} selected` : "Import selected"}</Button>
+        </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "280px minmax(0,1fr)", gap: 20, alignItems: "start" }}>
         <Card flush style={{ position: "sticky", top: 0 }}>
@@ -75,11 +95,14 @@ export function Metadata() {
           {tables.error && <div style={{ padding: 12 }}><ErrorNotice error={tables.error} action={<span className="small">Ask the workspace admin for USE CATALOG / USE SCHEMA / SELECT on this catalog.</span>} /></div>}
           {tables.loading && <div style={{ padding: 12, display: "grid", gap: 8 }}><Skeleton h={30} /><Skeleton h={30} /><Skeleton h={30} /></div>}
           {catList.filter(t => !search || t.name.includes(search.toLowerCase())).map(t => { const on = t.name === (table || catList[0]?.name); return (
-            <a key={t.name} href="#" onClick={e => { e.preventDefault(); setTable(t.name); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", borderTop: "1px solid var(--line-2)", color: "var(--ink)", background: on ? "var(--blue-soft)" : "transparent", textDecoration: "none" }}>
+            <div key={t.name} className="row" style={{ gap: 0, borderTop: "1px solid var(--line-2)", background: on ? "var(--blue-soft)" : undefined }}>
+              <input type="checkbox" aria-label={`Select ${t.name}`} checked={selected.includes(t.name)} onChange={() => toggle(t.name)} disabled={!editable || t.imported} title={t.imported ? "Already in the snapshot" : !editable ? "Only the lease holder of a draft can import" : "Select for import"} style={{ marginLeft: 12 }} />
+            <a href="#" onClick={e => { e.preventDefault(); setTable(t.name); }} style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 10, padding: "9px 14px 9px 10px", color: "var(--ink)", background: on ? "var(--blue-soft)" : "transparent", textDecoration: "none" }}>
               <Icon name="metadata" stroke={on ? BLUE : "#7A7A80"} />
               <span style={{ flex: 1, minWidth: 0 }}><span className="mono" style={{ display: "block", fontSize: 12, fontWeight: on ? 600 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</span><span className="muted-2" style={{ display: "block", fontSize: 11 }}>{t.cols} cols · {t.cls ?? "no class"}</span></span>
               {t.imported && <Dot color={BLUE} title="In snapshot" />}
-            </a>); })}
+            </a>
+            </div>); })}
         </Card>
         <Card flush>
           <div style={{ padding: "16px 20px 0", display: "flex", alignItems: "flex-start", gap: 16 }}>

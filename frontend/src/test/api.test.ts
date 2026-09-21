@@ -333,3 +333,50 @@ describe("several sources per domain", () => {
     expect(calls).toContain('POST /api/domains {"name":"hr","description":"","base_iri":"http://p/hr/","review_quorum":1,"ai_connection_id":"ai-1","sources":[{"connection_id":"wh","catalog":null,"schemas":[]}]}');
   });
 });
+
+
+describe("metadata snapshot (scan)", () => {
+  it("mock: importing tables puts them in the version's snapshot and marks them in the catalog list", async () => {
+    const api = new MockApi();
+    const before = await api.catalogTables("rgm", "rgm.gold", 3);
+    expect(before.filter(t => t.imported).map(t => t.name)).not.toContain("dim_date");
+    const snap = await api.importTables("rgm", 3, "rgm.gold", ["dim_date", "fct_returns"]);
+    expect(snap.map(t => t.table)).toEqual(expect.arrayContaining(["rgm.gold.dim_date", "rgm.gold.fct_returns"]));
+    const after = await api.catalogTables("rgm", "rgm.gold", 3);
+    expect(after.find(t => t.name === "dim_date")).toMatchObject({ imported: true });
+    expect((await api.snapshot("rgm", 3)).length).toBe(snap.length);
+    await expect(api.importTables("hr", 3, "hr.people", ["employees"])).rejects.toThrow(/draft/);
+    expect(await api.refreshSnapshot("rgm", 3)).toEqual([]);
+  });
+  it("rest: imports through the version's metadata endpoint and reads the snapshot back into the list", async () => {
+    const calls: string[] = [];
+    const snapshot: { table: string; comment: string | null; columns: { name: string; type: string; comment: string | null }[]; primary_key: string[]; foreign_keys: unknown[] }[] = [];
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      const key = `${init?.method ?? "GET"} ${url}`; calls.push(key + (init?.body ? " " + init.body : ""));
+      const routes: Record<string, unknown> = {
+        "GET /api/auth/config": { mode: "header", header: "X-Actor", source: { kind: "databricks", catalog: "finops_metadata" } },
+        "GET /api/domains/aw": { name: "aw", description: "", base_iri: "http://p/aw/", review_quorum: 1, sources: [{ connection_id: "c1", catalog: "adventurework2022", schemas: [] }] },
+        "GET /api/domains/aw/versions/summary": [{ id: "v-1", version: 1, status: "draft", has_ontology: false, has_mapping: false, rule_count: 0, constraint_count: 0, created_at: "2026-09-21T10:00:00Z", created_by: "alice", is_active: false, stats: { classes: 0, attributes: 0, relationships: 0, bindings: 0, rules: 0, constraints: 0, triples: 0 }, mapping: null, last_build: null, review: null, lease: null }],
+        "GET /api/domains/cards": [{ name: "aw", version_count: 1, active_version: null, latest_version: { version: 1, status: "draft" }, triples: 0, last_build: null, source: { kind: "databricks", connection: "AdventureWorks", catalog: "adventurework2022", schema: null, schemas: [] }, source_count: 1, mcp: { exposed: true, disabled_tools: [] } }],
+        "GET /api/catalog/tables?schema_name=adventurework2022.dbo": ["awbuildversion", "databaselog", "errorlog"],
+        "GET /api/versions/v-1/metadata": snapshot,
+        "POST /api/versions/v-1/metadata/refresh": [{ table: "adventurework2022.dbo.errorlog", missing: false, added: ["severity"], removed: [], modified: [], keys_changed: false }],
+      };
+      if (key === "POST /api/versions/v-1/metadata/import") {
+        const body = JSON.parse(String(init?.body)) as { tables: string[]; schema_name: string };
+        for (const t of body.tables) snapshot.push({ table: `${body.schema_name}.${t}`, comment: null, columns: [{ name: "id", type: "int", comment: null }, { name: "v", type: "string", comment: null }], primary_key: ["id"], foreign_keys: [] });
+        return new Response(JSON.stringify(snapshot));
+      }
+      return new Response(JSON.stringify(routes[key] ?? { detail: `no route ${key}` }), { status: key in routes ? 200 : 404 });
+    }) as typeof fetch;
+    const api = new RestApi({ base: "/api" });
+    await api.domain("aw");
+    expect((await api.catalogTables("aw", "adventurework2022.dbo", 1)).map(t => t.imported)).toEqual([false, false, false]);
+    const snap = await api.importTables("aw", 1, "adventurework2022.dbo", ["errorlog", "databaselog"]);
+    expect(calls).toContain('POST /api/versions/v-1/metadata/import {"tables":["errorlog","databaselog"],"schema_name":"adventurework2022.dbo"}');
+    expect(snap.map(t => [t.table, t.columns])).toEqual([["adventurework2022.dbo.errorlog", 2], ["adventurework2022.dbo.databaselog", 2]]);
+    const after = await api.catalogTables("aw", "adventurework2022.dbo", 1);
+    expect(after.map(t => [t.name, t.imported, t.cols])).toEqual([["awbuildversion", false, 0], ["databaselog", true, 2], ["errorlog", true, 2]]);
+    expect((await api.refreshSnapshot("aw", 1))[0]).toMatchObject({ table: "adventurework2022.dbo.errorlog", added: ["severity"] });
+  });
+});
