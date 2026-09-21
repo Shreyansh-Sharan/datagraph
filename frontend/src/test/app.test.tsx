@@ -190,3 +190,21 @@ describe("Build screen", () => {
     await waitFor(() => expect(screen.getByText(/Lost track of the build: connection refused/)).toBeInTheDocument(), { timeout: 8000 });
   }, 10000);
 });
+
+
+describe("Mapping screen", () => {
+  it("maps an unmapped class to a snapshot table, binds an attribute from a dropdown and excludes another", async () => {
+    const api = new MockApi();
+    renderAt("#/d/rgm/mapping?v=3&cls=Channel", api);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Map to a table" }));
+    const dlg = screen.getByRole("dialog", { name: "Map Channel to a table" });
+    await user.selectOptions(within(dlg).getByLabelText("Table"), "rgm.gold.dim_region");
+    expect(within(dlg).getByLabelText("Key column")).toHaveValue("id");
+    await user.click(within(dlg).getByRole("button", { name: "Map class" }));
+    expect(await screen.findByText("Channel mapped to rgm.gold.dim_region")).toBeInTheDocument();
+    await user.selectOptions(await screen.findByLabelText("Column for channelName"), "name");
+    expect(await screen.findByText("channelName → name")).toBeInTheDocument();
+    expect((await api.mapping("rgm", 3)).Channel).toMatchObject({ fullName: "rgm.gold.dim_region", cols: { channelName: "name" }, state: "complete" });
+  });
+});

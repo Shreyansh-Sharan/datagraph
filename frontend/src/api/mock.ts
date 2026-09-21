@@ -2,7 +2,7 @@
 // UI behaves like the real thing (lifecycle transitions, builds with live steps, comments).
 import * as D from "./mockData";
 import { compileClassSql, tableName } from "./types";
-import type { DomainSource, RefreshChange, SnapshotTable, SourceFactsEntry, SourceInput,
+import type { DomainSource, DriftIssue, RefreshChange, SnapshotTable, SourceFactsEntry, SourceInput,
   Analytics, ApiKey, AuditEntry, BuildRun, BuildStep, CatalogTable, ChecklistItem, ClassMapping, Comment, Config, ConnResult, Constraint,
   DatagraphApi, DomainSummary, DqColumnIssue, EntityDetail, GlossaryTerm, GraphStatus, Lock, MappingKpis, Me, NewDomainInput, OntoCheck,
   OntoClass, OntoDiff, Principal, Role, Rule, SearchHit, SourceKind, TableDetail, TablePreview, TableProfile, Task, TriplePage, TripleQuery,
@@ -20,7 +20,8 @@ export class MockApi implements DatagraphApi {
   private live: Record<string, { run: BuildRun; timers: ReturnType<typeof setTimeout>[] }> = {};
   private nextRun = 0xb105;
   private conns: ConnectionRec[] = [];
-  private snapshots: Record<string, Set<string>> = {};   // "domain:version" -> qualified table names imported on top of the design data
+  private snapshots: Record<string, Set<string>> = {};
+  private maps: Record<string, Record<string, ClassMapping>> = {};   // domain -> editable copy of the design mapping   // "domain:version" -> qualified table names imported on top of the design data
   readonly kind: SourceKind;
   readonly role: Role;
   protected mockOpts: MockOptions;
@@ -227,8 +228,9 @@ export class MockApi implements DatagraphApi {
   }
   async snapshot(domain: string, version: number): Promise<SnapshotTable[]> {
     const { d } = this.ver(domain, version);
-    const design = d.sources.flatMap(src => src.schemas.flatMap(sch => (D.CATALOG[sch] || []).filter(([, , imported]) => imported).map(([name, cols]) => ({ table: `${src.catalog ? src.catalog + "." : ""}${sch}.${name}`, columns: cols, comment: null, primaryKey: [] }))));
-    const extra = [...(this.snapshots[`${domain}:${version}`] ?? [])].map(t => ({ table: t, columns: D.CATALOG[t.split(".").slice(-2)[0]]?.find(([n]) => n === t.split(".").pop())?.[1] ?? 0, comment: null, primaryKey: [] }));
+    const describe = (table: string, cols: number): SnapshotTable => { const name = table.split(".").pop() ?? table; const c = (D.COLUMNS[name] || D.GENERIC_COLS).cols; return { table, columns: cols || c.length, columnNames: c.map(x => x[0]), comment: null, primaryKey: c.filter(x => x[3] === "pk").map(x => x[0]) }; };
+    const design = d.sources.flatMap(src => src.schemas.flatMap(sch => (D.CATALOG[sch] || []).filter(([, , imported]) => imported).map(([name, cols]) => describe(`${src.catalog ? src.catalog + "." : ""}${sch}.${name}`, cols))));
+    const extra = [...(this.snapshots[`${domain}:${version}`] ?? [])].map(t => describe(t, D.CATALOG[t.split(".").slice(-2)[0]]?.find(([n]) => n === t.split(".").pop())?.[1] ?? 0));
     return [...design, ...extra];
   }
   async importTables(domain: string, version: number, schema: string, tables: string[]): Promise<SnapshotTable[]> {
@@ -257,10 +259,63 @@ export class MockApi implements DatagraphApi {
   async ontology(_domain: string, _version: number): Promise<OntoClass[]> { return clone(D.CLASSES); }
   async ontologyChecks(_domain: string, _version: number): Promise<OntoCheck[]> { return clone(D.CHECKS); }
 
-  async mapping(_domain: string, _version: number): Promise<Record<string, ClassMapping>> { return clone(D.MAP); }
-  async mappingKpis(_domain: string, _version: number): Promise<MappingKpis> { return { completion: 78, classesMapped: [10, 12], attributes: [41, 52], relationships: [8, 10], excluded: 3 }; }
-  async tablePreview(_domain: string, cls: string): Promise<TablePreview> { return this.wait(clone(D.PREVIEW[cls] || D.PREVIEW.Customer), this.kind === "databricks" ? 900 : 200); }
-  async classSql(domain: string, cls: string) { const m = D.MAP[cls]; if (!m) return ""; const d = this.dom(domain); return compileClassSql(this.kind, d.base_iri, cls, m, d.catalog); }
+  private mapOf(domain: string): Record<string, ClassMapping> { return (this.maps[domain] ||= clone(D.MAP)); }
+  private attrsOf(cls: string): string[] { return D.CLASSES.find(c => c.id === cls)?.attrs.map(a => a.name) ?? []; }
+  private relsOf(cls: string): { name: string; target: string }[] { return D.CLASSES.find(c => c.id === cls)?.rels ?? []; }
+  private restate(m: ClassMapping, cls: string): ClassMapping {
+    const ex = new Set(m.excluded ?? []);
+    const open = this.attrsOf(cls).filter(a => !m.cols[a] && !ex.has(a)).length + this.relsOf(cls).filter(r => !m.rels?.[r.name] && !ex.has(r.name)).length;
+    return { ...m, state: !m.table && !m.sql ? "unmapped" : open ? "partial" : "complete" };
+  }
+  async mapping(domain: string, _version: number): Promise<Record<string, ClassMapping>> {
+    return Object.fromEntries(Object.entries(this.mapOf(domain)).map(([cls, m]) => [cls, clone(this.restate(m, cls))]));
+  }
+  async mappingKpis(domain: string, _version: number): Promise<MappingKpis> {
+    const M = this.mapOf(domain);
+    const classes = D.CLASSES.length, mapped = Object.values(M).filter(m => m.table || m.sql).length;
+    const attrs = D.CLASSES.reduce((a, c) => a + c.attrs.length, 0), rels = D.CLASSES.reduce((a, c) => a + c.rels.length, 0);
+    const boundA = Object.values(M).reduce((a, m) => a + Object.keys(m.cols).length, 0), boundR = Object.values(M).reduce((a, m) => a + Object.keys(m.rels ?? {}).length, 0);
+    const excluded = Object.values(M).reduce((a, m) => a + (m.excluded?.length ?? 0), 0);
+    const denom = classes + attrs + rels;
+    return { completion: denom ? Math.round(((mapped + boundA + boundR + excluded) / denom) * 100) : 0, classesMapped: [mapped, classes], attributes: [boundA, attrs], relationships: [boundR, rels], excluded };
+  }
+  async mapClass(domain: string, _version: number, cls: string, table: string, key: string[]): Promise<void> {
+    const parts = table.split("."); const M = this.mapOf(domain);
+    M[cls] = { ...(M[cls] ?? { cols: {}, state: "partial" }), table: [parts.length > 1 ? parts[parts.length - 2] : "", parts[parts.length - 1]], fullName: table, key: key[0] ?? "", cols: M[cls]?.fullName === table ? M[cls].cols : {}, state: "partial" };
+  }
+  async bindAttribute(domain: string, _version: number, cls: string, attr: string, column: string | null): Promise<void> {
+    const m = this.mapOf(domain)[cls]; if (!m) throw new Error(`${cls} is not mapped to a table yet`);
+    if (column) m.cols[attr] = column; else delete m.cols[attr];
+  }
+  async excludeProperty(domain: string, _version: number, cls: string, prop: string, excluded: boolean): Promise<void> {
+    const m = this.mapOf(domain)[cls]; if (!m) throw new Error(`${cls} is not mapped to a table yet`);
+    const ex = new Set(m.excluded ?? []); if (excluded) ex.add(prop); else ex.delete(prop); m.excluded = [...ex].sort();
+    if (excluded) delete m.cols[prop];
+  }
+  async mapRelation(domain: string, _version: number, cls: string, rel: string, sourceKey: string[], targetKey: string[]): Promise<void> {
+    const m = this.mapOf(domain)[cls]; if (!m) throw new Error(`${cls} is not mapped to a table yet`);
+    const target = this.relsOf(cls).find(r => r.name === rel)?.target ?? "?";
+    (m.rels ||= {})[rel] = `${sourceKey.join(",")} → ${target}.${targetKey.join(",")}`;
+  }
+  async unmapClass(domain: string, _version: number, cls: string): Promise<void> { delete this.mapOf(domain)[cls]; }
+  async excludeUnmapped(domain: string, _version: number): Promise<void> {
+    for (const [cls, m] of Object.entries(this.mapOf(domain))) { const ex = new Set(m.excluded ?? []); for (const a of this.attrsOf(cls)) if (!m.cols[a]) ex.add(a); for (const r of this.relsOf(cls)) if (!m.rels?.[r.name]) ex.add(r.name); m.excluded = [...ex].sort(); }
+  }
+  async drift(_domain: string, _version: number): Promise<DriftIssue[]> {
+    return [{ kind: "missing-column", table: "rgm.gold.fct_sales", column: "channel_id", detail: "fct_sales.channel_id has no target table", mapping_ref: "Sale.viaChannel", severity: "error" }];
+  }
+  async r2rml(domain: string, _version: number): Promise<string> {
+    const d = this.dom(domain);
+    return ["@prefix rr: <http://www.w3.org/ns/r2rml#> .", `@prefix : <${d.base_iri}> .`, "", ...Object.entries(this.mapOf(domain)).filter(([, m]) => m.table).map(([cls, m]) => `<#${cls}> a rr:TriplesMap ;\n  rr:logicalTable [ rr:tableName "${m.fullName ?? m.table?.join(".")}" ] ;\n  rr:subjectMap [ rr:template "${d.base_iri}${cls}/{${m.key}}" ; rr:class :${cls} ] .`)].join("\n");
+  }
+  async suggestMapping(domain: string, version: number): Promise<{ classes: number; relations: number }> {
+    await this.wait(null, this.mockOpts.latency ?? 600);
+    const M = this.mapOf(domain); let n = 0;
+    for (const [table, cls] of Object.entries(D.TABLE_CLASS)) if (!M[cls] && D.CLASSES.some(c => c.id === cls)) { await this.mapClass(domain, version, cls, `${this.dom(domain).catalog}.gold.${table}`, ["id"]); n++; }
+    return { classes: n, relations: 0 };
+  }
+  async tablePreview(_domain: string, cls: string, _version?: number): Promise<TablePreview> { return this.wait(clone(D.PREVIEW[cls] || D.PREVIEW.Customer), this.kind === "databricks" ? 900 : 200); }
+  async classSql(domain: string, cls: string, _version?: number) { const m = this.mapOf(domain)[cls]; if (!m) return ""; const d = this.dom(domain); return compileClassSql(this.kind, d.base_iri, cls, m, d.catalog); }
 
   async rules(_domain: string, _version: number): Promise<Rule[]> { return clone(D.RULES); }
   async constraints(_domain: string, _version: number): Promise<Constraint[]> { return clone(D.CONSTRAINTS); }

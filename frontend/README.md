@@ -103,6 +103,21 @@ types, keys and comments are captured, and the list marks what the snapshot hold
 (`GET /versions/{id}/metadata`). "Refresh snapshot" re-reads the source and reports added, removed
 or retyped columns. Both need a draft whose lease you hold, like every other edit.
 
+### Build and mapping
+
+The Build screen starts a run (`POST /versions/{id}/builds`), polls `GET /builds/{run}` until it
+settles and shows the steps as the pipeline records them (compile, drift, prepare, publish when the
+domain materializes, load, finalize); a run still running when the screen opens is picked up, and
+three failed status reads stop polling with a notice. The pre-build checklist reads the snapshot,
+ontology, mapping completion, ontology checks and drift of the version.
+
+The Mapping screen edits the version's mapping spec: map a class to a snapshot table and key,
+bind attributes to columns from a dropdown, exclude properties, join relationships on a source and
+target column, unmap, exclude everything unmapped, check drift (re-reads every mapped table from
+the source, so it can take a while), export R2RML and ask the AI connection for suggestions. Local
+names are resolved to IRIs through the version's ontology; every change is one `PUT
+/versions/{id}/mapping`.
+
 ### The version mechanism
 
 `GET /domains/{name}/versions/summary` is the one call behind the Versions and Overview screens: per

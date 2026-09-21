@@ -427,3 +427,93 @@ describe("build (rest)", () => {
     expect(await a.mappingKpis("aw", 1)).toEqual({ completion: 25, classesMapped: [1, 4], attributes: [2, 9], relationships: [0, 2], excluded: 1 });
   });
 });
+
+
+describe("mapping editor (rest)", () => {
+  const vid = "aaaaaaaa-0000-0000-0000-000000000001";
+  const EX = "http://p/aw#";
+  const onto = { classes: [{ iri: EX + "Customer", label: "Customer", description: null, parents: [] }, { iri: EX + "Order", label: "Order", description: null, parents: [] }],
+    datatype_properties: [{ iri: EX + "customerName", domain: EX + "Customer", domains: [EX + "Customer"], range: "http://www.w3.org/2001/XMLSchema#string" }, { iri: EX + "orderDate", domain: EX + "Order", domains: [EX + "Order"], range: null }],
+    object_properties: [{ iri: EX + "placedBy", domain: EX + "Order", domains: [EX + "Order"], range: EX + "Customer" }] };
+  let spec: { base_iri: string; classes: Record<string, unknown>[]; relations: Record<string, unknown>[] } = { base_iri: "http://p/aw/", classes: [], relations: [] };
+  const puts: unknown[] = []; const calls: string[] = [];
+  const api = () => {
+    spec = { base_iri: "http://p/aw/", classes: [{ class_iri: EX + "Customer", table: "adventurework2022.sales.customer", sql_query: null, key_columns: ["customerid"], iri_template: null, attributes: [{ property_iri: EX + "customerName", column: "name", datatype: null, language: null }], excluded: [] }], relations: [] };
+    puts.length = 0; calls.length = 0;
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      const key = `${init?.method ?? "GET"} ${url}`; calls.push(key);
+      const routes: Record<string, unknown> = {
+        "GET /api/auth/config": { mode: "header", header: "X-Actor", source: { kind: "databricks", catalog: "finops_metadata" } },
+        "GET /api/domains/aw": { name: "aw", description: "", base_iri: "http://p/aw/", review_quorum: 1, materialization: "none", sources: [] },
+        "GET /api/domains/aw/versions/summary": [{ id: vid, version: 1, status: "draft", has_ontology: true, has_mapping: true, rule_count: 0, constraint_count: 0, created_at: "2026-09-21T10:00:00Z", created_by: "alice", is_active: false, stats: { classes: 2, attributes: 2, relationships: 1, bindings: 1, rules: 0, constraints: 0, triples: 0 }, mapping: { completion: 0.4, classes_mapped: 1, classes: 2, complete_classes: 1 }, last_build: null, review: null, lease: null }],
+        "GET /api/domains/cards": [{ name: "aw", version_count: 1, active_version: null, latest_version: { version: 1, status: "draft" }, triples: 0, last_build: null, source: { kind: "databricks", connection: null, catalog: null, schema: null, schemas: [] }, source_count: 0, mcp: { exposed: true, disabled_tools: [] } }],
+        [`GET /api/versions/${vid}/ontology`]: onto,
+        [`GET /api/versions/${vid}/mapping/status`]: { completion: 0.4, summary: {}, classes: [{ class_iri: EX + "Customer", state: "complete" }, { class_iri: EX + "Order", state: "unmapped" }] },
+        [`GET /api/versions/${vid}/mapping/drift`]: [{ kind: "missing-column", table: "adventurework2022.sales.customer", column: "name", detail: "column name no longer exists", mapping_ref: "Customer.customerName", severity: "error" }],
+        [`GET /api/versions/${vid}/metadata`]: [{ table: "adventurework2022.sales.customer", comment: null, columns: [{ name: "customerid", type: "int", comment: null }, { name: "name", type: "string", comment: null }], primary_key: ["customerid"], foreign_keys: [] }, { table: "adventurework2022.sales.salesorderheader", comment: null, columns: [{ name: "salesorderid", type: "int", comment: null }, { name: "customerid", type: "int", comment: null }, { name: "orderdate", type: "date", comment: null }], primary_key: ["salesorderid"], foreign_keys: [] }],
+      };
+      if (key === `GET /api/versions/${vid}/mapping`) return new Response(JSON.stringify(spec));
+      if (key === `PUT /api/versions/${vid}/mapping`) { spec = JSON.parse(String(init?.body)); puts.push(spec); return new Response(JSON.stringify({ id: vid })); }
+      if (key === `GET /api/versions/${vid}/mapping/r2rml`) return new Response("@prefix rr: <http://www.w3.org/ns/r2rml#> .", { headers: { "content-type": "text/turtle" } });
+      if (key === `POST /api/versions/${vid}/llm/suggest-mapping`) { return new Response(JSON.stringify({ classes: 2, relations: 1, mapping: spec })); }
+      if (key.startsWith(`DELETE /api/versions/${vid}/mapping/classes`)) { spec.classes = []; return new Response(JSON.stringify(spec)); }
+      if (key === `POST /api/versions/${vid}/mapping/exclude-unmapped`) return new Response(JSON.stringify(spec));
+      return new Response(JSON.stringify(routes[key] ?? { detail: `no route ${key}` }), { status: key in routes ? 200 : 404 });
+    }) as typeof fetch;
+    return new RestApi({ base: "/api" });
+  };
+  it("reads bindings, excluded properties, relations and the full table name", async () => {
+    const a = api(); await a.domain("aw");
+    spec.classes[0] = { ...spec.classes[0], excluded: [EX + "orderDate"] };
+    spec.relations = [{ property_iri: EX + "placedBy", source_class: EX + "Order", target_class: EX + "Customer", source_key: ["customerid"], target_key: ["customerid"], table: null, sql_query: null, direction: "forward" }];
+    spec.classes.push({ class_iri: EX + "Order", table: "adventurework2022.sales.salesorderheader", sql_query: null, key_columns: ["salesorderid"], iri_template: null, attributes: [], excluded: [] });
+    const m = await a.mapping("aw", 1);
+    expect(m.Customer).toMatchObject({ fullName: "adventurework2022.sales.customer", table: ["sales", "customer"], key: "customerid", cols: { customerName: "name" }, state: "complete" });
+    expect(m.Order.rels).toEqual({ placedBy: "customerid → Customer.customerid" });
+    expect(m.Customer.excluded).toEqual(["orderDate"]);
+  });
+  it("maps a class to a snapshot table, binds and unbinds attributes, excludes, maps a relation and unmaps", async () => {
+    const a = api(); await a.domain("aw");
+    await a.mapClass("aw", 1, "Order", "adventurework2022.sales.salesorderheader", ["salesorderid"]);
+    expect(puts.at(-1)).toMatchObject({ classes: [expect.anything(), { class_iri: EX + "Order", table: "adventurework2022.sales.salesorderheader", key_columns: ["salesorderid"], attributes: [], excluded: [] }] });
+    await a.bindAttribute("aw", 1, "Order", "orderDate", "orderdate");
+    expect((puts.at(-1) as typeof spec).classes[1]).toMatchObject({ attributes: [{ property_iri: EX + "orderDate", column: "orderdate" }] });
+    await a.bindAttribute("aw", 1, "Order", "orderDate", null);
+    expect((puts.at(-1) as typeof spec).classes[1]).toMatchObject({ attributes: [] });
+    await a.excludeProperty("aw", 1, "Order", "orderDate", true);
+    expect((puts.at(-1) as typeof spec).classes[1]).toMatchObject({ excluded: [EX + "orderDate"] });
+    await a.mapRelation("aw", 1, "Order", "placedBy", ["customerid"], ["customerid"]);
+    expect((puts.at(-1) as typeof spec).relations).toEqual([{ property_iri: EX + "placedBy", source_class: EX + "Order", target_class: EX + "Customer", source_key: ["customerid"], target_key: ["customerid"], table: null, sql_query: null, direction: "forward" }]);
+    await a.unmapClass("aw", 1, "Order");
+    expect(calls).toContain(`DELETE /api/versions/${vid}/mapping/classes?class_iri=${encodeURIComponent(EX + "Order")}`);
+    await a.excludeUnmapped("aw", 1);
+    expect(calls).toContain(`POST /api/versions/${vid}/mapping/exclude-unmapped`);
+  });
+  it("lists drift, exports R2RML, suggests with AI and offers snapshot tables with their columns", async () => {
+    const a = api(); await a.domain("aw");
+    expect((await a.drift("aw", 1))[0]).toMatchObject({ kind: "missing-column", column: "name", mapping_ref: "Customer.customerName" });
+    expect(await a.r2rml("aw", 1)).toMatch(/^@prefix rr:/);
+    expect(await a.suggestMapping("aw", 1)).toEqual({ classes: 2, relations: 1 });
+    const snap = await a.snapshot("aw", 1);
+    expect(snap[1]).toMatchObject({ table: "adventurework2022.sales.salesorderheader", columnNames: ["salesorderid", "customerid", "orderdate"], primaryKey: ["salesorderid"] });
+  });
+});
+
+describe("mapping editor (mock)", () => {
+  it("maps Channel to a table, binds its attribute and unmaps it again", async () => {
+    const api = new MockApi();
+    expect((await api.mapping("rgm", 3)).Channel).toBeUndefined();
+    await api.mapClass("rgm", 3, "Channel", "rgm.gold.dim_channel", ["channel_id"]);
+    let m = (await api.mapping("rgm", 3)).Channel;
+    expect(m).toMatchObject({ fullName: "rgm.gold.dim_channel", key: "channel_id", state: "partial", cols: {} });
+    await api.bindAttribute("rgm", 3, "Channel", "channelName", "channel_name");
+    m = (await api.mapping("rgm", 3)).Channel;
+    expect(m.cols).toEqual({ channelName: "channel_name" }); expect(m.state).toBe("complete");
+    await api.excludeProperty("rgm", 3, "Sale", "netRevenue", true);
+    expect((await api.mapping("rgm", 3)).Sale.excluded).toEqual(["netRevenue"]);
+    await api.unmapClass("rgm", 3, "Channel");
+    expect((await api.mapping("rgm", 3)).Channel).toBeUndefined();
+    expect((await api.drift("rgm", 3)).length).toBeGreaterThan(0);
+    expect(await api.r2rml("rgm", 3)).toMatch(/rr:/);
+  });
+});

@@ -70,7 +70,7 @@ export interface Comment { who: string; when: string; text: string }
 
 // -- catalog / metadata ----------------------------------------------------------
 export interface CatalogTable { name: string; cols: number; imported: boolean; cls: string | null }
-export interface SnapshotTable { table: string; columns: number; comment: string | null; primaryKey: string[]; capturedAt?: string | null }   // one table in a version's metadata snapshot
+export interface SnapshotTable { table: string; columns: number; columnNames: string[]; comment: string | null; primaryKey: string[]; capturedAt?: string | null }   // one table in a version's metadata snapshot
 export interface RefreshChange { table: string; missing: boolean; added: string[]; removed: string[]; modified: { column: string; from: string; to: string }[]; keys_changed: boolean }
 export interface CatalogColumn { name: string; type: string; comment: string; key: "pk" | "fk" | null; keyInferred: boolean }
 export interface TableDetail { name: string; fullName: string; comment: string; columns: CatalogColumn[] }
@@ -84,7 +84,8 @@ export interface OntoClass { id: string; iri: string; x: number; y: number; desc
 export interface OntoCheck { severity: "error" | "warning" | "info"; code: string; subject: string; message: string; target: { screen: "ontology" | "mapping"; cls: string } }
 
 // -- mapping --------------------------------------------------------------------------
-export interface ClassMapping { table?: [string, string]; sql?: string; key: string; state: MappingState; cols: Record<string, string>; rels?: Record<string, string> }
+export interface ClassMapping { table?: [string, string]; fullName?: string; sql?: string; key: string; state: MappingState; cols: Record<string, string>; rels?: Record<string, string>; excluded?: string[] }
+export interface DriftIssue { kind: string; table: string; column: string | null; detail: string; mapping_ref: string; severity: string }
 export interface MappingKpis { completion: number; classesMapped: [number, number]; attributes: [number, number]; relationships: [number, number]; excluded: number }
 export interface TablePreview { columns: string[]; rows: (string | null)[][] }
 
@@ -175,8 +176,18 @@ export interface DatagraphApi {
 
   mapping(domain: string, version: number): Promise<Record<string, ClassMapping>>;
   mappingKpis(domain: string, version: number): Promise<MappingKpis>;
-  tablePreview(domain: string, cls: string): Promise<TablePreview>;
-  classSql(domain: string, cls: string): Promise<string>;
+  tablePreview(domain: string, cls: string, version?: number): Promise<TablePreview>;
+  classSql(domain: string, cls: string, version?: number): Promise<string>;
+  // the mapping editor: every change goes through the version's mapping spec
+  mapClass(domain: string, version: number, cls: string, table: string, key: string[]): Promise<void>;
+  bindAttribute(domain: string, version: number, cls: string, attr: string, column: string | null): Promise<void>;
+  excludeProperty(domain: string, version: number, cls: string, prop: string, excluded: boolean): Promise<void>;
+  mapRelation(domain: string, version: number, cls: string, rel: string, sourceKey: string[], targetKey: string[]): Promise<void>;
+  unmapClass(domain: string, version: number, cls: string): Promise<void>;
+  excludeUnmapped(domain: string, version: number): Promise<void>;
+  drift(domain: string, version: number): Promise<DriftIssue[]>;
+  r2rml(domain: string, version: number): Promise<string>;
+  suggestMapping(domain: string, version: number): Promise<{ classes: number; relations: number }>;
 
   rules(domain: string, version: number): Promise<Rule[]>;
   constraints(domain: string, version: number): Promise<Constraint[]>;

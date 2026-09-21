@@ -2,7 +2,7 @@
 // Methods with a settled contract call the API; the rest fall through to the mock so the
 // app stays usable while integration proceeds. Replace fallbacks method by method.
 import { MockApi } from "./mock";
-import type { AuditEntry, BuildRun, BuildStep, CatalogTable, ChecklistItem, MappingKpis, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, RefreshChange, SnapshotTable, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus } from "./types";
+import type { AuditEntry, BuildRun, BuildStep, CatalogTable, ChecklistItem, DriftIssue, MappingKpis, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, RefreshChange, SnapshotTable, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus } from "./types";
 import { tableName } from "./types";
 import { humanAction, relTime } from "./format";
 
@@ -22,6 +22,7 @@ interface BackendSummary extends BackendVersion {
   lease: { holder: string; expires_at: string | null; expired: boolean } | null;
 }
 interface BackendDomain { name: string; description: string | null; base_iri: string; review_quorum: number; active_version_id?: string | null; connection_id?: string | null; ai_connection_id?: string | null; default_catalog?: string | null; default_schema?: string | null; schemas?: string[]; sources?: { connection_id: string | null; catalog: string | null; schemas: string[] }[]; materialization?: string; target_schema?: string | null; mcp_policy?: { exposed?: boolean; disabled_tools?: string[] } }
+interface BackendSpec { base_iri: string; classes: { class_iri: string; table: string | null; sql_query: string | null; key_columns: string[]; iri_template: string | null; attributes: { property_iri: string; column: string; datatype: string | null; language: string | null }[]; excluded: string[] }[]; relations: { property_iri: string; source_class: string; target_class: string; source_key: string[] | null; target_key: string[] | null; table: string | null; sql_query: string | null; direction: string }[] }
 interface BackendCard { name: string; version_count: number; active_version: { version: number } | null; latest_version: { version: number; status: string } | null; triples: number; last_build: { status: string; finished_at: string | null; triple_count: number | null } | null; source: { kind: string; connection: string | null; catalog: string | null; schema: string | null }; mcp: { exposed: boolean; disabled_tools: string[] } }
 
 export class RestApi extends MockApi {
@@ -185,8 +186,8 @@ export class RestApi extends MockApi {
     const held = new Map(snap.map(t => [t.table.toLowerCase(), t]));
     return names.map(n => { const name = n.split(".").pop() ?? n; const t = held.get(`${schema}.${name}`.toLowerCase()) ?? held.get(name.toLowerCase()); return { name, cols: t?.columns ?? 0, imported: !!t, cls: null }; });
   }
-  private toSnapshot(t: { table: string; comment: string | null; columns: unknown[]; primary_key: string[]; captured_at?: string | null }): SnapshotTable {
-    return { table: t.table, columns: t.columns.length, comment: t.comment, primaryKey: t.primary_key ?? [], capturedAt: t.captured_at ?? null };
+  private toSnapshot(t: { table: string; comment: string | null; columns: { name: string }[]; primary_key: string[]; captured_at?: string | null }): SnapshotTable {
+    return { table: t.table, columns: t.columns.length, columnNames: t.columns.map(c => c.name), comment: t.comment, primaryKey: t.primary_key ?? [], capturedAt: t.captured_at ?? null };
   }
   override async snapshot(domain: string, version: number): Promise<SnapshotTable[]> {
     return (await this.req<Parameters<RestApi["toSnapshot"]>[0][]>("GET", `/versions/${this.vid(domain, version)}/metadata`)).map(t => this.toSnapshot(t));
@@ -216,28 +217,89 @@ export class RestApi extends MockApi {
       rels: o.object_properties.filter(p => doms(p).includes(c.iri) && p.range).map(p => ({ name: local(p.iri), target: local(p.range as string) })),
     }));
   }
+  // -- mapping editor: local names <-> IRIs through the version's ontology, edits through the spec --------
+  private local(iri: string): string { return iri.split(/[#/]/).pop() ?? iri; }
+  private async names(domain: string, version: number) {
+    const o = await this.req<{ classes: { iri: string }[]; datatype_properties: { iri: string; domains: string[]; domain: string | null }[]; object_properties: { iri: string; domains: string[]; domain: string | null; range: string | null }[] }>("GET", `/versions/${this.vid(domain, version)}/ontology`);
+    const cls = Object.fromEntries(o.classes.map(c => [this.local(c.iri), c.iri]));
+    const prop = Object.fromEntries([...o.datatype_properties, ...o.object_properties].map(p => [this.local(p.iri), p.iri]));
+    const target = Object.fromEntries(o.object_properties.map(p => [this.local(p.iri), p.range ?? ""]));
+    return { cls, prop, target };
+  }
+  private async spec(domain: string, version: number): Promise<BackendSpec> {
+    const raw = await this.req<Partial<BackendSpec>>("GET", `/versions/${this.vid(domain, version)}/mapping`);
+    if (!raw.base_iri) { const d = await this.req<BackendDomain>("GET", `/domains/${encodeURIComponent(domain)}`); return { base_iri: d.base_iri, classes: [], relations: [] }; }
+    return { base_iri: raw.base_iri, classes: raw.classes ?? [], relations: raw.relations ?? [] };
+  }
+  private async saveSpec(domain: string, version: number, spec: BackendSpec): Promise<void> { await this.req("PUT", `/versions/${this.vid(domain, version)}/mapping`, spec); }
+  private async classEntry(domain: string, version: number, cls: string): Promise<{ spec: BackendSpec; entry: BackendSpec["classes"][number]; names: Awaited<ReturnType<RestApi["names"]>> }> {
+    const [spec, names] = await Promise.all([this.spec(domain, version), this.names(domain, version)]);
+    const iri = names.cls[cls]; if (!iri) throw new Error(`Class ${cls} is not in the ontology`);
+    const entry = spec.classes.find(c => c.class_iri === iri); if (!entry) throw new Error(`${cls} is not mapped to a table yet`);
+    return { spec, entry, names };
+  }
   override async mapping(domain: string, version: number): Promise<Record<string, ClassMapping>> {
-    const st = await this.req<{ classes: { class_iri: string; state: "complete" | "partial" | "unmapped" }[] }>("GET", `/versions/${this.vid(domain, version)}/mapping/status`);
-    const spec = await this.req<{ classes?: { class_iri: string; table: string | null; sql_query: string | null; key_columns: string[]; attributes: { property_iri: string; column: string }[] }[] }>("GET", `/versions/${this.vid(domain, version)}/mapping`);
-    const local = (iri: string) => iri.split(/[#/]/).pop() ?? iri;
+    const [st, spec] = await Promise.all([this.req<{ classes: { class_iri: string; state: "complete" | "partial" | "unmapped" }[] }>("GET", `/versions/${this.vid(domain, version)}/mapping/status`).catch(() => ({ classes: [] })), this.spec(domain, version)]);
     const out: Record<string, ClassMapping> = {};
-    for (const c of spec.classes ?? []) {
+    for (const c of spec.classes) {
       const parts = (c.table ?? "").split(".");
-      out[local(c.class_iri)] = { table: c.table ? [parts.length > 1 ? parts[parts.length - 2] : "", parts[parts.length - 1]] : undefined, sql: c.sql_query ?? undefined, key: c.key_columns[0] ?? "", state: st.classes.find(s => s.class_iri === c.class_iri)?.state ?? "partial", cols: Object.fromEntries(c.attributes.map(a => [local(a.property_iri), a.column])) };
+      const rels = Object.fromEntries(spec.relations.filter(r => r.source_class === c.class_iri).map(r => [this.local(r.property_iri), `${(r.source_key ?? []).join(",")} → ${this.local(r.target_class)}.${(r.target_key ?? []).join(",")}`]));
+      out[this.local(c.class_iri)] = { table: c.table ? [parts.length > 1 ? parts[parts.length - 2] : "", parts[parts.length - 1]] : undefined, fullName: c.table ?? undefined, sql: c.sql_query ?? undefined, key: c.key_columns[0] ?? "",
+        state: st.classes.find(x => x.class_iri === c.class_iri)?.state ?? "partial", cols: Object.fromEntries(c.attributes.map(a => [this.local(a.property_iri), a.column])), rels, excluded: (c.excluded ?? []).map(e => this.local(e)) };
     }
     return out;
   }
-  override async tablePreview(domain: string, cls: string): Promise<TablePreview> {
-    const d = await this.domain(domain); const v = d.versions[0]; const m = (await this.mapping(domain, v.version))[cls];
-    if (!m?.table) return { columns: [], rows: [] };
-    const r = await this.req<{ columns: string[]; rows: Record<string, string | null>[] }>("GET", `/versions/${this.vid(domain, v.version)}/mapping/table-preview?table=${encodeURIComponent(m.table.join("."))}&limit=5`);
+  override async mapClass(domain: string, version: number, cls: string, table: string, key: string[]): Promise<void> {
+    const [spec, names] = await Promise.all([this.spec(domain, version), this.names(domain, version)]);
+    const iri = names.cls[cls]; if (!iri) throw new Error(`Class ${cls} is not in the ontology`);
+    const old = spec.classes.find(c => c.class_iri === iri);
+    const entry = { class_iri: iri, table, sql_query: null, key_columns: key, iri_template: null, attributes: old?.table === table ? old.attributes : [], excluded: old?.excluded ?? [] };
+    spec.classes = [...spec.classes.filter(c => c.class_iri !== iri), entry];
+    await this.saveSpec(domain, version, spec);
+  }
+  override async bindAttribute(domain: string, version: number, cls: string, attr: string, column: string | null): Promise<void> {
+    const { spec, entry, names } = await this.classEntry(domain, version, cls);
+    const piri = names.prop[attr]; if (!piri) throw new Error(`${attr} is not a property of the ontology`);
+    entry.attributes = entry.attributes.filter(a => a.property_iri !== piri);
+    if (column) entry.attributes.push({ property_iri: piri, column, datatype: null, language: null });
+    await this.saveSpec(domain, version, spec);
+  }
+  override async excludeProperty(domain: string, version: number, cls: string, prop: string, excluded: boolean): Promise<void> {
+    const { spec, entry, names } = await this.classEntry(domain, version, cls);
+    const piri = names.prop[prop]; if (!piri) throw new Error(`${prop} is not a property of the ontology`);
+    const ex = new Set(entry.excluded ?? []); if (excluded) ex.add(piri); else ex.delete(piri); entry.excluded = [...ex].sort();
+    if (excluded) entry.attributes = entry.attributes.filter(a => a.property_iri !== piri);
+    await this.saveSpec(domain, version, spec);
+  }
+  override async mapRelation(domain: string, version: number, cls: string, rel: string, sourceKey: string[], targetKey: string[]): Promise<void> {
+    const { spec, names } = await this.classEntry(domain, version, cls);
+    const piri = names.prop[rel], src = names.cls[cls], tgt = names.target[rel]; if (!piri || !tgt) throw new Error(`${rel} is not a relationship of ${cls}`);
+    spec.relations = [...spec.relations.filter(r => !(r.property_iri === piri && r.source_class === src)), { property_iri: piri, source_class: src, target_class: tgt, source_key: sourceKey, target_key: targetKey, table: null, sql_query: null, direction: "forward" }];
+    await this.saveSpec(domain, version, spec);
+  }
+  override async unmapClass(domain: string, version: number, cls: string): Promise<void> {
+    const names = await this.names(domain, version); const iri = names.cls[cls]; if (!iri) throw new Error(`Class ${cls} is not in the ontology`);
+    await this.req("DELETE", `/versions/${this.vid(domain, version)}/mapping/classes?class_iri=${encodeURIComponent(iri)}`);
+  }
+  override async excludeUnmapped(domain: string, version: number): Promise<void> { await this.req("POST", `/versions/${this.vid(domain, version)}/mapping/exclude-unmapped`); }
+  override async drift(domain: string, version: number): Promise<DriftIssue[]> { return this.req<DriftIssue[]>("GET", `/versions/${this.vid(domain, version)}/mapping/drift`); }
+  override async r2rml(domain: string, version: number): Promise<string> { return this.req<string>("GET", `/versions/${this.vid(domain, version)}/mapping/r2rml`, undefined, true); }
+  override async suggestMapping(domain: string, version: number): Promise<{ classes: number; relations: number }> {
+    const r = await this.req<{ classes: number; relations: number }>("POST", `/versions/${this.vid(domain, version)}/llm/suggest-mapping`, {});
+    return { classes: r.classes, relations: r.relations };
+  }
+  override async tablePreview(domain: string, cls: string, version?: number): Promise<TablePreview> {
+    const v = version ?? (await this.domain(domain)).versions[0]?.version; if (v === undefined) return { columns: [], rows: [] };
+    const m = (await this.mapping(domain, v))[cls];
+    if (!m?.fullName) return { columns: [], rows: [] };
+    const r = await this.req<{ columns: string[]; rows: Record<string, string | null>[] }>("GET", `/versions/${this.vid(domain, v)}/mapping/table-preview?table=${encodeURIComponent(m.fullName)}&limit=5`);
     return { columns: r.columns, rows: r.rows.map(row => r.columns.map(c => row[c])) };
   }
-  override async classSql(domain: string, cls: string): Promise<string> {
-    const d = await this.domain(domain); const v = d.versions[0]; const cfg = this.cfg ?? await this.config();
-    return this.req<string>("GET", `/versions/${this.vid(domain, v.version)}/mapping/sql?dialect=${cfg.sourceKind}&class_iri=${encodeURIComponent(`${d.base_iri.replace(/\/$/, "")}#${cls}`)}`, undefined, true);
+  override async classSql(domain: string, cls: string, version?: number): Promise<string> {
+    const v = version ?? (await this.domain(domain)).versions[0]?.version; if (v === undefined) return "";
+    const cfg = this.cfg ?? await this.config(); const names = await this.names(domain, v); const iri = names.cls[cls]; if (!iri) return "";
+    return this.req<string>("GET", `/versions/${this.vid(domain, v)}/mapping/sql?dialect=${cfg.sourceKind}&class_iri=${encodeURIComponent(iri)}`, undefined, true);
   }
-
   /** The pipeline's step order, so a running build shows what is still to come. */
   private pipeline(domain: string): string[] {
     const publish = (this.materializations[domain] ?? "none") !== "none";
