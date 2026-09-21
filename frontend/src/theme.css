@@ -194,3 +194,9 @@ h1, h2, h3, p { margin: 0; }
 
 /* @polestar/connections (the connection module's form and test report) themed with the same tokens */
 :root { --pc-accent: var(--blue); --pc-fg: var(--ink); --pc-fg-muted: var(--muted); --pc-bg: #fff; --pc-border: var(--grey-2); --pc-danger: var(--orange); --pc-success: var(--blue); --pc-radius: 6px; --pc-gap: 12px; --pc-font: var(--font); --pc-font-size: 13px; }
+
+/* Configure → schema list */
+.schema-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; min-height: 28px; }
+.schema-chip { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 6px 0 10px; border-radius: 6px; border: 1px solid var(--grey-2); background: #fff; font-size: 12.5px; }
+.chip-act { border: 0; background: transparent; color: var(--muted-2); width: 20px; height: 20px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; font-size: 14px; line-height: 1; }
+.chip-act:hover { background: var(--surface-3); color: var(--ink); }

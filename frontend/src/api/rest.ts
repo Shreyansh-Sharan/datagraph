@@ -21,7 +21,7 @@ interface BackendSummary extends BackendVersion {
   review: { quorum: number; round: number; approved: number; rejected: number; rows: { reviewer: string; approved: boolean; comment: string | null; at: string }[] } | null;
   lease: { holder: string; expires_at: string | null; expired: boolean } | null;
 }
-interface BackendDomain { name: string; description: string | null; base_iri: string; review_quorum: number; active_version_id?: string | null; connection_id?: string | null; ai_connection_id?: string | null; default_catalog?: string | null; default_schema?: string | null; materialization?: string; target_schema?: string | null; mcp_policy?: { exposed?: boolean; disabled_tools?: string[] } }
+interface BackendDomain { name: string; description: string | null; base_iri: string; review_quorum: number; active_version_id?: string | null; connection_id?: string | null; ai_connection_id?: string | null; default_catalog?: string | null; default_schema?: string | null; schemas?: string[]; materialization?: string; target_schema?: string | null; mcp_policy?: { exposed?: boolean; disabled_tools?: string[] } }
 interface BackendCard { name: string; version_count: number; active_version: { version: number } | null; latest_version: { version: number; status: string } | null; triples: number; last_build: { status: string; finished_at: string | null; triple_count: number | null } | null; source: { kind: string; connection: string | null; catalog: string | null; schema: string | null }; mcp: { exposed: boolean; disabled_tools: string[] } }
 
 export class RestApi extends MockApi {
@@ -82,7 +82,7 @@ export class RestApi extends MockApi {
     const cfg = this.cfg ?? await this.config();
     const versions = vs.map((v, i) => this.toVersion(d, v, vs[i + 1]));
     const c = card ?? (await this.req<BackendCard[]>("GET", "/domains/cards")).find(x => x.name === d.name);
-    return { name: d.name, description: d.description ?? "", base_iri: d.base_iri, quorum: d.review_quorum, schema: c?.source.schema ?? d.default_schema ?? "", catalog: c?.source.catalog ?? d.default_catalog ?? cfg.catalog ?? d.name,
+    return { name: d.name, description: d.description ?? "", base_iri: d.base_iri, quorum: d.review_quorum, schema: d.schemas?.[0] ?? c?.source.schema ?? d.default_schema ?? "", schemas: d.schemas ?? (d.default_schema ? [d.default_schema] : []), catalog: c?.source.catalog ?? d.default_catalog ?? cfg.catalog ?? d.name,
       materialization: d.materialization ?? cfg.materialization, target: d.target_schema ?? "", mcpExposed: c?.mcp.exposed ?? d.mcp_policy?.exposed ?? true, disabledTools: c?.mcp.disabled_tools ?? d.mcp_policy?.disabled_tools ?? [],
       triples: c ? c.triples.toLocaleString() : "—", lastBuild: c?.last_build ? `${c.last_build.status}${c.last_build.finished_at ? " · " + new Date(c.last_build.finished_at).toLocaleString() : ""}` : "never",
       versions, lease: versions.find(v => v.status === "draft")?.lease ?? null, review: versions.find(v => v.status === "in_review")?.review ?? null, connectionId: d.connection_id ?? null, aiConnectionId: d.ai_connection_id ?? null, targetSchema: d.target_schema ?? null };
@@ -162,6 +162,15 @@ export class RestApi extends MockApi {
   }
   override async setMcp(domain: string, exposed: boolean): Promise<void> { await this.req("PUT", `/domains/${encodeURIComponent(domain)}/mcp-policy`, { exposed, disabled_tools: [] }); }
 
+  override async schemas(domain: string): Promise<{ id: string; label: string }[]> {
+    const d = await this.domain(domain); const cfg = this.cfg ?? await this.config();
+    return d.schemas.map(s => ({ id: s, label: cfg.sourceKind === "databricks" && d.catalog ? `${d.catalog}.${s}` : s }));
+  }
+  override async catalogSchemas(domain: string): Promise<string[]> {
+    const d = await this.domain(domain); const cfg = this.cfg ?? await this.config();
+    const q = cfg.sourceKind === "databricks" && d.catalog ? `?catalog=${encodeURIComponent(d.catalog)}` : "";
+    return this.req<string[]>("GET", `/catalog/schemas${q}`);
+  }
   override async catalogTables(_domain: string, schema: string): Promise<CatalogTable[]> {
     const names = await this.req<string[]>("GET", `/catalog/tables?schema_name=${encodeURIComponent(schema)}`);
     return names.map(n => ({ name: n.split(".").pop() ?? n, cols: 0, imported: false, cls: null }));

@@ -13,7 +13,7 @@ export function Metadata() {
   const { domain, version } = useDomain();
   const go = useGo();
   const dbx = config.sourceKind === "databricks";
-  const [schema, setSchema] = useParam("schema", domain.schema || "gold");
+  const [schema, setSchema] = useParam("schema", domain.schemas[0] ?? domain.schema ?? "");
   const [table, setTable] = useParam("table", "dim_customer");
   const [tab, setTab] = useParam("tab", "columns");
   const [gq, setGq] = useParam("gq", "");

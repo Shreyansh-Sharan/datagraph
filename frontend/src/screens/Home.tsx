@@ -28,7 +28,8 @@ export function Home() {
             const act = d.versions.find(v => v.active); const dr = d.versions.find(v => v.status === "draft");
             const state = act ? `v${act.version} active` : dr ? `v${dr.version} draft` : "no version";
             const dot = act ? "var(--blue)" : dr ? "var(--grey)" : "var(--grey-2)";
-            const cfg = [["Source", dbx ? `databricks · ${d.catalog}.${d.schema}` : `postgres · ${d.catalog}_${d.schema}`], ["Base IRI", d.base_iri], ["Review quorum", String(d.quorum)], ["MCP", d.mcpExposed ? `exposed · ${d.disabledTools.length} tools off` : "hidden"]];
+            const more = d.schemas.length > 1 ? ` +${d.schemas.length - 1}` : "";
+            const cfg = [["Source", dbx ? `databricks · ${d.catalog}.${d.schema}${more}` : `postgres · ${d.catalog}_${d.schema}${more}`], ["Base IRI", d.base_iri], ["Review quorum", String(d.quorum)], ["MCP", d.mcpExposed ? `exposed · ${d.disabledTools.length} tools off` : "hidden"]];
             return (
               <Card key={d.name} style={{ borderRadius: 12, display: "flex", flexDirection: "column", gap: 12 }}>
                 <div className="row between" style={{ gap: 10 }}>

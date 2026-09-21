@@ -93,3 +93,22 @@ describe("Versions screen", () => {
     expect(screen.queryByText(/Held by/)).toBeNull();
   });
 });
+
+describe("Configure screen · schemas", () => {
+  it("edits the domain's schema list: add from the source, make default, remove, save", async () => {
+    const api = new MockApi();
+    renderAt("#/d/rgm/settings", api);
+    const user = userEvent.setup();
+    const list = await screen.findByRole("list", { name: "Schemas" });
+    const chips = () => within(list).getAllByRole("listitem").map(li => li.querySelector(".mono")?.textContent + (li.textContent?.includes("default") ? " (default)" : ""));
+    expect(chips()).toEqual(["gold (default)", "silver"]);
+    await user.type(screen.getByLabelText("Add schema"), "bronze");
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    await user.click(within(list).getByRole("button", { name: "Make silver the default" }));
+    await user.click(within(list).getByRole("button", { name: "Remove gold" }));
+    expect(chips()).toEqual(["silver (default)", "bronze"]);
+    await user.click(screen.getByRole("button", { name: "Save source settings" }));
+    expect(await screen.findByText("Source settings saved")).toBeInTheDocument();
+    expect((await api.domain("rgm")).schemas).toEqual(["silver", "bronze"]);
+  });
+});

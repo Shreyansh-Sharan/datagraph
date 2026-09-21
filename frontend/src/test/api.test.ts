@@ -238,3 +238,41 @@ describe("version mechanism (rest)", () => {
     expect(rows[1].when).toMatch(/ago$/);
   });
 });
+
+describe("several schemas per domain", () => {
+  it("mock: keeps an ordered list whose first entry is the default, and lists the source's schemas", async () => {
+    const api = new MockApi();
+    expect((await api.domain("rgm")).schemas).toEqual(["gold", "silver"]);
+    let d = await api.updateDomain("rgm", { schemas: ["silver", "gold", "bronze"] });
+    expect(d.schemas).toEqual(["silver", "gold", "bronze"]); expect(d.schema).toBe("silver");
+    expect((await api.schemas("rgm")).map(s => s.id)).toEqual(["silver", "gold", "bronze"]);
+    expect((await api.schemas("rgm"))[0].label).toBe("rgm.silver");
+    d = await api.updateDomain("rgm", { default_schema: "bronze" });
+    expect(d.schemas).toEqual(["bronze", "silver", "gold"]);
+    expect((await api.sourceFacts("rgm")).schemas).toEqual(["bronze", "silver", "gold"]);
+    expect(await api.catalogSchemas("rgm")).toEqual(expect.arrayContaining(["gold", "silver", "bronze"]));
+  });
+  it("rest: reads the list from the domain and the source's schemas from the catalog", async () => {
+    const calls: string[] = [];
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      calls.push(`${init?.method ?? "GET"} ${url}${init?.body ? " " + init.body : ""}`);
+      const routes: Record<string, unknown> = {
+        "GET /api/auth/config": { mode: "header", header: "X-Actor", source: { kind: "postgres", catalog: null } },
+        "GET /api/domains/hr": { name: "hr", description: "", base_iri: "http://p/hr/", review_quorum: 1, schemas: ["people", "payroll"], default_schema: "people" },
+        "GET /api/domains/hr/versions/summary": [],
+        "GET /api/domains/cards": [{ name: "hr", version_count: 0, active_version: null, latest_version: null, triples: 0, last_build: null, source: { kind: "postgres", connection: null, catalog: null, schema: "people", schemas: ["people", "payroll"] }, mcp: { exposed: true, disabled_tools: [] } }],
+        "GET /api/catalog/schemas": ["people", "payroll", "public"],
+      };
+      const key = `${init?.method ?? "GET"} ${url}`;
+      if (key.startsWith("PUT /api/domains/hr")) return new Response(JSON.stringify(routes["GET /api/domains/hr"]));
+      return new Response(JSON.stringify(routes[key] ?? { detail: `no route ${key}` }), { status: key in routes ? 200 : 404 });
+    }) as typeof fetch;
+    const api = new RestApi({ base: "/api" });
+    const d = await api.domain("hr");
+    expect(d.schemas).toEqual(["people", "payroll"]); expect(d.schema).toBe("people");
+    expect((await api.schemas("hr")).map(s => s.label)).toEqual(["people", "payroll"]);
+    expect(await api.catalogSchemas("hr")).toEqual(["people", "payroll", "public"]);
+    await api.updateDomain("hr", { schemas: ["payroll", "people"] });
+    expect(calls).toContain('PUT /api/domains/hr {"schemas":["payroll","people"]}');
+  });
+});

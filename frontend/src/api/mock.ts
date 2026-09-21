@@ -60,7 +60,9 @@ export class MockApi implements DatagraphApi {
     if (patch.connection_id !== undefined) d.connectionId = patch.connection_id;
     if (patch.ai_connection_id !== undefined) d.aiConnectionId = patch.ai_connection_id;
     if (patch.default_catalog !== undefined) d.catalog = patch.default_catalog ?? d.catalog;
-    if (patch.default_schema !== undefined) d.schema = patch.default_schema ?? d.schema;
+    if (patch.schemas !== undefined) d.schemas = [...new Set(patch.schemas.map(x => x.trim()).filter(Boolean))];
+    if (patch.default_schema !== undefined) { const first = (patch.default_schema ?? "").trim(); d.schemas = (first ? [first] : []).concat(d.schemas.filter(x => x !== first)); }
+    if (patch.schemas !== undefined || patch.default_schema !== undefined) d.schema = d.schemas[0] ?? "";
     if (patch.materialization !== undefined) d.materialization = patch.materialization;
     if (patch.target_schema !== undefined) { d.targetSchema = patch.target_schema; d.target = patch.target_schema ?? ""; }
     return clone(d);
@@ -68,7 +70,7 @@ export class MockApi implements DatagraphApi {
   async sourceFacts(domain: string): Promise<SourceFacts> {
     const d = this.dom(domain); const c = this.conns.find(x => x.id === d.connectionId) ?? null; const a = this.conns.find(x => x.id === d.aiConnectionId) ?? null;
     const dbx = this.kind === "databricks";
-    return { kind: c?.kind ?? this.kind, connection: c?.name ?? null, connection_id: c?.id ?? null, catalog: c ? (d.catalog || String(c.config.catalog ?? "")) || null : (dbx ? "finops_metadata" : null), schema: d.schema || (c ? String(c.config.schema ?? "") : null) || null,
+    return { kind: c?.kind ?? this.kind, connection: c?.name ?? null, connection_id: c?.id ?? null, catalog: c ? (d.catalog || String(c.config.catalog ?? "")) || null : (dbx ? "finops_metadata" : null), schema: d.schema || (c ? String(c.config.schema ?? "") : null) || null, schemas: [...d.schemas],
       host: c ? String(c.config.host ?? c.config.endpoint ?? "") : null, auth_mode: "header", auth_header: dbx ? "X-Forwarded-Email" : "X-Actor", materialization: d.materialization.split(" ")[0] || "none", target_schema: d.targetSchema ?? d.target ?? null, last_test: c?.last_test ?? null,
       ai: a ? { connection: a.name, kind: a.kind, deployment: String(a.config.deployment ?? "") } : null };
   }
@@ -93,7 +95,7 @@ export class MockApi implements DatagraphApi {
   async createDomain(input: NewDomainInput): Promise<DomainSummary> {
     if (!/^[A-Za-z0-9_-]+$/.test(input.name)) throw new Error("Name may contain letters, digits, - and _ only");
     if (this.domainsState.some(d => d.name === input.name)) throw new Error(`Domain ${input.name} already exists`);
-    const d: DomainSummary = { name: input.name, description: input.description, base_iri: input.base_iri, quorum: input.quorum, schema: "gold", catalog: input.name, materialization: "view", target: `finops_metadata.${input.name}_graph`, mcpExposed: false, disabledTools: [], triples: "—", lastBuild: "never", versions: [], lease: null, review: null };
+    const d: DomainSummary = { name: input.name, description: input.description, base_iri: input.base_iri, quorum: input.quorum, schema: "gold", schemas: ["gold"], catalog: input.name, materialization: "view", target: `finops_metadata.${input.name}_graph`, mcpExposed: false, disabledTools: [], triples: "—", lastBuild: "never", versions: [], lease: null, review: null };
     this.domainsState.push(d); this.commentStore[d.name] = [];
     return clone(d);
   }
@@ -176,7 +178,8 @@ export class MockApi implements DatagraphApi {
   }
   async setMcp(domain: string, exposed: boolean) { this.dom(domain).mcpExposed = exposed; }
 
-  async schemas(domain: string) { const d = this.dom(domain); const cat = d.catalog; return ["gold", "silver", "bronze"].map(s => ({ id: s, label: this.kind === "databricks" ? `${cat}.${s}` : `${cat}_${s}` })); }
+  async schemas(domain: string) { const d = this.dom(domain); const cat = d.catalog; return d.schemas.map(s => ({ id: s, label: this.kind === "databricks" ? `${cat}.${s}` : `${cat}_${s}` })); }
+  async catalogSchemas(domain: string) { return [...new Set([...Object.keys(D.CATALOG), ...this.dom(domain).schemas])]; }
   async catalogTables(_domain: string, schema: string): Promise<CatalogTable[]> {
     if (this.kind === "databricks" && this.mockOpts.catalogDenied) throw new Error("[INSUFFICIENT_PERMISSIONS] User does not have USE CATALOG on Catalog 'finops_metadata'.");
     return this.wait((D.CATALOG[schema] || []).map(([name, cols, imported]) => ({ name, cols, imported, cls: D.TABLE_CLASS[name] || null })));

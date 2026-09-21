@@ -74,6 +74,14 @@ Wired to the API today: config, me, domains and cards, the **version mechanism**
 audit, catalog, ontology, mapping status, table preview, per-class SQL, builds with polling, search,
 entity, graph status, triples, connections (read-only, via the hub), domain settings, tasks, bundle export.
 
+### Schemas
+
+A domain reads from several schemas of one connection; a connection identifies the server and the
+credentials, not a schema. The Configure screen's Source card edits the ordered list (`schemas` on
+`PUT /domains/{name}`; the first entry is the default the catalog browser opens and short table names
+resolve against). `GET /catalog/schemas` lists what the source offers, so the picker suggests real
+names. The Metadata screen's schema picker is the domain's list.
+
 ### The version mechanism
 
 `GET /domains/{name}/versions/summary` is the one call behind the Versions and Overview screens: per

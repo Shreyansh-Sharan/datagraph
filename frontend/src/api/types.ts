@@ -44,7 +44,8 @@ export interface DomainSummary {
   description: string;
   base_iri: string;
   quorum: number;
-  schema: string;               // default schema for the catalog browser
+  schema: string;               // the default schema (first of `schemas`), for the catalog browser
+  schemas: string[];            // every source schema the domain reads, in priority order
   catalog: string;              // domain catalog (Databricks) or schema prefix (Postgres)
   materialization: string;
   target: string;               // warehouse publish target
@@ -121,8 +122,8 @@ export type ConnectorKind = "postgres" | "databricks" | "sqlserver" | "azure_ope
 export interface ConnectorField { name: string; label: string; kind: "text" | "password" | "number" | "select"; required: boolean; default: string | number | null; options: string[]; help: string | null; option_titles?: Record<string, string> | null; show_when?: Record<string, string | number | boolean> | null }
 export interface ConnectorSpec { kind: ConnectorKind; label: string; category: "source" | "ai"; secret_field: string; docs: string | null; fields: ConnectorField[]; source?: "local" | "hub" }
 export interface ConnectionRec { id: string; name: string; kind: ConnectorKind; config: Record<string, string | number>; has_secret: boolean; last_test: ConnResult | null; created_by: string | null; created_at: string; updated_at: string; source?: "local" | "hub" }
-export interface SourceFacts { kind: string; connection: string | null; connection_id: string | null; catalog: string | null; schema: string | null; host: string | null; auth_mode: string; auth_header: string; materialization: string; target_schema: string | null; last_test: ConnResult | null; ai: { connection: string | null; kind: string; deployment: string | null } | null; connections_backend?: "local" | "hub" | "none"; missing_connection_id?: string | null }
-export interface DomainSettingsPatch { description?: string; review_quorum?: number; base_iri?: string; connection_id?: string | null; ai_connection_id?: string | null; default_catalog?: string | null; default_schema?: string | null; materialization?: "none" | "view" | "table"; target_schema?: string | null }
+export interface SourceFacts { kind: string; connection: string | null; connection_id: string | null; catalog: string | null; schema: string | null; schemas?: string[]; host: string | null; auth_mode: string; auth_header: string; materialization: string; target_schema: string | null; last_test: ConnResult | null; ai: { connection: string | null; kind: string; deployment: string | null } | null; connections_backend?: "local" | "hub" | "none"; missing_connection_id?: string | null }
+export interface DomainSettingsPatch { description?: string; review_quorum?: number; base_iri?: string; connection_id?: string | null; ai_connection_id?: string | null; default_catalog?: string | null; schemas?: string[]; default_schema?: string | null; materialization?: "none" | "view" | "table"; target_schema?: string | null }
 export interface Task { title: string; sub: string; when: string; icon: string; go: { screen: string; domain?: string; version?: number } }
 export interface Principal { name: string; role: Role; seen: string }
 export interface ApiKey { name: string; prefix: string; role: Role }
@@ -149,7 +150,8 @@ export interface DatagraphApi {
   exportBundle(domain: string, version: number): Promise<unknown>;   // portable JSON of one version, for download
   setMcp(domain: string, exposed: boolean): Promise<void>;
 
-  schemas(domain: string): Promise<{ id: string; label: string }[]>;
+  schemas(domain: string): Promise<{ id: string; label: string }[]>;   // the domain's own schemas, labelled for the picker
+  catalogSchemas(domain: string): Promise<string[]>;                     // what the source offers, for choosing them
   catalogTables(domain: string, schema: string): Promise<CatalogTable[]>;
   tableDetail(domain: string, schema: string, table: string): Promise<TableDetail>;
   tableProfile(domain: string, table: string): Promise<TableProfile>;
