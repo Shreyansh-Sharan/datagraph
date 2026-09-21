@@ -175,8 +175,8 @@ h1, h2, h3, p { margin: 0; }
 .node .props { font-size: 10.5px; color: var(--muted-3); font-weight: 600; }
 .stage-legend { position: absolute; left: 12px; bottom: 12px; display: flex; gap: 14px; font-size: 11px; color: var(--muted); background: #fff; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--line); }
 .stage-legend span { display: inline-flex; align-items: center; gap: 6px; }
-.stage-tools { position: absolute; right: 12px; top: 12px; display: flex; gap: 4px; }
-.stage-tools button { width: 28px; height: 28px; border-radius: 6px; border: 1px solid var(--line); background: #fff; color: var(--muted); font: 600 13px var(--font); cursor: pointer; }
+.stage-tools { position: absolute; right: 12px; top: 12px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; max-width: calc(100% - 24px); }
+.stage-tools button { min-width: 28px; height: 28px; padding: 0 6px; border-radius: 6px; border: 1px solid var(--line); background: #fff; color: var(--muted); font: 600 12px var(--font); cursor: pointer; white-space: nowrap; }
 .stage-tools button:hover, .stage-tools button.active { color: var(--blue); border-color: var(--blue); }
 .stage-tools button.active { background: var(--blue-soft); }
 .stage-status { position: absolute; right: 12px; bottom: 12px; font-size: 11px; color: var(--muted-2); background: #fff; padding: 4px 8px; border-radius: 5px; border: 1px solid var(--line); }

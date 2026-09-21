@@ -43,7 +43,8 @@ export function Explore() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<string | null>(null);
   const status = useLoad(() => api.graphStatus(domain.name), [domain.name]);
-  const results = useLoad(() => api.search(domain.name, q, { type: typeIri || null, match: (match as "contains" | "exact" | "starts_with") || "contains" }), [domain.name, q, typeIri, match]);
+  // No query and no type: nothing to search for; the overview below is the first picture of the graph.
+  const results = useLoad(() => (q.trim() || typeIri) ? api.search(domain.name, q, { type: typeIri || null, match: (match as "contains" | "exact" | "starts_with") || "contains" }) : Promise.resolve(null), [domain.name, q, typeIri, match]);
   const entityId = entityParam;   // nothing chosen yet: the canvas shows the overview sample and the panel waits
   const ent = useLoad(() => entityId ? api.entity(domain.name, entityId) : Promise.resolve(null), [domain.name, entityId]);
   const overview = useLoad(() => api.graphOverview(domain.name, 300).catch(() => ({ nodes: [], edges: [] })), [domain.name]);

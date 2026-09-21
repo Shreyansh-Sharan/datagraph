@@ -205,6 +205,21 @@ describe("Build screen · checklist", () => {
 });
 
 
+describe("Explore screen · search", () => {
+  it("does not search with an empty query: the overview is the first picture, not 20 arbitrary hits", async () => {
+    const searched: string[] = [];
+    class Counting extends MockApi { override async search(d: string, q: string, o?: Parameters<MockApi["search"]>[2]) { searched.push(q); return super.search(d, q, o); } }
+    renderAt("#/d/rgm/explore", new Counting());
+    expect(await screen.findByRole("heading", { level: 1, name: "Explore" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/nodes ·/)).toBeInTheDocument());
+    expect(searched).toEqual([]);
+    const user = userEvent.setup();
+    await user.type(screen.getByPlaceholderText("Find an entity by label or IRI"), "smith");
+    await waitFor(() => expect(searched.some(q => q.length > 0)).toBe(true));
+  });
+});
+
+
 describe("Mapping screen", () => {
   it("maps an unmapped class to a snapshot table, binds an attribute from a dropdown and excludes another", async () => {
     const api = new MockApi();
