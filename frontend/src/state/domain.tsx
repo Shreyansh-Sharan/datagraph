@@ -36,8 +36,16 @@ export function useGo() {
 
 export function useParam(key: string, fallback = ""): [string, (v: string) => void] {
   const [sp, setSp] = useSearchParams();
-  const set = useCallback((v: string) => { const n = new URLSearchParams(sp); if (v) n.set(key, v); else n.delete(key); setSp(n, { replace: true }); }, [sp, setSp, key]);
+  // Functional update: two setters called in the same handler (schema + table) must not overwrite each other.
+  const set = useCallback((v: string) => { setSp(prev => { const n = new URLSearchParams(prev); if (v) n.set(key, v); else n.delete(key); return n; }, { replace: true }); }, [setSp, key]);
   return [sp.get(key) ?? fallback, set];
+}
+
+/** Several query params in one navigation. Two useParam setters in one handler would each start from
+ *  the render-time params and the second would discard the first; this writes them together. */
+export function useSetParams(): (patch: Record<string, string | number | null | undefined>) => void {
+  const [sp, setSp] = useSearchParams();
+  return useCallback(patch => { const n = new URLSearchParams(sp); for (const [k, v] of Object.entries(patch)) { if (v === undefined || v === null || v === "") n.delete(k); else n.set(k, String(v)); } setSp(n, { replace: true }); }, [sp, setSp]);
 }
 
 export function DomainProvider({ children }: { children: ReactNode }) {

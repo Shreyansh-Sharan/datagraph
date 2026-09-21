@@ -238,3 +238,16 @@ describe("Ontology screen · drafting", () => {
     expect((await api.ontology("aw", 1)).length).toBeGreaterThan(0);
   });
 });
+
+
+describe("Metadata screen · schema picker", () => {
+  it("switching the schema from the picker changes the table list", async () => {
+    renderAt("#/d/rgm/metadata?v=3");
+    const user = userEvent.setup();
+    expect(await screen.findByText("dim_customer")).toBeInTheDocument();
+    await user.selectOptions(await screen.findByLabelText("Schema"), "rgm.silver");
+    expect(await screen.findByText("promo_calendar")).toBeInTheDocument();
+    expect(screen.queryByText("dim_customer")).toBeNull();
+    expect(window.location.hash).toContain("schema=rgm.silver");
+  });
+});

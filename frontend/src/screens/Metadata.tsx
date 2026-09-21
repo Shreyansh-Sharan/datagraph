@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button, Card, Dot, ErrorNotice, Pill, Skeleton, Spinner, Tabs } from "@/components/ui";
 import { Icon } from "@/components/icons";
 import { useApp, useLoad } from "@/state/app";
-import { useDomain, useGo, useParam } from "@/state/domain";
+import { useDomain, useGo, useParam, useSetParams } from "@/state/domain";
 import { tableName } from "@/api";
 
 type Tab = "columns" | "dq" | "onto" | "glossary";
@@ -15,7 +15,8 @@ export function Metadata() {
   const { domain, version, editable } = useDomain();
   const go = useGo();
   const dbx = config.sourceKind === "databricks";
-  const [schemaParam, setSchema] = useParam("schema", "");
+  const [schemaParam] = useParam("schema", "");
+  const setParams = useSetParams();
   const [tableParam, setTable] = useParam("table", "");
   const [selected, setSelected] = useState<string[]>([]);
   const [importing, setImporting] = useState(false);
@@ -91,7 +92,7 @@ export function Metadata() {
       <div style={{ display: "grid", gridTemplateColumns: "300px minmax(0,1fr)", gap: 20, alignItems: "start" }}>
         <Card flush style={{ position: "sticky", top: 0 }}>
           <div style={{ padding: 12, display: "grid", gap: 8, borderBottom: "1px solid var(--line)" }}>
-            <select aria-label="Schema" className="select mono sm" style={{ fontWeight: 600, width: "100%" }} value={schema} onChange={e => { setSchema(e.target.value); setTable(""); }}>
+            <select aria-label="Schema" className="select mono sm" style={{ fontWeight: 600, width: "100%" }} value={schema} onChange={e => setParams({ schema: e.target.value, table: "" })}>
               {[...new Set((schemas.data ?? []).map(s => s.group ?? ""))].map(g => <optgroup key={g} label={g}>{(schemas.data ?? []).filter(s => (s.group ?? "") === g).map(s => <option key={s.id} value={s.id}>{s.label}</option>)}</optgroup>)}
             </select>
             <input aria-label="Search tables" className="input sm" placeholder="Search tables" value={search} onChange={e => setSearch(e.target.value)} />
