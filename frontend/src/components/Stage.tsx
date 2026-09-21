@@ -48,19 +48,22 @@ export function layoutNodes(nodes: StageNode[], edges: StageEdge[], layout: Stag
   return out;
 }
 
-type PillData = { node: StageNode; onSelect?: (id: string) => void };
+type PillData = { node: StageNode; onSelect?: (id: string) => void; attach: "TB" | "LR" | "center" };
 
 function Pill({ data }: NodeProps<Node<PillData>>) {
-  const { node: n, onSelect } = data;
+  const { node: n, onSelect, attach } = data;
   const h = HEIGHT[n.size ?? "md"]; const g = n.size === "lg" ? 26 : n.size === "sm" ? 20 : 24;
+  // Edges attach where the layout flows: top/bottom for ranks, left/right for LR, the centre for a star.
+  const [tIn, tOut] = attach === "LR" ? [Position.Left, Position.Right] : [Position.Top, Position.Bottom];
+  const centred = attach === "center" ? { top: "50%", left: "50%", transform: "translate(-50%, -50%)" } : undefined;
   return (
     <>
-      <Handle type="target" position={Position.Top} className="stage-handle" />
+      <Handle type="target" position={tIn} className="stage-handle" style={centred} />
       <button type="button" className={`node ${n.selected ? "selected" : ""}`} title={n.title} aria-pressed={n.selected} onClick={() => onSelect?.(n.id)}
         style={{ height: h, fontSize: n.size === "lg" ? 13 : n.size === "sm" ? 11.5 : 12.5, borderColor: n.selected ? "#2249FF" : n.border }}>
         <span className="glyph" style={{ width: g, height: g, background: n.fill, fontSize: n.size === "sm" ? 9 : 11 }}>{n.glyph}</span>{n.label}{n.props !== undefined && <span className="props">{n.props}</span>}
       </button>
-      <Handle type="source" position={Position.Bottom} className="stage-handle" />
+      <Handle type="source" position={tOut} className="stage-handle" style={centred} />
     </>
   );
 }
@@ -95,7 +98,8 @@ function StageInner({ nodes: allNodes, edges: allEdges, height, dotted, onSelect
   }, [allNodes, allEdges, focusOn, selectedId]);
   const positions = useMemo(() => layoutNodes(nodes, edges, layout ?? "dagre", direction, height), [nodes, edges, layout, direction, height]);
   const showAllLabels = edges.length <= 40;
-  const wanted = useMemo<Node<PillData>[]>(() => nodes.map(n => ({ id: n.id, type: "pill", position: positions[n.id] ?? { x: 0, y: 0 }, data: { node: n, onSelect }, draggable: true, selectable: false })), [nodes, positions, onSelect]);
+  const attach: PillData["attach"] = layout === "given" ? "center" : direction;
+  const wanted = useMemo<Node<PillData>[]>(() => nodes.map(n => ({ id: n.id, type: "pill", position: positions[n.id] ?? { x: 0, y: 0 }, data: { node: n, onSelect, attach }, draggable: true, selectable: false })), [nodes, positions, onSelect, attach]);
   // React Flow reports each node's measured size through onNodesChange; keeping the nodes in its own
   // state hook is what turns them visible. Recomputed nodes replace the state but keep measurements.
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState<Node<PillData>>(wanted);
@@ -103,10 +107,10 @@ function StageInner({ nodes: allNodes, edges: allEdges, height, dotted, onSelect
   const ids = useMemo(() => new Set(nodes.map(n => n.id)), [nodes]);
   const wantedEdges = useMemo<Edge[]>(() => edges.filter(e => ids.has(e.from) && ids.has(e.to)).map((e, i) => {
     const hot = selectedId !== undefined && (e.from === selectedId || e.to === selectedId);
-    return { id: `e${i}-${e.from}-${e.to}`, source: e.from, target: e.to, type: "default", label: showAllLabels || hot ? e.label : undefined,
+    return { id: `e${i}-${e.from}-${e.to}`, source: e.from, target: e.to, type: layout === "given" ? "straight" : "default", label: showAllLabels || hot ? e.label : undefined,
       style: { stroke: e.color ?? "#B9C4FF", strokeWidth: hot ? Math.max(2, e.width ?? 1.5) : e.width ?? 1.5, strokeDasharray: e.dashed ? "5 4" : undefined, opacity: selectedId && !hot ? 0.45 : 1 },
       labelStyle: { fontSize: 10.5, fontWeight: 600, fill: e.labelColor ?? "#7A7A80" }, labelBgStyle: { fill: "#fff", fillOpacity: 0.95 }, labelBgPadding: [5, 2] as [number, number], labelBgBorderRadius: 4, zIndex: hot ? 1 : 0 };
-  }), [edges, ids, selectedId, showAllLabels]);
+  }), [edges, ids, selectedId, showAllLabels, layout]);
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<Edge>(wantedEdges);
   useEffect(() => { setRfEdges(wantedEdges); }, [wantedEdges, setRfEdges]);
   const relayout = useCallback(() => setDirection(d => (d === "TB" ? "LR" : "TB")), []);
