@@ -43,6 +43,15 @@ Locally: run the hub (`uvicorn hub.main:app --port 8025` in the connectors repo)
 `ONTOFORGE_CONNECTIONS_HUB_URL=http://127.0.0.1:8025` for the datagraph API and
 `VITE_CONNECTIONS_URL=/hub` for this front end.
 
+**Reading through a domain's connection.** Browsing, previews, snapshots, drafts and builds open
+the domain's primary connection themselves: the API fetches its credentials from the hub with a
+service token (`GET /connections/{id}/credentials`, audited by the hub, never exposed to browsers
+or agents). Generate one token, put it in the hub's `CM_SERVICE_TOKENS` and in the API's
+`ONTOFORGE_CONNECTIONS_HUB_SERVICE_TOKEN`. Without it, only the deployment's own source
+(`ONTOFORGE_SOURCE_KIND` + `DATABRICKS_*`) is available, and a domain that names a connection
+gets a clear error saying so. Databricks connections need a personal access token; Postgres
+connections work as they are.
+
 ```bash
 npm test               # vitest: adapter naming/SQL dialects, lifecycle, builds, triples, Ask, shell rendering
 npm run build          # tsc + vite build → dist/ (served under /ui/)
