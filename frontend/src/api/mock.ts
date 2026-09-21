@@ -214,7 +214,8 @@ export class MockApi implements DatagraphApi {
   async schemas(domain: string) {
     const d = this.dom(domain);
     return d.sources.flatMap(src => { const c = this.conns.find(x => x.id === src.connectionId); const dbx = (c?.kind ?? this.kind) === "databricks"; const cat = src.catalog || (dbx ? d.catalog : null);
-      return src.schemas.map(sch => ({ id: dbx && cat ? `${cat}.${sch}` : sch, label: `${c?.name ?? "deployment default"} · ${dbx && cat ? `${cat}.` : ""}${sch}` })); });
+      const schemas = src.schemas.length ? src.schemas : Object.keys(D.CATALOG);   // none chosen: every schema the source offers
+      return schemas.map(sch => ({ id: dbx && cat ? `${cat}.${sch}` : sch, label: `${c?.name ?? "deployment default"} · ${dbx && cat ? `${cat}.` : ""}${sch}` })); });
   }
   async catalogSchemas(domain: string) { return [...new Set([...Object.keys(D.CATALOG), ...this.dom(domain).schemas])]; }
   async catalogTables(_domain: string, schema: string): Promise<CatalogTable[]> {

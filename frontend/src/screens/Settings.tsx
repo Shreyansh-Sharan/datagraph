@@ -101,7 +101,7 @@ export function Settings() {
                     </div>
                   </div>
                 ))}
-                <div className="muted-2 xs" style={{ marginTop: 4 }}>The primary source is listed first: the catalog browser opens there and short table names resolve against its first schema. Each source has its own schemas.</div>
+                <div className="muted-2 xs" style={{ marginTop: 4 }}>The primary source is listed first: the catalog browser opens there and short table names resolve against its first schema. Each source has its own schemas; leave them empty to browse all of them.</div>
               </div>
               <div className="grid two" style={{ gap: 12 }}>
                 <div><Label>Materialization</Label><select aria-label="Materialization" className="select full" value={mat} onChange={e => setMat(e.target.value as "none" | "view" | "table")}><option value="none">none (graph in Postgres only)</option><option value="view">view (publish triple views)</option><option value="table">table (publish tables, clustered)</option></select></div>
@@ -137,7 +137,7 @@ export function Settings() {
 
 /** Ordered schema chips: the first is the default; any other can be promoted or removed. */
 function SchemaList({ schemas, onChange }: { schemas: string[]; onChange: (s: string[]) => void }) {
-  if (schemas.length === 0) return <ul aria-label="Schemas" className="schema-list"><li className="muted small" style={{ listStyle: "none" }}>No schema yet · the source's default is used</li></ul>;
+  if (schemas.length === 0) return <ul aria-label="Schemas" className="schema-list"><li className="muted small" style={{ listStyle: "none" }}>No schema chosen · every schema of this source is browsed. Add some to narrow it down.</li></ul>;
   return (
     <ul aria-label="Schemas" className="schema-list">
       {schemas.map((s, i) => (

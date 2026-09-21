@@ -168,7 +168,9 @@ export class RestApi extends MockApi {
   override async schemas(domain: string): Promise<{ id: string; label: string }[]> {
     const f = await this.sourceFacts(domain);
     const entries = f.sources?.length ? f.sources : [{ kind: f.kind, connection: f.connection, catalog: f.catalog, schemas: f.schemas ?? (f.schema ? [f.schema] : []) }];
-    return entries.flatMap(src => { const dbx = src.kind === "databricks" && !!src.catalog;
+    const all = async (catalog: string | null) => this.req<string[]>("GET", `/catalog/schemas${catalog ? `?catalog=${encodeURIComponent(catalog)}` : ""}`).catch(() => [] as string[]);
+    const expanded = await Promise.all(entries.map(async src => ({ ...src, schemas: src.schemas.length ? src.schemas : await all(src.catalog) })));   // none chosen: every schema the source offers
+    return expanded.flatMap(src => { const dbx = src.kind === "databricks" && !!src.catalog;
       return src.schemas.map(sch => ({ id: dbx ? `${src.catalog}.${sch}` : sch, label: `${src.connection ?? "deployment default"} · ${dbx ? `${src.catalog}.` : ""}${sch}` })); });
   }
   override async catalogSchemas(domain: string): Promise<string[]> {

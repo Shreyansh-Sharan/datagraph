@@ -297,21 +297,26 @@ describe("several sources per domain", () => {
     expect((await api.catalogTables("rgm", "rgm.gold")).length).toBeGreaterThan(0);   // catalog-qualified ids browse the same tables
     await api.detachConnection("c-lake");
     expect((await api.domain("rgm")).sources.map(s => s.connectionId)).toEqual(["c-warehouse"]);
+    // a source with no schema chosen browses every schema the source offers
+    await api.updateDomain("rgm", { sources: [{ connection_id: "c-warehouse", catalog: "rgm", schemas: [] }] });
+    expect((await api.schemas("rgm")).map(s => s.id)).toEqual(["rgm.gold", "rgm.silver", "rgm.bronze"]);
   });
   it("rest: maps the backend's sources and sends the AI connection and sources on create", async () => {
     const calls: string[] = [];
-    globalThis.fetch = (async (url: string, init?: RequestInit) => {
-      calls.push(`${init?.method ?? "GET"} ${url}${init?.body ? " " + init.body : ""}`);
-      const dom = { name: "hr", description: "", base_iri: "http://p/hr/", review_quorum: 1, ai_connection_id: "ai-1", sources: [{ connection_id: "wh", catalog: "rgm", schemas: ["gold", "silver"] }, { connection_id: "lake", catalog: null, schemas: ["raw"] }], connection_id: "wh", default_catalog: "rgm", schemas: ["gold", "silver"], default_schema: "gold" };
-      const routes: Record<string, unknown> = {
+    const dom = { name: "hr", description: "", base_iri: "http://p/hr/", review_quorum: 1, ai_connection_id: "ai-1", sources: [{ connection_id: "wh", catalog: "rgm", schemas: ["gold", "silver"] }, { connection_id: "lake", catalog: null, schemas: ["raw"] }], connection_id: "wh", default_catalog: "rgm", schemas: ["gold", "silver"], default_schema: "gold" };
+    const routes: Record<string, unknown> = {
+        "GET /api/catalog/schemas?catalog=rgm": ["bronze", "gold"],
         "GET /api/auth/config": { mode: "header", header: "X-Actor", source: { kind: "databricks", catalog: "finops_metadata" } },
         "GET /api/domains/hr": dom, "GET /api/domains/hr/versions/summary": [],
         "GET /api/domains/cards": [{ name: "hr", version_count: 0, active_version: null, latest_version: null, triples: 0, last_build: null, source: { kind: "databricks", connection: "warehouse", catalog: "rgm", schema: "gold", schemas: ["gold", "silver"] }, source_count: 2, mcp: { exposed: true, disabled_tools: [] } }],
         "GET /api/domains/hr/source": { kind: "databricks", connection: "warehouse", connection_id: "wh", catalog: "rgm", schema: "gold", schemas: ["gold", "silver"], host: null, auth_mode: "header", auth_header: "X-Actor", materialization: "none", target_schema: null, last_test: null, ai: null, connections_backend: "hub",
           sources: [{ kind: "databricks", connection: "warehouse", connection_id: "wh", catalog: "rgm", schemas: ["gold", "silver"], host: null, last_test: null, missing_connection_id: null }, { kind: "postgres", connection: "lake", connection_id: "lake", catalog: null, schemas: ["raw"], host: null, last_test: null, missing_connection_id: null }] },
       };
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      calls.push(`${init?.method ?? "GET"} ${url}${init?.body ? " " + init.body : ""}`);
       const key = `${init?.method ?? "GET"} ${url}`;
       if (key === "POST /api/domains") return new Response(JSON.stringify(dom), { status: 201 });
+      if (key === "GET /api/domains/hr") return new Response(JSON.stringify(dom));
       return new Response(JSON.stringify(routes[key] ?? { detail: `no route ${key}` }), { status: key in routes ? 200 : 404 });
     }) as typeof fetch;
     const api = new RestApi({ base: "/api" });
@@ -319,6 +324,11 @@ describe("several sources per domain", () => {
     expect(d.sources).toEqual([{ connectionId: "wh", catalog: "rgm", schemas: ["gold", "silver"] }, { connectionId: "lake", catalog: null, schemas: ["raw"] }]);
     expect(d).toMatchObject({ connectionId: "wh", aiConnectionId: "ai-1", catalog: "rgm", schema: "gold" });
     expect((await api.schemas("hr")).map(s => [s.id, s.label])).toEqual([["rgm.gold", "warehouse · rgm.gold"], ["rgm.silver", "warehouse · rgm.silver"], ["raw", "lake · raw"]]);
+    // no schema chosen on the primary source: every schema of its catalog is offered
+    dom.sources[0].schemas = []; dom.schemas = [];
+    (routes["GET /api/domains/hr/source"] as { sources: { schemas: string[] }[] }).sources[0].schemas = [];
+    expect((await api.schemas("hr")).map(s => s.id)).toEqual(["rgm.bronze", "rgm.gold", "raw"]);
+    expect(calls.filter(c => c.startsWith("GET /api/catalog/schemas?catalog=rgm")).length).toBe(1);
     await api.createDomain({ name: "hr", description: "", base_iri: "http://p/hr/", quorum: 1, ai_connection_id: "ai-1", sources: [{ connection_id: "wh", catalog: null, schemas: [] }] });
     expect(calls).toContain('POST /api/domains {"name":"hr","description":"","base_iri":"http://p/hr/","review_quorum":1,"ai_connection_id":"ai-1","sources":[{"connection_id":"wh","catalog":null,"schemas":[]}]}');
   });
