@@ -9,6 +9,7 @@ import { Versions } from "@/screens/Versions";
 import { Ask } from "@/screens/Ask";
 import { Settings } from "@/screens/Settings";
 import { Metadata } from "@/screens/Metadata";
+import { Table } from "@/screens/Table";
 import { Ontology } from "@/screens/Ontology";
 import { Mapping } from "@/screens/Mapping";
 import { Rules } from "@/screens/Rules";
@@ -42,6 +43,7 @@ export function App({ api, connectionsUrl = CONNECTIONS_URL }: { api: DatagraphA
               <Route path="ask" element={<Ask inDomain />} />
               <Route path="settings" element={<Settings />} />
               <Route path="metadata" element={<NeedsVersion><Metadata /></NeedsVersion>} />
+              <Route path="table" element={<NeedsVersion><Table /></NeedsVersion>} />
               <Route path="ontology" element={<NeedsVersion><Ontology /></NeedsVersion>} />
               <Route path="mapping" element={<NeedsVersion><Mapping /></NeedsVersion>} />
               <Route path="rules" element={<NeedsVersion><Rules /></NeedsVersion>} />

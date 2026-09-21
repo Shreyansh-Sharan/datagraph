@@ -8,7 +8,7 @@ import { useApp, useLoad } from "@/state/app";
 import { useDomain, useGo, useParam, useSetParams } from "@/state/domain";
 import { tableName, type CatalogTable } from "@/api";
 
-type Tab = "columns" | "profile" | "glossary" | "dq";
+type Tab = "columns";
 type Status = "all" | "in" | "out" | "unmapped";
 type SchemaState = { loading: boolean; error: string | null; data: CatalogTable[] | null };
 type Row = { sid: string; label: string; short: string; t: CatalogTable; key: string };
@@ -30,16 +30,12 @@ export function Metadata() {
   const [tableParam] = useParam("table", "");
   const setParams = useSetParams();
   const [tab, setTab] = useParam("tab", "columns");
-  const [gq, setGq] = useParam("gq", "");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<Status>("all");
   const [only, setOnly] = useState<string[]>([]);          // schema ids ticked in the rail; none = every schema
   const [selected, setSelected] = useState<string[]>([]);  // `${schemaId}|${table}` keys ticked for import
   const [lastTick, setLastTick] = useState<string | null>(null);
   const [busy, setBusy] = useState<"import" | "one" | null>(null);
-  const [profiled, setProfiled] = useState(false);
-  const [dqRan, setDqRan] = useState(false);
-  const [gScope, setGScope] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
   // -- the source: every schema, every table, loaded at once ------------------------------------
@@ -76,25 +72,11 @@ export function Metadata() {
   const table = current?.t.name ?? "";
   const pick = (r: Row) => setParams({ schema: r.sid, table: r.t.name });
   const detail = useLoad(() => table ? api.tableDetail(domain.name, schema, table) : Promise.resolve(null), [domain.name, schema, table]);
-  const profile = useLoad(() => profiled && table ? api.tableProfile(domain.name, table) : Promise.resolve(null), [domain.name, table, profiled]);
-  const dq = useLoad(() => caps.quality && table ? api.tableDq(domain.name, table) : Promise.resolve([]), [domain.name, table, caps.quality]);
-  const glossary = useLoad(() => caps.glossary ? api.glossary(domain.name) : Promise.resolve([]), [domain.name, caps.glossary]);
   const tcls = useLoad(() => table ? api.tableClass(domain.name, full0(schema, table), version?.version) : Promise.resolve(null), [domain.name, schema, table, version?.version]);
   const cols = detail.data?.columns ?? [];
   const cls = tcls.data ?? current?.t.cls ?? null;
   const full = detail.data?.fullName ?? (schema.includes(".") ? full0(schema, table) : tableName(config.sourceKind, domain.catalog, schema, table));
   const keyCols = cols.filter(c => c.key === "pk").map(c => c.name);
-  const prof = profile.data;
-  const dqIssues = (dq.data ?? []).filter(d => d.kind !== "—");
-  const dqScore = cols.length ? Math.round(100 * (1 - dqIssues.length / cols.length)) : null;
-  const termByCol = Object.fromEntries((glossary.data ?? []).flatMap(g => g.cols.map(c => [c.split(".")[1], g.term])));
-  const glossaryRows = (glossary.data ?? []).filter(g => !gScope || g.cols.some(c => c.startsWith(`${table}.`))).filter(g => { const t = gq.trim().toLowerCase(); return !t || [g.term, g.def, g.cls, ...g.cols].join(" ").toLowerCase().includes(t); });
-  const glossaryForTable = (glossary.data ?? []).filter(g => g.cols.some(c => c.startsWith(`${table}.`))).length;
-  const dqRows = [
-    ...dqIssues.map(d => { const n = parseInt(d.count) || 0; return { name: d.kind === "drift" ? "Target table exists" : d.kind === "pattern" ? "Country is ISO-2" : "Quantity is positive", column: d.column, kind: d.kind, severity: d.kind === "pattern" ? "warning" : "violation", dot: d.kind === "pattern" ? GREY : ORANGE, count: n || "—", bad: n > 0 }; }),
-    ...(dqRan && cols[0] ? [{ name: "Key is unique", column: cols[0].name, kind: "unique", severity: "violation", dot: ORANGE, count: prof?.dup ?? "0", bad: !!prof && prof.dup !== "0" && prof.dup !== "—" }, { name: "Key not null", column: cols[0].name, kind: "min_count", severity: "violation", dot: ORANGE, count: 0, bad: false }] : []),
-  ];
-
   // -- ticking and the snapshot -----------------------------------------------------------------
   const importable = (r: Row) => editable && !r.t.imported;
   const toggle = (r: Row, range = false) => {
@@ -158,7 +140,8 @@ export function Metadata() {
 
   const source = dbx ? "databricks" : "postgres";
   const tiles: [string, string, number | null, string][] = [["Schemas in the source", "Schemas", schemas.data?.length ?? null, BLUE], ["Tables in the source", "Tables", anyLoading ? null : counts.all, BLUE], ["Tables in the snapshot", "In snapshot", anyLoading ? null : counts.in, ORANGE]];
-  const tabs = [{ id: "columns" as Tab, label: "Columns", count: detail.data ? cols.length : false as const }, ...(caps.profiling ? [{ id: "profile" as Tab, label: "Profile" }] : []), ...(caps.glossary ? [{ id: "glossary" as Tab, label: "Glossary", count: (glossaryForTable || false) as number | false }] : []), ...(caps.quality ? [{ id: "dq" as Tab, label: "Data quality", count: dqScore != null ? `${dqScore}%` : false as const }] : [])];
+  const tabs = [{ id: "columns" as Tab, label: "Columns", count: detail.data ? cols.length : false as const }];
+  const openTable = (view: "profile" | "dq" | "glossary") => current && go("table", { schema: current.sid, table: current.t.name, tab: view });
 
   return (
     <div className="meta">
@@ -239,21 +222,20 @@ export function Metadata() {
                     <div><dt>Class</dt><dd>{cls ? <a href="#" onClick={e => { e.preventDefault(); go("ontology", { cls, view: "map" }); }}>{cls}</a> : "—"}</dd></div>
                     <div><dt>Columns</dt><dd>{detail.data ? cols.length : current.t.cols}</dd></div>
                     <div><dt>Key</dt><dd>{keyCols.length ? keyCols.join(", ") : "—"}</dd></div>
-                    {caps.quality && <div><dt>DQ score</dt><dd>{dqScore != null ? `${dqScore}%` : "—"}</dd></div>}
                   </dl>
                   {current.t.imported
                     ? <Button onClick={removeCurrent} disabled={!editable || !!busy} title={editable ? "Take the table out of this draft's snapshot" : "Only the lease holder of a draft can change the snapshot"}>{busy === "one" && <Spinner blue />}Remove from snapshot</Button>
                     : <Button onClick={addCurrent} disabled={!editable || !!busy} title={editable ? "Capture columns, keys and comments into this draft" : "Only the lease holder of a draft can change the snapshot"}>{busy === "one" && <Spinner blue />}Add to snapshot</Button>}
                 </div>
               </div>
-              {(caps.profiling || caps.glossary || caps.quality) && (
+              {current.t.imported && (
                 <div className="act-tiles">
-                  {caps.profiling && <button type="button" className="act-tile" aria-pressed={tab === "profile"} onClick={() => { setProfiled(true); setTab("profile"); }}><span className="ic"><Icon name="analytics" size={12} /></span><span><b>Profile</b><span>Rows, nulls, ranges</span></span></button>}
-                  {caps.glossary && <button type="button" className="act-tile" aria-pressed={tab === "glossary"} onClick={() => setTab("glossary")}><span className="ic"><Icon name="rules" size={12} /></span><span><b>Glossary</b><span>Terms and KPIs</span></span></button>}
-                  {caps.quality && <button type="button" className="act-tile" aria-pressed={tab === "dq"} onClick={() => setTab("dq")}><span className="ic"><Icon name="quality" size={12} /></span><span><b>Table DQ</b><span>Rules and scores</span></span></button>}
+                  {caps.profiling && <button type="button" className="act-tile" onClick={() => openTable("profile")}><span className="ic"><Icon name="analytics" size={12} /></span><span><b>Profile</b><span>Rows, nulls, ranges</span></span></button>}
+                  {caps.glossary && <button type="button" className="act-tile" onClick={() => openTable("glossary")}><span className="ic"><Icon name="rules" size={12} /></span><span><b>Glossary</b><span>Terms and KPIs</span></span></button>}
+                  {caps.quality && <button type="button" className="act-tile" onClick={() => openTable("dq")}><span className="ic"><Icon name="quality" size={12} /></span><span><b>Table DQ</b><span>Rules and scores</span></span></button>}
                 </div>
               )}
-              <Tabs<Tab> value={tabs.some(t => t.id === tab) ? (tab as Tab) : "columns"} onChange={t => { if (t === "profile") setProfiled(true); setTab(t); }} items={tabs} />
+              <Tabs<Tab> value={tabs.some(t => t.id === tab) ? (tab as Tab) : "columns"} onChange={t => setTab(t)} items={tabs} />
 
               {(tab === "columns" || !tabs.some(t => t.id === tab)) && (
                 <>
@@ -262,66 +244,22 @@ export function Metadata() {
                   {detail.data && cols.length === 0 && <p className="muted" style={{ padding: "12px 0" }}>The catalog reports no columns for this table.</p>}
                   {cols.length > 0 && (
                     <table className="cols">
-                      <colgroup><col style={{ width: "40%" }} /><col style={{ width: 88 }} /><col /><col style={{ width: 44 }} />{caps.quality && <col style={{ width: 64 }} />}</colgroup>
-                      <thead><tr><th>Column</th><th>Type</th><th>Description</th><th>Key</th>{caps.quality && <th style={{ textAlign: "right" }}>DQ</th>}</tr></thead>
+                      <colgroup><col style={{ width: "40%" }} /><col style={{ width: 88 }} /><col /><col style={{ width: 44 }} /></colgroup>
+                      <thead><tr><th>Column</th><th>Type</th><th>Description</th><th>Key</th></tr></thead>
                       <tbody>
-                        {cols.map(c => { const issue = dqIssues.find(d => d.column === c.name); const term = termByCol[c.name]; return (
+                        {cols.map(c => (
                           <tr key={c.name}>
-                            <td className="name" title={c.name}>{c.name}{term && <> <a href="#" className="pill mini" title="Glossary term" style={{ fontFamily: "var(--font)" }} onClick={e => { e.preventDefault(); setTab("glossary"); setGq(term); }}>{term}</a></>}</td>
+                            <td className="name" title={c.name}>{c.name}</td>
                             <td className="type">{c.type}</td>
                             <td className="desc">{c.comment || <span className="muted-3">—</span>}</td>
                             <td className={`key ${c.keyInferred ? "inferred" : ""}`} title={c.key ? (c.keyInferred ? "Inferred from the name" : "Declared in the catalog") : undefined}>{c.key === "pk" ? "PK" : c.key === "fk" ? "FK" : ""}</td>
-                            {caps.quality && <td className="num" style={{ textAlign: "right", fontWeight: 700, color: issue ? "var(--orange-text)" : "var(--blue-dark)" }}>{issue ? `${issue.count} bad` : "100%"}</td>}
-                          </tr>); })}
+                          </tr>))}
                       </tbody>
                     </table>
                   )}
                 </>
               )}
 
-              {tab === "profile" && caps.profiling && (
-                <div style={{ padding: "12px 0" }}>
-                  {profile.loading && <Skeleton h={60} />}
-                  {prof && <>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 8, marginBottom: 12 }}>
-                      {[["Rows", prof.rows, "count(*)"], ["Nulls", String(Object.values(prof.cols).filter(c => c[0] > 0).length), "columns with nulls"], ["Duplicates", prof.dup, "on inferred key"], ["Freshness", prof.fresh, "last ETL write"]].map(([k, v, sub]) => <div key={k} style={{ padding: "10px 12px", border: "1px solid var(--line)", borderRadius: 8 }}><div className="label-caps" style={{ fontSize: 10.5 }}>{k}</div><div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-.02em" }}>{v}</div><div className="muted-3" style={{ fontSize: 11 }}>{sub}</div></div>)}
-                    </div>
-                    <table className="cols"><thead><tr><th>Column</th><th>Nulls</th><th>Distinct</th></tr></thead><tbody>
-                      {cols.map(c => { const p = prof.cols[c.name] ?? [0, 0]; const color = p[0] > 30 ? "#B84F00" : p[0] > 0 ? "#5F5F60" : BLUE; return <tr key={c.name}><td className="name">{c.name}</td><td><span className="row"><span style={{ width: 44, height: 6, borderRadius: 3, background: "var(--surface-3)", overflow: "hidden" }}><i style={{ display: "block", height: "100%", width: `${Math.max(2, p[0])}%`, background: color }} /></span><span className="mono" style={{ fontSize: 11.5, color }}>{p[0]}%</span></span></td><td className="mono" style={{ fontSize: 11.5 }}>{p[1].toLocaleString()}</td></tr>; })}
-                    </tbody></table>
-                    {dbx && <div style={{ marginTop: 10 }}><Button size="sm" variant="outline" onClick={() => say(`Inferred keys for ${table}`)}>Infer keys</Button></div>}
-                  </>}
-                </div>
-              )}
-
-              {tab === "glossary" && caps.glossary && (
-                <div style={{ padding: "12px 0" }}>
-                  <div className="row" style={{ marginBottom: 12 }}>
-                    <div className="search-wrap"><Icon name="search" stroke="#7A7A80" /><input aria-label="Search glossary" className="input sm" placeholder="Terms, classes, columns…" value={gq} onChange={e => setGq(e.target.value)} /></div>
-                    <Button size="sm" active={gScope} onClick={() => setGScope(s => !s)} style={{ whiteSpace: "nowrap" }}>This table only</Button>
-                    <Button size="sm" variant="primary" onClick={() => say("New glossary term")}>New term</Button>
-                  </div>
-                  {glossaryRows.map(g => (
-                    <div key={g.term} style={{ padding: "10px 0", borderTop: "1px solid var(--line-2)" }}>
-                      <div className="row between" style={{ alignItems: "baseline", gap: 10 }}><strong style={{ fontSize: 13, fontWeight: 700 }}>{g.term}</strong><span className="muted-2" style={{ fontSize: 11 }}>{g.steward}</span></div>
-                      <div style={{ fontSize: 12.5, color: "var(--ink-2)", margin: "4px 0 8px" }}>{g.def}</div>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, fontSize: 11 }}><a href="#" className="pill blue" onClick={e => { e.preventDefault(); go("ontology", { cls: g.cls, view: "map" }); }}>{g.cls}</a>{g.cols.map(c => <span key={c} className="pill outline mono" style={{ color: "var(--muted)", fontWeight: 400 }}>{c}</span>)}</div>
-                    </div>
-                  ))}
-                  {glossaryRows.length === 0 && <p className="muted" style={{ fontSize: 12.5 }}>No term matches “{gq}”. <a href="#" style={{ fontWeight: 600 }} onClick={e => { e.preventDefault(); say(`Creating term “${gq}”`); }}>Create it</a>.</p>}
-                </div>
-              )}
-
-              {tab === "dq" && caps.quality && (
-                <div style={{ padding: "12px 0" }}>
-                  <div className="row between" style={{ marginBottom: 12 }}><div className="muted" style={{ fontSize: 12.5 }}>Constraints that touch <span className="mono">{table}</span>.</div><div className="row"><Button size="sm" onClick={() => go("quality")}>Open Data quality</Button><Button size="sm" variant="primary" onClick={() => { setDqRan(true); if (!profiled) setProfiled(true); say(`Quick checks on ${table} · ${dqRows.length + (dqRan ? 0 : 2)} constraints run`); }}>Run quick checks</Button></div></div>
-                  <table className="cols"><thead><tr><th>Constraint</th><th>Column</th><th>Severity</th><th style={{ textAlign: "right" }}>Violations</th></tr></thead><tbody>
-                    {dqRows.map((r, i) => <tr key={i}><td style={{ fontWeight: 600 }}>{r.name}</td><td className="type">{r.column} · {r.kind}</td><td><span className="row"><Dot color={r.dot} />{r.severity}</span></td><td className="num" style={{ textAlign: "right", fontWeight: 700, color: r.bad ? "#B84F00" : "var(--ink)" }}>{r.count}</td></tr>)}
-                    {dqRows.length === 0 && <tr><td colSpan={4} className="muted">No constraint touches this table yet.</td></tr>}
-                  </tbody></table>
-                  <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}><span className="muted small">Add a quick check:</span>{["unique", "min_count", "pattern", "in", "no_orphans"].map(k => <Button key={k} dashed className="mono" style={{ fontSize: 11.5 }} onClick={() => say(`Added ${k} check on ${table}`)}>{k}</Button>)}</div>
-                </div>
-              )}
             </>
           )}
         </aside>

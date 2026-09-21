@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { MockApi } from "@/api/mock";
+import { askTerm } from "@/api";
 import { RestApi } from "@/api/rest";
 import { compileClassSql, tableName } from "@/api/types";
 import { answer } from "@/screens/askEngine";
@@ -89,7 +90,7 @@ describe("MockApi", () => {
 });
 
 describe("Ask", () => {
-  const ctx = async (kind: "databricks" | "postgres" = "databricks") => { const api = new MockApi({ sourceKind: kind }); return { domain: "rgm", domains: await api.domains(), glossary: await api.glossary("rgm"), classes: await api.ontology("rgm", 3), mapping: await api.mapping("rgm", 3), sourceKind: kind }; };
+  const ctx = async (kind: "databricks" | "postgres" = "databricks") => { const api = new MockApi({ sourceKind: kind }); return { domain: "rgm", domains: await api.domains(), glossary: (await api.glossary("rgm")).map(askTerm), classes: await api.ontology("rgm", 3), mapping: await api.mapping("rgm", 3), sourceKind: kind }; };
   it("answers a glossary question with the term and links", async () => {
     const a = answer("What is net revenue?", await ctx());
     expect(a.term?.term).toBe("Net revenue"); expect(a.text).toContain("marc"); expect(a.links.map(l => l.screen)).toEqual(["explore", "quality"]);
@@ -579,10 +580,8 @@ describe("metadata screen data (rest)", () => {
   });
   it("says which extras the deployment offers instead of showing design data", async () => {
     const a = api();
-    expect((await a.config()).capabilities).toEqual({ profiling: false, quality: false, glossary: false, ontoDiffs: false });
-    expect(await a.tableDq("aw", "customer")).toEqual([]); expect(await a.glossary("aw")).toEqual([]); expect(await a.ontoDiffs("aw", "customer")).toEqual([]);
-    expect((await a.tableProfile("aw", "customer")).rows).toBe("—");
-    expect((await new MockApi().config()).capabilities).toEqual({ profiling: true, quality: true, glossary: true, ontoDiffs: true });
+    expect((await a.config()).capabilities).toEqual({ profiling: true, quality: true, glossary: true });
+    expect((await new MockApi().config()).capabilities).toEqual({ profiling: true, quality: true, glossary: true });
   });
 });
 

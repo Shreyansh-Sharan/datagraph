@@ -4,7 +4,7 @@ import type { DomainSummary, VersionInfo } from "@/api";
 import { useApp, useLoad } from "./app";
 import { EmptyState, Skeleton } from "@/components/ui";
 
-export type Screen = "overview" | "versions" | "ask" | "settings" | "metadata" | "ontology" | "mapping" | "rules" | "quality" | "build" | "explore" | "triples" | "analytics";
+export type Screen = "overview" | "versions" | "ask" | "settings" | "metadata" | "table" | "ontology" | "mapping" | "rules" | "quality" | "build" | "explore" | "triples" | "analytics";
 export const DESIGN_SCREENS: Screen[] = ["metadata", "ontology", "mapping", "rules", "quality", "build", "explore", "triples", "analytics"];
 
 interface DomainState {

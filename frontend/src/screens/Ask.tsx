@@ -4,7 +4,7 @@ import { Icon } from "@/components/icons";
 import { Button, Skeleton } from "@/components/ui";
 import { useApp, useLoad } from "@/state/app";
 import { answer, SUGGESTIONS, type AskAnswer, type AskLink } from "./askEngine";
-import type { DomainSummary } from "@/api";
+import { askTerm, type  DomainSummary } from "@/api";
 
 interface Turn extends AskAnswer { q: string }
 
@@ -22,7 +22,7 @@ export function Ask({ inDomain, domains: given, domain: domainProp }: { inDomain
     const dom = fixed ?? domainName;
     const d = domains.find(x => x.name === dom) ?? domains[0];
     const v = d?.versions[0]?.version ?? 0;
-    const [glossary, classes, mapping] = d && v ? await Promise.all([api.glossary(d.name), api.ontology(d.name, v), api.mapping(d.name, v)]) : [[], [], {}];
+    const [glossary, classes, mapping] = d && v ? await Promise.all([api.glossary(d.name).then(es => es.map(askTerm)), api.ontology(d.name, v), api.mapping(d.name, v)]) : [[], [], {}];
     return { domains, glossary, classes, mapping };
   }, [given, fixed, domainName]);
 

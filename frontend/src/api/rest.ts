@@ -2,7 +2,7 @@
 // Methods with a settled contract call the API; the rest fall through to the mock so the
 // app stays usable while integration proceeds. Replace fallbacks method by method.
 import { MockApi } from "./mock";
-import type { AiProgress, AuditEntry, BuildRun, GraphSample, SearchOptions, BuildStep, CatalogTable, ChecklistItem, DqColumnIssue, DriftIssue, GlossaryTerm, MappingKpis, OntoDiff, TableProfile, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, RefreshChange, SnapshotTable, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus } from "./types";
+import type { DqRule, DqRun, DqStatus, GlossaryEntry, RuleInput, TableProfile, TermInput, AiProgress, AuditEntry, BuildRun, GraphSample, SearchOptions, BuildStep, CatalogTable, ChecklistItem, DriftIssue, MappingKpis, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, RefreshChange, SnapshotTable, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus } from "./types";
 import { tableName } from "./types";
 import { humanAction, relTime } from "./format";
 
@@ -56,7 +56,7 @@ export class RestApi extends MockApi {
 
   override async config(): Promise<Config> {
     const c = await this.req<{ mode: "header" | "token"; header: string; source: { kind: "databricks" | "postgres"; catalog: string | null }; materialization?: string }>("GET", "/auth/config");
-    this.cfg = { sourceKind: c.source.kind, catalog: c.source.catalog, authMode: c.mode, authHeader: c.header, materialization: c.materialization ?? "none", capabilities: { profiling: false, quality: false, glossary: false, ontoDiffs: false } };
+    this.cfg = { sourceKind: c.source.kind, catalog: c.source.catalog, authMode: c.mode, authHeader: c.header, materialization: c.materialization ?? "none", capabilities: { profiling: true, quality: true, glossary: true } };
     return this.cfg;
   }
   override async me(): Promise<Me> { const m = await this.req<{ name: string; role: Role }>("GET", "/me"); return { name: m.name, role: m.role }; }
@@ -202,11 +202,40 @@ export class RestApi extends MockApi {
       return { name, cols: r.columns || t?.columns || 0, imported: !!t, cls: byTable.get(q) ?? null, held: t?.table ?? null }; });
   }
   override async tableClass(domain: string, table: string, version?: number): Promise<string | null> { return this.classOf(domain, version, table); }
-  // Not offered by this backend yet: the screens hide the affordances (see Config.capabilities) instead of showing design data.
-  override async tableProfile(_domain: string, _table: string): Promise<TableProfile> { return { rows: "—", fresh: "—", dup: "—", cols: {} }; }
-  override async tableDq(_domain: string, _table: string): Promise<DqColumnIssue[]> { return []; }
-  override async glossary(_domain: string): Promise<GlossaryTerm[]> { return []; }
-  override async ontoDiffs(_domain: string, _table: string): Promise<OntoDiff[]> { return []; }
+  // -- table insights ---------------------------------------------------------------------------------
+  private tpath(domain: string, version: number, table: string) { return `/versions/${this.vid(domain, version)}/tables/${encodeURIComponent(table)}`; }
+  override async tableProfile(domain: string, version: number, table: string): Promise<TableProfile | null> {
+    try { return await this.req<TableProfile>("GET", `${this.tpath(domain, version, table)}/profile`); }
+    catch (e) { if (e instanceof Error && /No profile/.test(e.message)) return null; throw e; }
+  }
+  override async runProfile(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<TableProfile> {
+    return this.aiJob<TableProfile>(`${this.tpath(domain, version, table)}/profile`, undefined, onProgress);
+  }
+  override async tableDq(domain: string, version: number, table: string): Promise<DqStatus> { return this.req<DqStatus>("GET", `${this.tpath(domain, version, table)}/dq`); }
+  override async runDq(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<DqRun> {
+    return this.aiJob<DqRun>(`${this.tpath(domain, version, table)}/dq/run`, undefined, onProgress);
+  }
+  override async addRule(domain: string, version: number, table: string, rule: RuleInput): Promise<DqRule> {
+    const r = await this.req<Omit<DqRule, "last">>("POST", `${this.tpath(domain, version, table)}/dq/rules`, rule);
+    return { ...r, last: null };
+  }
+  override async updateRule(ruleId: string, patch: Partial<RuleInput>): Promise<DqRule> { const r = await this.req<Omit<DqRule, "last">>("PUT", `/dq/rules/${ruleId}`, patch); return { ...r, last: null }; }
+  override async deleteRule(ruleId: string): Promise<void> { await this.req<void>("DELETE", `/dq/rules/${ruleId}`); }
+  override async suggestRules(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<{ added: number; skipped: string[] }> {
+    const r = await this.aiJob<{ added: number; skipped?: string[] }>(`${this.tpath(domain, version, table)}/dq/suggest`, undefined, onProgress);
+    return { added: r.added, skipped: r.skipped ?? [] };
+  }
+  override async glossary(domain: string, opts?: { kind?: "term" | "metric"; table?: string; q?: string }): Promise<GlossaryEntry[]> {
+    const params = new URLSearchParams();
+    if (opts?.kind) params.set("kind", opts.kind);
+    if (opts?.table) params.set("table", opts.table);
+    if (opts?.q) params.set("q", opts.q);
+    const qs = params.toString();
+    return this.req<GlossaryEntry[]>("GET", `/domains/${encodeURIComponent(domain)}/glossary${qs ? `?${qs}` : ""}`);
+  }
+  override async addTerm(domain: string, term: TermInput): Promise<GlossaryEntry> { return this.req<GlossaryEntry>("POST", `/domains/${encodeURIComponent(domain)}/glossary`, term); }
+  override async updateTerm(id: string, patch: Partial<TermInput>): Promise<GlossaryEntry> { return this.req<GlossaryEntry>("PUT", `/glossary/${id}`, patch); }
+  override async deleteTerm(id: string): Promise<void> { await this.req<void>("DELETE", `/glossary/${id}`); }
   private toSnapshot(t: { table: string; comment: string | null; columns: { name: string }[]; primary_key: string[]; captured_at?: string | null }): SnapshotTable {
     return { table: t.table, columns: t.columns.length, columnNames: t.columns.map(c => c.name), comment: t.comment, primaryKey: t.primary_key ?? [], capturedAt: t.captured_at ?? null };
   }

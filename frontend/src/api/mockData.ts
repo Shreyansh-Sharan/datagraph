@@ -1,5 +1,5 @@
 // Design data for the mock adapter (rgm / hr / finops as drawn in the Datagraph UI design).
-import type { Analytics, ApiKey, Constraint, DomainSummary, EntityDetail, GlossaryTerm, Lock, OntoClass, OntoCheck, OntoDiff, Principal, Rule, Task } from "./types";
+import type { Analytics, ApiKey, Constraint, DomainSummary, EntityDetail, GlossaryTerm, Lock, OntoClass, OntoCheck, Principal, Rule, Task } from "./types";
 import type { ClassMapping, TablePreview } from "./types";
 
 const BASE = "http://polestar.ai/rgm";
@@ -66,10 +66,6 @@ export const GLOSSARY: GlossaryTerm[] = [
   { term: "Units", def: "Consumer units sold, not cases.", cls: "Sale", cols: ["fct_sales.qty"], steward: "marc" },
 ];
 export const TABLE_CLASS: Record<string, string> = { dim_customer: "Customer", dim_product: "Product", dim_store: "Store", dim_region: "Region", dim_brand: "Brand", dim_category: "Category", fct_sales: "Sale", fct_invoice: "Invoice", promo_calendar: "Promotion" };
-export const ONTO_DIFFS: Record<string, OntoDiff[]> = {
-  dim_customer: [{ kind: "new column", column: "credit_limit", note: "not in Customer", action: "Add as attribute" }, { kind: "new column", column: "parent_customer_id", note: "FK → dim_customer, no relationship", action: "Add as relationship" }, { kind: "new column", column: "is_key_account", note: "flag; KeyAccount subclass already exists", action: "Add as restriction" }],
-  fct_sales: [{ kind: "new column", column: "net_rev", note: "Sale.netRevenue exists but is unbound", action: "Bind in Mapping" }, { kind: "missing target", column: "channel_id", note: "Channel has no table (drift)", action: "Open in Mapping" }],
-};
 
 const changes = (xs: [string, string][]) => xs.map(([sign, text]) => ({ sign: sign as "+" | "-" | "~", text }));
 const review = (approved: number, quorum: number, rows: [string, string, "approved" | "pending"][]) => ({ approved, quorum, rows: rows.map(([who, note, state]) => ({ who, note, state })) });
@@ -166,4 +162,25 @@ export const CONNECTIONS = (kind: "databricks" | "postgres"): ConnectionRec[] =>
     : { id: "c-warehouse", name: "warehouse", kind: "postgres", config: { host: "localhost", port: 5439, database: "ontoforge", user: "ontoforge", schema: "public", sslmode: "prefer" }, has_secret: true, last_test: { ok: true, title: "Connected", detail: "PostgreSQL 16.4 · 17 tables in public", latency_ms: 38, at: "2026-09-21T09:12:00Z" }, created_by: "alice", created_at: "2026-09-14T10:00:00Z", updated_at: "2026-09-21T09:12:00Z" },
   { id: "c-lake", name: "lake", kind: "postgres", config: { host: "lake.internal", port: 5432, database: "lake", user: "reader", sslmode: "require" }, has_secret: true, last_test: null, created_by: "marc", created_at: "2026-09-19T10:00:00Z", updated_at: "2026-09-19T10:00:00Z" },
   { id: "c-gpt", name: "gpt-5.1", kind: "azure_openai", config: { endpoint: "https://polestar-openai.openai.azure.com", deployment: "gpt-5.1", api_version: "2024-08-01-preview" }, has_secret: true, last_test: { ok: true, title: "Connected", detail: "42 models available · deployment gpt-5.1", latency_ms: 412, at: "2026-09-20T16:40:00Z" }, created_by: "alice", created_at: "2026-09-15T08:00:00Z", updated_at: "2026-09-20T16:40:00Z" },
+];
+
+// Data-quality rules seeded per table (rate = the pass rate a run reports) and KPI metrics of the rgm glossary.
+export const DQ_SEED: Record<string, { name: string; column: string | null; kind: "not_null" | "unique" | "in_set" | "range" | "regex" | "referential" | "freshness" | "row_count" | "custom"; dimension: string; params: Record<string, unknown>; threshold: number; owner: string; rate: number }[]> = {
+  dim_customer: [
+    { name: "Primary key unique", column: "customer_id", kind: "unique", dimension: "uniqueness", params: {}, threshold: 1, owner: "Platform team", rate: 1 },
+    { name: "Country is ISO-2", column: "country_iso", kind: "regex", dimension: "validity", params: { pattern: "^[A-Z]{2}$" }, threshold: 0.95, owner: "Domain steward", rate: 0.87 },
+    { name: "Credit limit within range", column: "credit_limit", kind: "range", dimension: "validity", params: { min: 0, max: 5000000 }, threshold: 0.95, owner: "Finance BI", rate: 0.72 },
+    { name: "Row count within range", column: null, kind: "row_count", dimension: "volume", params: { min: 500, max: 1000 }, threshold: 1, owner: "Platform team", rate: 1 },
+  ],
+  fct_sales: [
+    { name: "Sale id unique", column: "sale_id", kind: "unique", dimension: "uniqueness", params: {}, threshold: 1, owner: "Platform team", rate: 1 },
+    { name: "Quantity positive", column: "qty", kind: "range", dimension: "validity", params: { min: 1 }, threshold: 0.99, owner: "Domain steward", rate: 0.992 },
+    { name: "Customer exists", column: "customer_id", kind: "referential", dimension: "consistency", params: { ref_table: "rgm.gold.dim_customer", ref_column: "customer_id" }, threshold: 0.99, owner: "Domain steward", rate: 0.97 },
+  ],
+};
+export const METRICS_SEED: { name: string; definition: string; formula: string; unit: string; frequency: string; owner: string; status: "pending" | "certified"; table: string; columns: string[] }[] = [
+  { name: "Net revenue", definition: "Revenue after discounts, before returns", formula: "sum(net_rev)", unit: "EUR", frequency: "Monthly", owner: "Finance BI", status: "certified", table: "rgm.gold.fct_sales", columns: ["net_rev"] },
+  { name: "Gross margin", definition: "Net revenue minus cost of goods", formula: "sum(net_rev) - sum(cogs)", unit: "EUR", frequency: "Monthly", owner: "Finance BI", status: "pending", table: "rgm.gold.fct_sales", columns: ["net_rev"] },
+  { name: "Active customers", definition: "Customers with a sale in the period", formula: "count(distinct customer_id) where has_sale", unit: "customers", frequency: "Monthly", owner: "Sales ops", status: "certified", table: "rgm.gold.dim_customer", columns: ["customer_id"] },
+  { name: "Promo uplift", definition: "Sales during a promotion over the baseline", formula: "sum(qty) / avg(baseline_qty) - 1", unit: "%", frequency: "Weekly", owner: "Trade marketing", status: "pending", table: "rgm.gold.fct_sales", columns: ["qty"] },
 ];

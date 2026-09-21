@@ -242,6 +242,66 @@ describe("Metadata screen", () => {
 });
 
 
+describe("Table screen", () => {
+  const at = (tab: string) => `#/d/rgm/table?v=3&schema=rgm.gold&table=dim_customer&tab=${tab}`;
+  it("profiles the table on demand and shows rows, nulls and ranges per column", async () => {
+    renderAt(at("profile"), new MockApi({ latency: 10 }));
+    const user = userEvent.setup();
+    expect(await screen.findByRole("heading", { level: 1, name: "dim_customer" })).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Run profile" }));
+    expect(await screen.findByText(/Profile of dim_customer updated/)).toBeInTheDocument();
+    expect(await screen.findByLabelText("Rows")).toHaveTextContent("612");
+    const prof = screen.getByRole("table", { name: "Column profile" });
+    expect(within(prof).getByText("credit_limit")).toBeInTheDocument();
+    expect(within(prof).getAllByText("PK")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Re-run profile" })).toBeInTheDocument();
+  });
+  it("shows the rules with their scores, filters them, adds one and runs them", async () => {
+    renderAt(at("dq"), new MockApi({ latency: 10 }));
+    const user = userEvent.setup();
+    expect(await screen.findByLabelText("Table score")).toHaveTextContent("90%");
+    const rules = screen.getByRole("table", { name: "Rules" });
+    expect(within(rules).getByText("Country is ISO-2")).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: /^Failing/ }));
+    expect(within(rules).queryByText("Country is ISO-2")).toBeNull();
+    expect(within(rules).getByText("Credit limit within range")).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: /^All/ }));
+    await user.click(screen.getByRole("button", { name: "+ New rule" }));
+    const dlg = screen.getByRole("dialog", { name: "New rule" });
+    await user.type(within(dlg).getByLabelText("Rule name"), "Segment known");
+    await user.selectOptions(within(dlg).getByLabelText("Kind"), "in_set");
+    await user.selectOptions(within(dlg).getByLabelText("Column"), "segment_code");
+    await user.type(within(dlg).getByLabelText("Allowed values (comma-separated)"), "MODERN_TRADE, WHOLESALE, ECOM");
+    await user.click(within(dlg).getByRole("button", { name: "Add rule" }));
+    expect(await screen.findByText("Rule Segment known added")).toBeInTheDocument();
+    expect(await within(rules).findByText("Segment known")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Run all rules" }));
+    expect(await screen.findByText("Rules of dim_customer run")).toBeInTheDocument();
+  });
+  it("lists the business terms and KPI metrics of the table, searches them and adds a term", async () => {
+    renderAt(at("glossary"));
+    const user = userEvent.setup();
+    expect(await screen.findByRole("heading", { level: 3, name: "Trade customer" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 3, name: "Net revenue" })).toBeNull();          // that one names fct_sales
+    await user.type(screen.getByLabelText("Search terms"), "credit");
+    expect(screen.getByRole("heading", { level: 3, name: "Credit limit" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 3, name: "Trade customer" })).toBeNull();
+    await user.clear(screen.getByLabelText("Search terms"));
+    await user.click(screen.getByRole("tab", { name: /KPI metrics/ }));
+    expect(await screen.findByRole("table", { name: "KPI metrics" })).toBeInTheDocument();
+    expect(screen.getByText("Active customers")).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: /Business terms/ }));
+    await user.click(screen.getByRole("button", { name: "+ New term" }));
+    const dlg = screen.getByRole("dialog", { name: "New business term" });
+    await user.type(within(dlg).getByLabelText("Name"), "Onboarding date");
+    await user.type(within(dlg).getByLabelText("Definition"), "First invoice date.");
+    await user.click(within(dlg).getByRole("button", { name: "Add term" }));
+    expect(await screen.findByText("Term Onboarding date added")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 3, name: "Onboarding date" })).toBeInTheDocument();
+  });
+});
+
+
 describe("Build screen", () => {
   it("runs a build, shows live steps and settles with the result in the history", async () => {
     renderAt("#/d/rgm/build?v=3", new MockApi({ stepScale: 1 }));

@@ -2,12 +2,11 @@
 // UI behaves like the real thing (lifecycle transitions, builds with live steps, comments).
 import * as D from "./mockData";
 import { compileClassSql, tableName } from "./types";
-import type { AiProgress, DomainSource, DriftIssue, GraphSample, SearchOptions, RefreshChange, SnapshotTable, SourceFactsEntry, SourceInput,
+import type { AiProgress, ColumnProfile, DqResult, DqRule, DqRun, DqStatus, GlossaryEntry, RuleInput, TableProfile, TermInput, DomainSource, DriftIssue, GraphSample, SearchOptions, RefreshChange, SnapshotTable, SourceFactsEntry, SourceInput,
   Analytics, ApiKey, AuditEntry, BuildRun, BuildStep, CatalogTable, ChecklistItem, ClassMapping, Comment, Config, ConnResult, Constraint,
-  DatagraphApi, DomainSummary, DqColumnIssue, EntityDetail, GlossaryTerm, GraphStatus, Lock, MappingKpis, Me, NewDomainInput, OntoCheck,
-  OntoClass, OntoDiff, Principal, Role, Rule, SearchHit, SourceKind, TableDetail, TablePreview, TableProfile, Task, TriplePage, TripleQuery,
-  VersionStatus, ConnectorSpec, ConnectionRec, SourceFacts, DomainSettingsPatch,
-} from "./types";
+  DatagraphApi, DomainSummary, EntityDetail, GraphStatus, Lock, MappingKpis, Me, NewDomainInput, OntoCheck,
+  OntoClass, Principal, Role, Rule, SearchHit, SourceKind, TableDetail, TablePreview, Task, TriplePage, TripleQuery,
+  VersionStatus, ConnectorSpec, ConnectionRec, SourceFacts, DomainSettingsPatch } from "./types";
 
 export interface MockOptions { sourceKind?: SourceKind; role?: Role; catalogDenied?: boolean; latency?: number; stepScale?: number }
 
@@ -121,7 +120,7 @@ export class MockApi implements DatagraphApi {
 
   async config(): Promise<Config> {
     const dbx = this.kind === "databricks";
-    return { sourceKind: this.kind, catalog: dbx ? "finops_metadata" : null, authMode: "header", authHeader: dbx ? "X-Forwarded-Email" : "X-Actor", materialization: dbx ? "view" : "view", capabilities: { profiling: true, quality: true, glossary: true, ontoDiffs: true } };
+    return { sourceKind: this.kind, catalog: dbx ? "finops_metadata" : null, authMode: "header", authHeader: dbx ? "X-Forwarded-Email" : "X-Actor", materialization: dbx ? "view" : "view", capabilities: { profiling: true, quality: true, glossary: true } };
   }
   async me(): Promise<Me> { return { name: "alice", role: this.role }; }
   async domains() { return this.wait(clone(this.domainsState)); }
@@ -258,13 +257,119 @@ export class MockApi implements DatagraphApi {
     const d = this.dom(domain); const ct = D.COLUMNS[table] || D.GENERIC_COLS;
     return { name: table, fullName: tableName(this.kind, d.catalog, schema, table), comment: ct.comment, columns: ct.cols.map(([name, type, comment, k]) => ({ name, type, comment, key: k || null, keyInferred: this.kind === "databricks" })) };
   }
-  async tableProfile(_domain: string, table: string): Promise<TableProfile> { return this.wait(D.PROFILE[table] || { rows: "—", fresh: "—", dup: "—", cols: {} }, 400); }
-  async tableDq(_domain: string, table: string): Promise<DqColumnIssue[]> {
-    const ct = D.COLUMNS[table] || D.GENERIC_COLS;
-    return ct.cols.filter(c => D.DQ_BY_COL[c[0]]).map(c => ({ column: c[0], count: D.DQ_BY_COL[c[0]][0], kind: D.DQ_BY_COL[c[0]][1] }));
+  // -- table insights: profile, data quality, glossary (in memory, seeded from the design data) ------
+  private profiles: Record<string, TableProfile> = {};
+  private dqState: Record<string, { rules: DqRule[]; runs: DqStatus["history"] }> = {};
+  private terms: Record<string, GlossaryEntry[]> = {};
+  private tkey(domain: string, version: number, table: string) { return `${domain}:${version}:${table.toLowerCase()}`; }
+  private buildProfile(table: string, actor: string): TableProfile {
+    const name = table.split(".").pop() ?? table; const cols = (D.COLUMNS[name] || D.GENERIC_COLS).cols; const p = D.PROFILE[name];
+    const rows = p ? parseInt(p.rows.replace(/,/g, "")) || 0 : 1000 + name.length * 37;
+    const columns: ColumnProfile[] = cols.map(([cname, type], i) => {
+      const [nullPct, distinct] = p?.cols[cname] ?? [i === 0 ? 0 : (i * 7) % 23, Math.max(1, Math.round(rows / (i + 1)))];
+      const rate = nullPct / 100; const t = type.toLowerCase(); const numeric = /int|decimal|numeric|double|float/.test(t); const temporal = /date|time/.test(t); const bool = /bool/.test(t);
+      return { name: cname, type, nulls: Math.round(rate * rows), null_rate: rate, distinct, min: numeric ? "1" : temporal ? "2019-01-01" : null, max: numeric ? String(rows * (i + 1)) : temporal ? "2026-09-21" : null,
+        top: bool ? "true" : !numeric && !temporal ? (i === 1 ? "Carrefour" : "MODERN_TRADE") : null, top_share: bool ? 0.81 : !numeric && !temporal ? 0.12 : null };
+    });
+    return { table, profiled_at: new Date().toISOString(), actor, sample_pct: 100, row_count: rows, size_bytes: rows * 128, last_modified: new Date(Date.now() - 20 * 3600e3).toISOString(), duplicate_keys: p ? (parseInt(p.dup) || 0) : 0, columns };
   }
-  async glossary(_domain: string): Promise<GlossaryTerm[]> { return clone(D.GLOSSARY); }
-  async ontoDiffs(_domain: string, table: string): Promise<OntoDiff[]> { return clone(D.ONTO_DIFFS[table] || []); }
+  async tableProfile(domain: string, version: number, table: string): Promise<TableProfile | null> { const p = this.profiles[this.tkey(domain, version, table)]; return p ? clone(p) : null; }
+  async runProfile(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<TableProfile> {
+    await this.stages(onProgress, ["Counting rows", `Profiling the columns of ${table.split(".").pop()}`], this.mockOpts.latency ?? 300);
+    const p = this.buildProfile(table, (await this.me()).name); this.profiles[this.tkey(domain, version, table)] = p; return clone(p);
+  }
+  private dq(domain: string, version: number, table: string) {
+    const k = this.tkey(domain, version, table);
+    if (!this.dqState[k]) {
+      const name = table.split(".").pop() ?? table; const seeds = D.DQ_SEED[name] ?? []; const now = Date.now();
+      const rules: DqRule[] = seeds.map((x, i) => ({ id: `r-${name}-${i}`, table_name: table, name: x.name, column_name: x.column, kind: x.kind, dimension: x.dimension, params: x.params, threshold: x.threshold, owner: x.owner, origin: "manual", enabled: true, last: null }));
+      const base = seeds.length ? seeds.reduce((a, x) => a + x.rate, 0) / seeds.length : 0;
+      const runs = seeds.length ? Array.from({ length: 13 }, (_, i) => ({ id: `run-${name}-${i}`, started_at: new Date(now - (13 - i) * 864e5).toISOString(), score: Math.round((base + ((i * 7) % 5 - 2) / 100) * 1e4) / 1e4, status: "succeeded" })) : [];
+      this.dqState[k] = { rules, runs };
+      if (rules.length) this.runDqNow(k, table);
+    }
+    return this.dqState[k];
+  }
+  private runDqNow(k: string, table: string): DqRun {
+    const st = this.dqState[k]; const seeds = D.DQ_SEED[table.split(".").pop() ?? table] ?? []; const ranAt = new Date().toISOString();
+    st.rules = st.rules.map(r => { if (!r.enabled) return r; const rate = seeds.find(x => x.name === r.name)?.rate ?? 0.97; const status: DqRule["last"] extends infer _ ? DqResult["status"] : never = rate >= r.threshold ? "passing" : rate >= r.threshold - 0.15 ? "warning" : "failing";
+      return { ...r, last: { pass_rate: rate, passed: Math.round(rate * 612), failed: Math.round((1 - rate) * 612), total: 612, status, error: null, ran_at: ranAt } }; });
+    const rates = st.rules.filter(r => r.enabled && r.last?.pass_rate != null).map(r => r.last!.pass_rate!);
+    const score = rates.length ? Math.round(rates.reduce((a, b) => a + b, 0) / rates.length * 1e4) / 1e4 : null;
+    const run = { id: `run-${Date.now()}-${st.runs.length}`, started_at: ranAt, score, status: "succeeded" };
+    st.runs = [...st.runs, run].slice(-14);
+    return { ...run, finished_at: ranAt, error: null };
+  }
+  private dqStatus(domain: string, version: number, table: string): DqStatus {
+    const st = this.dq(domain, version, table); const name = table.split(".").pop() ?? table; const cols = (D.COLUMNS[name] || D.GENERIC_COLS).cols; const prof = this.profiles[this.tkey(domain, version, table)];
+    const columns = cols.map(([c]) => { const rs = st.rules.filter(r => r.enabled && r.column_name === c && r.last?.pass_rate != null);
+      if (rs.length) return { name: c, score: Math.round(rs.reduce((a, r) => a + r.last!.pass_rate!, 0) / rs.length * 1e4) / 1e4, source: "rules" as const };
+      const pc = prof?.columns.find(x => x.name === c); return pc ? { name: c, score: Math.round((1 - pc.null_rate) * 1e4) / 1e4, source: "profile" as const } : { name: c, score: null, source: null }; });
+    const last = st.runs[st.runs.length - 1] ?? null;
+    const summary = { passing: 0, warning: 0, failing: 0 };
+    for (const r of st.rules) if (r.enabled && r.last && r.last.status in summary) summary[r.last.status as keyof typeof summary]++;
+    return { table, score: last?.score ?? null, last_run: last ? { ...last, finished_at: last.started_at, error: null } : null, history: clone(st.runs), rules: clone(st.rules), columns, summary };
+  }
+  async tableDq(domain: string, version: number, table: string): Promise<DqStatus> { return this.dqStatus(domain, version, table); }
+  async runDq(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<DqRun> {
+    const st = this.dq(domain, version, table);
+    await this.stages(onProgress, [`Running ${st.rules.filter(r => r.enabled).length} rules on ${table.split(".").pop()}`], this.mockOpts.latency ?? 300);
+    return this.runDqNow(this.tkey(domain, version, table), table);
+  }
+  private editableVersion(domain: string, version: number) { const { v } = this.ver(domain, version); if (v.status !== "draft") throw new Error("Only draft versions can be edited"); }
+  async addRule(domain: string, version: number, table: string, rule: RuleInput): Promise<DqRule> {
+    this.editableVersion(domain, version);
+    const name = table.split(".").pop() ?? table; const cols = (D.COLUMNS[name] || D.GENERIC_COLS).cols.map(c => c[0]);
+    if (rule.column && !cols.includes(rule.column)) throw new Error(`Unknown column '${rule.column}' on ${table}`);
+    const dims: Record<string, string> = { not_null: "completeness", unique: "uniqueness", in_set: "validity", range: "validity", regex: "validity", referential: "consistency", freshness: "timeliness", row_count: "volume", custom: "validity" };
+    const r: DqRule = { id: `r-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, table_name: table, name: rule.name, column_name: rule.column ?? null, kind: rule.kind, dimension: rule.dimension ?? dims[rule.kind], params: rule.params ?? {}, threshold: rule.threshold ?? 0.95, owner: rule.owner ?? null, origin: "manual", enabled: rule.enabled ?? true, last: null };
+    this.dq(domain, version, table).rules.push(r); return clone(r);
+  }
+  private findRule(ruleId: string) { for (const st of Object.values(this.dqState)) { const r = st.rules.find(x => x.id === ruleId); if (r) return { st, r }; } throw new Error(`Rule ${ruleId} not found`); }
+  async updateRule(ruleId: string, patch: Partial<RuleInput>): Promise<DqRule> {
+    const { st, r } = this.findRule(ruleId);
+    const next: DqRule = { ...r, name: patch.name ?? r.name, column_name: patch.column === undefined ? r.column_name : patch.column, kind: patch.kind ?? r.kind, params: patch.params ?? r.params, threshold: patch.threshold ?? r.threshold, owner: patch.owner === undefined ? r.owner : patch.owner, enabled: patch.enabled ?? r.enabled };
+    st.rules = st.rules.map(x => (x.id === ruleId ? next : x)); return clone(next);
+  }
+  async deleteRule(ruleId: string): Promise<void> { const { st } = this.findRule(ruleId); st.rules = st.rules.filter(x => x.id !== ruleId); }
+  async suggestRules(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<{ added: number; skipped: string[] }> {
+    this.editableVersion(domain, version);
+    await this.stages(onProgress, [`Asking the AI provider for rules on ${table.split(".").pop()}`], this.mockOpts.latency ?? 600);
+    const st = this.dq(domain, version, table); const cols = (D.COLUMNS[table.split(".").pop() ?? table] || D.GENERIC_COLS).cols;
+    const want = [{ name: `${cols[0][0]} present`, column: cols[0][0], kind: "not_null" as const, dimension: "completeness" }, ...(cols[1] ? [{ name: `${cols[1][0]} present`, column: cols[1][0], kind: "not_null" as const, dimension: "completeness" }] : [])];
+    const fresh = want.filter(w => !st.rules.some(r => r.kind === w.kind && r.column_name === w.column));
+    for (const w of fresh) st.rules.push({ id: `r-ai-${Date.now()}-${w.column}`, table_name: table, name: w.name, column_name: w.column, kind: w.kind, dimension: w.dimension, params: {}, threshold: 0.95, owner: null, origin: "ai", enabled: true, last: null });
+    return { added: fresh.length, skipped: want.length === fresh.length ? [] : [`${want.length - fresh.length} already defined`] };
+  }
+  private glossaryOf(domain: string): GlossaryEntry[] {
+    if (!this.terms[domain]) {
+      const when = (d: number) => new Date(Date.now() - d * 864e5).toISOString();
+      this.terms[domain] = domain !== "rgm" ? [] : [
+        ...D.GLOSSARY.map((g, i): GlossaryEntry => ({ id: `t-${i}`, kind: "term", name: g.term, definition: g.def, status: i % 3 === 2 ? "draft" : "approved", schema_name: "gold", table_name: `rgm.gold.${g.cols[0].split(".")[0]}`, columns: g.cols.map(c => c.split(".")[1]), class_name: g.cls, formula: null, unit: null, frequency: null, owner: g.steward, updated_at: when(20 + i * 3), updated_by: g.steward })),
+        ...D.METRICS_SEED.map((m, i): GlossaryEntry => ({ id: `m-${i}`, kind: "metric", name: m.name, definition: m.definition, status: m.status, schema_name: "gold", table_name: m.table, columns: m.columns, class_name: null, formula: m.formula, unit: m.unit, frequency: m.frequency, owner: m.owner, updated_at: when(10 + i * 5), updated_by: m.owner }))];
+    }
+    return this.terms[domain];
+  }
+  async glossary(domain: string, opts?: { kind?: "term" | "metric"; table?: string; q?: string }): Promise<GlossaryEntry[]> {
+    const t = (opts?.q ?? "").trim().toLowerCase();
+    return clone(this.glossaryOf(domain).filter(e => (!opts?.kind || e.kind === opts.kind) && (!opts?.table || (e.table_name ?? "").toLowerCase() === opts.table.toLowerCase())
+      && (!t || [e.name, e.definition, e.formula ?? "", e.class_name ?? "", ...e.columns].join(" ").toLowerCase().includes(t))));
+  }
+  async addTerm(domain: string, term: TermInput): Promise<GlossaryEntry> {
+    const all = this.glossaryOf(domain);
+    if (!term.name?.trim()) throw new Error("A glossary entry needs a name");
+    if (all.some(e => e.kind === term.kind && e.name.toLowerCase() === term.name.trim().toLowerCase())) throw new Error(`A ${term.kind} named '${term.name}' already exists in this glossary`);
+    const parts = (term.table ?? "").split(".");
+    const e: GlossaryEntry = { id: `g-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, kind: term.kind, name: term.name.trim(), definition: term.definition ?? "", status: term.status ?? "draft", schema_name: parts.length >= 2 ? parts[parts.length - 2] : null, table_name: term.table ?? null, columns: term.columns ?? [], class_name: term.class_name ?? null, formula: term.formula ?? null, unit: term.unit ?? null, frequency: term.frequency ?? null, owner: term.owner ?? null, updated_at: new Date().toISOString(), updated_by: (await this.me()).name };
+    all.push(e); return clone(e);
+  }
+  private findTerm(id: string) { for (const [domain, all] of Object.entries(this.terms)) { const e = all.find(x => x.id === id); if (e) return { domain, e }; } throw new Error(`Glossary entry ${id} not found`); }
+  async updateTerm(id: string, patch: Partial<TermInput>): Promise<GlossaryEntry> {
+    const { domain, e } = this.findTerm(id);
+    const next: GlossaryEntry = { ...e, ...(patch.name !== undefined ? { name: patch.name } : {}), ...(patch.definition !== undefined ? { definition: patch.definition } : {}), ...(patch.status !== undefined ? { status: patch.status } : {}), ...(patch.columns !== undefined ? { columns: patch.columns } : {}), ...(patch.owner !== undefined ? { owner: patch.owner } : {}), ...(patch.class_name !== undefined ? { class_name: patch.class_name } : {}), ...(patch.formula !== undefined ? { formula: patch.formula } : {}), ...(patch.unit !== undefined ? { unit: patch.unit } : {}), ...(patch.frequency !== undefined ? { frequency: patch.frequency } : {}), updated_at: new Date().toISOString(), updated_by: (await this.me()).name };
+    this.terms[domain] = this.terms[domain].map(x => (x.id === id ? next : x)); return clone(next);
+  }
+  async deleteTerm(id: string): Promise<void> { const { domain } = this.findTerm(id); this.terms[domain] = this.terms[domain].filter(x => x.id !== id); }
   async tableClass(_domain: string, table: string, _version?: number) { return D.TABLE_CLASS[table] || null; }
 
   async ontology(domain: string, _version: number): Promise<OntoClass[]> { return clone(this.ontos[domain] ?? (D.DOMAINS.some(d => d.name === domain) ? D.CLASSES : [])); }

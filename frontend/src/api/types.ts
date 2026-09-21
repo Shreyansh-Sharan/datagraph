@@ -14,7 +14,7 @@ export interface Config {
   authMode: "header" | "token";
   authHeader: string;
   materialization: string;     // "none" | "view" | "table" (+ clustering notes)
-  capabilities: { profiling: boolean; quality: boolean; glossary: boolean; ontoDiffs: boolean };   // what this deployment offers beyond the core; screens hide the rest
+  capabilities: { profiling: boolean; quality: boolean; glossary: boolean };   // what this deployment offers beyond the core; screens hide the rest
 }
 
 export interface Me { name: string; role: Role }
@@ -75,10 +75,22 @@ export interface SnapshotTable { table: string; columns: number; columnNames: st
 export interface RefreshChange { table: string; missing: boolean; added: string[]; removed: string[]; modified: { column: string; from: string; to: string }[]; keys_changed: boolean }
 export interface CatalogColumn { name: string; type: string; comment: string; key: "pk" | "fk" | null; keyInferred: boolean }
 export interface TableDetail { name: string; fullName: string; comment: string; columns: CatalogColumn[] }
-export interface TableProfile { rows: string; fresh: string; dup: string; cols: Record<string, [number, number]> } // [null %, distinct]
+// -- table insights: profile, data quality, glossary ----------------------------------------------
+export interface ColumnProfile { name: string; type: string; nulls: number; null_rate: number; distinct: number | null; min: string | null; max: string | null; top: string | null; top_share: number | null }
+export interface TableProfile { table: string; profiled_at: string; actor: string | null; sample_pct: number; row_count: number | null; size_bytes: number | null; last_modified: string | null; duplicate_keys: number | null; columns: ColumnProfile[] }
+export type DqKind = "not_null" | "unique" | "in_set" | "range" | "regex" | "referential" | "freshness" | "row_count" | "custom";
+export type DqRuleStatus = "passing" | "warning" | "failing" | "error";
+export interface DqResult { pass_rate: number | null; passed: number | null; failed: number | null; total: number | null; status: DqRuleStatus; error: string | null; ran_at: string }
+export interface DqRule { id: string; table_name: string; name: string; column_name: string | null; kind: DqKind; dimension: string; params: Record<string, unknown>; threshold: number; owner: string | null; origin: "manual" | "ai"; enabled: boolean; last: DqResult | null }
+export interface DqRun { id: string; started_at: string; finished_at: string | null; score: number | null; status: string; error: string | null }
+export interface DqStatus { table: string; score: number | null; last_run: DqRun | null; history: { id: string; started_at: string; score: number | null; status: string }[]; rules: DqRule[]; columns: { name: string; score: number | null; source: "rules" | "profile" | null }[]; summary: { passing: number; warning: number; failing: number } }
+export interface RuleInput { name: string; kind: DqKind; column?: string | null; params?: Record<string, unknown>; dimension?: string | null; threshold?: number; owner?: string | null; enabled?: boolean }
+export type GlossaryStatus = "draft" | "pending" | "approved" | "certified";
+export interface GlossaryEntry { id: string; kind: "term" | "metric"; name: string; definition: string; status: GlossaryStatus; schema_name: string | null; table_name: string | null; columns: string[]; class_name: string | null; formula: string | null; unit: string | null; frequency: string | null; owner: string | null; updated_at: string; updated_by: string | null }
+export interface TermInput { kind: "term" | "metric"; name: string; definition?: string; table?: string | null; columns?: string[]; status?: GlossaryStatus; owner?: string | null; class_name?: string | null; formula?: string | null; unit?: string | null; frequency?: string | null }
+/** The Ask assistant's view of a glossary entry. */
 export interface GlossaryTerm { term: string; def: string; cls: string; cols: string[]; steward: string }
-export interface OntoDiff { kind: string; column: string; note: string; action: string }
-export interface DqColumnIssue { column: string; count: string; kind: string }
+export const askTerm = (e: GlossaryEntry): GlossaryTerm => ({ term: e.name, def: e.definition, cls: e.class_name ?? "", cols: e.columns.map(c => `${(e.table_name ?? "").split(".").pop() ?? ""}.${c}`), steward: e.owner ?? "" });
 
 // -- ontology ------------------------------------------------------------------------
 export interface OntoClass { id: string; iri: string; x: number; y: number; desc: string; parents: string[]; attrs: { name: string; range: string }[]; rels: { name: string; target: string }[] }
@@ -171,10 +183,18 @@ export interface DatagraphApi {
   refreshSnapshot(domain: string, version: number): Promise<RefreshChange[]>;
   removeTable(domain: string, version: number, table: string): Promise<void>;   // drop one table (its snapshot name) from the draft's snapshot
   tableDetail(domain: string, schema: string, table: string): Promise<TableDetail>;
-  tableProfile(domain: string, table: string): Promise<TableProfile>;
-  tableDq(domain: string, table: string): Promise<DqColumnIssue[]>;
-  glossary(domain: string): Promise<GlossaryTerm[]>;
-  ontoDiffs(domain: string, table: string): Promise<OntoDiff[]>;
+  tableProfile(domain: string, version: number, table: string): Promise<TableProfile | null>;                       // the saved profile, or null before the first run
+  runProfile(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<TableProfile>;
+  tableDq(domain: string, version: number, table: string): Promise<DqStatus>;
+  runDq(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<DqRun>;
+  addRule(domain: string, version: number, table: string, rule: RuleInput): Promise<DqRule>;
+  updateRule(ruleId: string, patch: Partial<RuleInput>): Promise<DqRule>;
+  deleteRule(ruleId: string): Promise<void>;
+  suggestRules(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<{ added: number; skipped: string[] }>;
+  glossary(domain: string, opts?: { kind?: "term" | "metric"; table?: string; q?: string }): Promise<GlossaryEntry[]>;
+  addTerm(domain: string, term: TermInput): Promise<GlossaryEntry>;
+  updateTerm(id: string, patch: Partial<TermInput>): Promise<GlossaryEntry>;
+  deleteTerm(id: string): Promise<void>;
   tableClass(domain: string, table: string, version?: number): Promise<string | null>;
 
   ontology(domain: string, version: number): Promise<OntoClass[]>;
