@@ -247,7 +247,7 @@ describe("several schemas per domain", () => {
     let d = await api.updateDomain("rgm", { schemas: ["silver", "gold", "bronze"] });
     expect(d.schemas).toEqual(["silver", "gold", "bronze"]); expect(d.schema).toBe("silver");
     expect((await api.schemas("rgm")).map(s => s.id)).toEqual(["rgm.silver", "rgm.gold", "rgm.bronze"]);
-    expect((await api.schemas("rgm"))[0].label).toBe("warehouse · rgm.silver");
+    expect((await api.schemas("rgm"))[0]).toMatchObject({ label: "rgm.silver", group: "warehouse" });
     d = await api.updateDomain("rgm", { default_schema: "bronze" });
     expect(d.schemas).toEqual(["bronze", "silver", "gold"]);
     expect((await api.sourceFacts("rgm")).schemas).toEqual(["bronze", "silver", "gold"]);
@@ -272,7 +272,7 @@ describe("several schemas per domain", () => {
     const api = new RestApi({ base: "/api" });
     const d = await api.domain("hr");
     expect(d.schemas).toEqual(["people", "payroll"]); expect(d.schema).toBe("people");
-    expect((await api.schemas("hr")).map(s => [s.id, s.label])).toEqual([["people", "deployment default · people"], ["payroll", "deployment default · payroll"]]);
+    expect((await api.schemas("hr")).map(s => [s.id, s.label, s.group])).toEqual([["people", "people", "deployment default"], ["payroll", "payroll", "deployment default"]]);
     expect(await api.catalogSchemas("hr")).toEqual(["people", "payroll", "public"]);
     await api.updateDomain("hr", { schemas: ["payroll", "people"] });
     expect(calls).toContain('PUT /api/domains/hr {"schemas":["payroll","people"]}');
@@ -293,7 +293,7 @@ describe("several sources per domain", () => {
     await expect(api.updateDomain("rgm", { ai_connection_id: null })).rejects.toThrow(/AI connection/);
     const f = await api.sourceFacts("rgm");
     expect(f.sources?.map(s => [s.connection, s.schemas])).toEqual([["warehouse", ["gold"]], ["lake", ["raw", "staging"]]]);
-    expect((await api.schemas("rgm")).map(s => s.label)).toEqual(["warehouse · rgm.gold", "lake · raw", "lake · staging"]);
+    expect((await api.schemas("rgm")).map(s => `${s.group} · ${s.label}`)).toEqual(["warehouse · rgm.gold", "lake · raw", "lake · staging"]);
     expect((await api.catalogTables("rgm", "rgm.gold")).length).toBeGreaterThan(0);   // catalog-qualified ids browse the same tables
     await api.detachConnection("c-lake");
     expect((await api.domain("rgm")).sources.map(s => s.connectionId)).toEqual(["c-warehouse"]);
@@ -323,7 +323,7 @@ describe("several sources per domain", () => {
     const d = await api.domain("hr");
     expect(d.sources).toEqual([{ connectionId: "wh", catalog: "rgm", schemas: ["gold", "silver"] }, { connectionId: "lake", catalog: null, schemas: ["raw"] }]);
     expect(d).toMatchObject({ connectionId: "wh", aiConnectionId: "ai-1", catalog: "rgm", schema: "gold" });
-    expect((await api.schemas("hr")).map(s => [s.id, s.label])).toEqual([["rgm.gold", "warehouse · rgm.gold"], ["rgm.silver", "warehouse · rgm.silver"], ["raw", "lake · raw"]]);
+    expect((await api.schemas("hr")).map(s => [s.id, `${s.group} · ${s.label}`])).toEqual([["rgm.gold", "warehouse · rgm.gold"], ["rgm.silver", "warehouse · rgm.silver"], ["raw", "lake · raw"]]);
     // no schema chosen on the primary source: every schema of its catalog is offered
     dom.sources[0].schemas = []; dom.schemas = [];
     (routes["GET /api/domains/hr/source"] as { sources: { schemas: string[] }[] }).sources[0].schemas = [];
@@ -358,7 +358,7 @@ describe("metadata snapshot (scan)", () => {
         "GET /api/domains/aw": { name: "aw", description: "", base_iri: "http://p/aw/", review_quorum: 1, sources: [{ connection_id: "c1", catalog: "adventurework2022", schemas: [] }] },
         "GET /api/domains/aw/versions/summary": [{ id: "v-1", version: 1, status: "draft", has_ontology: false, has_mapping: false, rule_count: 0, constraint_count: 0, created_at: "2026-09-21T10:00:00Z", created_by: "alice", is_active: false, stats: { classes: 0, attributes: 0, relationships: 0, bindings: 0, rules: 0, constraints: 0, triples: 0 }, mapping: null, last_build: null, review: null, lease: null }],
         "GET /api/domains/cards": [{ name: "aw", version_count: 1, active_version: null, latest_version: { version: 1, status: "draft" }, triples: 0, last_build: null, source: { kind: "databricks", connection: "AdventureWorks", catalog: "adventurework2022", schema: null, schemas: [] }, source_count: 1, mcp: { exposed: true, disabled_tools: [] } }],
-        "GET /api/catalog/tables?schema_name=adventurework2022.dbo": ["awbuildversion", "databaselog", "errorlog"],
+        "GET /api/catalog/tables?schema_name=adventurework2022.dbo&detail=true": [{ name: "awbuildversion", columns: 4, comment: null }, { name: "databaselog", columns: 8, comment: null }, { name: "errorlog", columns: 9, comment: null }],
         "GET /api/versions/v-1/metadata": snapshot,
         "POST /api/versions/v-1/metadata/refresh": [{ table: "adventurework2022.dbo.errorlog", missing: false, added: ["severity"], removed: [], modified: [], keys_changed: false }],
       };
@@ -376,7 +376,7 @@ describe("metadata snapshot (scan)", () => {
     expect(calls).toContain('POST /api/versions/v-1/metadata/import {"tables":["errorlog","databaselog"],"schema_name":"adventurework2022.dbo"}');
     expect(snap.map(t => [t.table, t.columns])).toEqual([["adventurework2022.dbo.errorlog", 2], ["adventurework2022.dbo.databaselog", 2]]);
     const after = await api.catalogTables("aw", "adventurework2022.dbo", 1);
-    expect(after.map(t => [t.name, t.imported, t.cols])).toEqual([["awbuildversion", false, 0], ["databaselog", true, 2], ["errorlog", true, 2]]);
+    expect(after.map(t => [t.name, t.imported, t.cols])).toEqual([["awbuildversion", false, 4], ["databaselog", true, 8], ["errorlog", true, 9]]);
     expect((await api.refreshSnapshot("aw", 1))[0]).toMatchObject({ table: "adventurework2022.dbo.errorlog", added: ["severity"] });
   });
 });
@@ -515,5 +515,42 @@ describe("mapping editor (mock)", () => {
     expect((await api.mapping("rgm", 3)).Channel).toBeUndefined();
     expect((await api.drift("rgm", 3)).length).toBeGreaterThan(0);
     expect(await api.r2rml("rgm", 3)).toMatch(/rr:/);
+  });
+});
+
+
+describe("metadata screen data (rest)", () => {
+  const vid = "cccccccc-0000-0000-0000-000000000001", EX = "http://p/aw#";
+  const api = () => {
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      const key = `${init?.method ?? "GET"} ${url}`;
+      const routes: Record<string, unknown> = {
+        "GET /api/auth/config": { mode: "header", header: "X-Actor", source: { kind: "databricks", catalog: "finops_metadata" } },
+        "GET /api/domains/aw": { name: "aw", description: "", base_iri: "http://p/aw/", review_quorum: 1, materialization: "none", sources: [{ connection_id: "c1", catalog: "adventurework2022", schemas: ["sales"] }] },
+        "GET /api/domains/aw/versions/summary": [{ id: vid, version: 1, status: "draft", has_ontology: true, has_mapping: true, rule_count: 0, constraint_count: 0, created_at: "2026-09-21T10:00:00Z", created_by: "alice", is_active: false, stats: { classes: 1, attributes: 0, relationships: 0, bindings: 0, rules: 0, constraints: 0, triples: 0 }, mapping: null, last_build: null, review: null, lease: null }],
+        "GET /api/domains/cards": [{ name: "aw", version_count: 1, active_version: null, latest_version: { version: 1, status: "draft" }, triples: 0, last_build: null, source: { kind: "databricks", connection: "AdventureWorks", catalog: "adventurework2022", schema: "sales", schemas: ["sales"] }, source_count: 1, mcp: { exposed: true, disabled_tools: [] } }],
+        "GET /api/catalog/tables?schema_name=adventurework2022.sales&detail=true": [{ name: "customer", columns: 7, comment: "Customers" }, { name: "store", columns: 5, comment: null }],
+        [`GET /api/versions/${vid}/metadata`]: [{ table: "adventurework2022.sales.customer", comment: "Customers", columns: [{ name: "customerid", type: "int", comment: null }], primary_key: ["customerid"], foreign_keys: [] }],
+        [`GET /api/versions/${vid}/ontology`]: { classes: [{ iri: EX + "Customer", label: "Customer", description: null, parents: [] }], datatype_properties: [], object_properties: [] },
+        [`GET /api/versions/${vid}/mapping`]: { base_iri: "http://p/aw/", classes: [{ class_iri: EX + "Customer", table: "adventurework2022.sales.customer", sql_query: null, key_columns: ["customerid"], iri_template: null, attributes: [], excluded: [] }], relations: [] },
+        [`GET /api/versions/${vid}/mapping/status`]: { completion: 1, summary: {}, classes: [{ class_iri: EX + "Customer", state: "complete" }] },
+      };
+      return new Response(JSON.stringify(routes[key] ?? { detail: `no route ${key}` }), { status: key in routes ? 200 : 404 });
+    }) as typeof fetch;
+    return new RestApi({ base: "/api" });
+  };
+  it("lists tables with real column counts, snapshot state and the class each is mapped to", async () => {
+    const a = api(); await a.domain("aw");
+    const rows = await a.catalogTables("aw", "adventurework2022.sales", 1);
+    expect(rows).toEqual([{ name: "customer", cols: 7, imported: true, cls: "Customer" }, { name: "store", cols: 5, imported: false, cls: null }]);
+    expect(await a.tableClass("aw", "customer", 1)).toBe("Customer");
+    expect(await a.tableClass("aw", "store", 1)).toBeNull();
+  });
+  it("says which extras the deployment offers instead of showing design data", async () => {
+    const a = api();
+    expect((await a.config()).capabilities).toEqual({ profiling: false, quality: false, glossary: false, ontoDiffs: false });
+    expect(await a.tableDq("aw", "customer")).toEqual([]); expect(await a.glossary("aw")).toEqual([]); expect(await a.ontoDiffs("aw", "customer")).toEqual([]);
+    expect((await a.tableProfile("aw", "customer")).rows).toBe("—");
+    expect((await new MockApi().config()).capabilities).toEqual({ profiling: true, quality: true, glossary: true, ontoDiffs: true });
   });
 });

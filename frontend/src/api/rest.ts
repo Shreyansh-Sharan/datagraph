@@ -2,7 +2,7 @@
 // Methods with a settled contract call the API; the rest fall through to the mock so the
 // app stays usable while integration proceeds. Replace fallbacks method by method.
 import { MockApi } from "./mock";
-import type { AuditEntry, BuildRun, BuildStep, CatalogTable, ChecklistItem, DriftIssue, MappingKpis, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, RefreshChange, SnapshotTable, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus } from "./types";
+import type { AuditEntry, BuildRun, BuildStep, CatalogTable, ChecklistItem, DqColumnIssue, DriftIssue, GlossaryTerm, MappingKpis, OntoDiff, TableProfile, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, RefreshChange, SnapshotTable, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus } from "./types";
 import { tableName } from "./types";
 import { humanAction, relTime } from "./format";
 
@@ -55,7 +55,7 @@ export class RestApi extends MockApi {
 
   override async config(): Promise<Config> {
     const c = await this.req<{ mode: "header" | "token"; header: string; source: { kind: "databricks" | "postgres"; catalog: string | null }; materialization?: string }>("GET", "/auth/config");
-    this.cfg = { sourceKind: c.source.kind, catalog: c.source.catalog, authMode: c.mode, authHeader: c.header, materialization: c.materialization ?? "none" };
+    this.cfg = { sourceKind: c.source.kind, catalog: c.source.catalog, authMode: c.mode, authHeader: c.header, materialization: c.materialization ?? "none", capabilities: { profiling: false, quality: false, glossary: false, ontoDiffs: false } };
     return this.cfg;
   }
   override async me(): Promise<Me> { const m = await this.req<{ name: string; role: Role }>("GET", "/me"); return { name: m.name, role: m.role }; }
@@ -168,24 +168,43 @@ export class RestApi extends MockApi {
   }
   override async setMcp(domain: string, exposed: boolean): Promise<void> { await this.req("PUT", `/domains/${encodeURIComponent(domain)}/mcp-policy`, { exposed, disabled_tools: [] }); }
 
-  override async schemas(domain: string): Promise<{ id: string; label: string }[]> {
+  override async schemas(domain: string): Promise<{ id: string; label: string; group?: string }[]> {
     const f = await this.sourceFacts(domain);
     const entries = f.sources?.length ? f.sources : [{ kind: f.kind, connection: f.connection, catalog: f.catalog, schemas: f.schemas ?? (f.schema ? [f.schema] : []) }];
     const all = async (catalog: string | null) => this.req<string[]>("GET", `/catalog/schemas${catalog ? `?catalog=${encodeURIComponent(catalog)}` : ""}`).catch(() => [] as string[]);
     const expanded = await Promise.all(entries.map(async src => ({ ...src, schemas: src.schemas.length ? src.schemas : await all(src.catalog) })));   // none chosen: every schema the source offers
     return expanded.flatMap(src => { const dbx = src.kind === "databricks" && !!src.catalog;
-      return src.schemas.map(sch => ({ id: dbx ? `${src.catalog}.${sch}` : sch, label: `${src.connection ?? "deployment default"} · ${dbx ? `${src.catalog}.` : ""}${sch}` })); });
+      return src.schemas.map(sch => ({ id: dbx ? `${src.catalog}.${sch}` : sch, label: `${dbx ? `${src.catalog}.` : ""}${sch}`, group: src.connection ?? "deployment default" })); });
   }
   override async catalogSchemas(domain: string): Promise<string[]> {
     const d = await this.domain(domain); const cfg = this.cfg ?? await this.config();
     const q = cfg.sourceKind === "databricks" && d.catalog ? `?catalog=${encodeURIComponent(d.catalog)}` : "";
     return this.req<string[]>("GET", `/catalog/schemas${q}`);
   }
-  override async catalogTables(domain: string, schema: string, version?: number): Promise<CatalogTable[]> {
-    const [names, snap] = await Promise.all([this.req<string[]>("GET", `/catalog/tables?schema_name=${encodeURIComponent(schema)}`), version !== undefined ? this.snapshot(domain, version).catch(() => [] as SnapshotTable[]) : Promise.resolve([] as SnapshotTable[])]);
-    const held = new Map(snap.map(t => [t.table.toLowerCase(), t]));
-    return names.map(n => { const name = n.split(".").pop() ?? n; const t = held.get(`${schema}.${name}`.toLowerCase()) ?? held.get(name.toLowerCase()); return { name, cols: t?.columns ?? 0, imported: !!t, cls: null }; });
+  /** Class mapped to a table (matched on the qualified name, then on the bare table name). */
+  private async classOf(domain: string, version: number | undefined, qualified: string): Promise<string | null> {
+    if (version === undefined) return null;
+    const m = await this.mapping(domain, version).catch(() => ({} as Record<string, ClassMapping>));
+    const q = qualified.toLowerCase(), bare = q.split(".").pop();
+    const hit = Object.entries(m).find(([, x]) => x.fullName?.toLowerCase() === q) ?? Object.entries(m).find(([, x]) => x.fullName?.toLowerCase().split(".").pop() === bare);
+    return hit?.[0] ?? null;
   }
+  override async catalogTables(domain: string, schema: string, version?: number): Promise<CatalogTable[]> {
+    const [rows, snap, mapped] = await Promise.all([
+      this.req<{ name: string; columns: number; comment: string | null }[]>("GET", `/catalog/tables?schema_name=${encodeURIComponent(schema)}&detail=true`),
+      version !== undefined ? this.snapshot(domain, version).catch(() => [] as SnapshotTable[]) : Promise.resolve([] as SnapshotTable[]),
+      version !== undefined ? this.mapping(domain, version).catch(() => ({} as Record<string, ClassMapping>)) : Promise.resolve({} as Record<string, ClassMapping>)]);
+    const held = new Map(snap.map(t => [t.table.toLowerCase(), t]));
+    const byTable = new Map(Object.entries(mapped).filter(([, x]) => x.fullName).map(([cls, x]) => [x.fullName!.toLowerCase(), cls]));
+    return rows.map(r => { const name = r.name.split(".").pop() ?? r.name; const q = `${schema}.${name}`.toLowerCase(); const t = held.get(q) ?? held.get(name.toLowerCase());
+      return { name, cols: r.columns || t?.columns || 0, imported: !!t, cls: byTable.get(q) ?? null }; });
+  }
+  override async tableClass(domain: string, table: string, version?: number): Promise<string | null> { return this.classOf(domain, version, table); }
+  // Not offered by this backend yet: the screens hide the affordances (see Config.capabilities) instead of showing design data.
+  override async tableProfile(_domain: string, _table: string): Promise<TableProfile> { return { rows: "—", fresh: "—", dup: "—", cols: {} }; }
+  override async tableDq(_domain: string, _table: string): Promise<DqColumnIssue[]> { return []; }
+  override async glossary(_domain: string): Promise<GlossaryTerm[]> { return []; }
+  override async ontoDiffs(_domain: string, _table: string): Promise<OntoDiff[]> { return []; }
   private toSnapshot(t: { table: string; comment: string | null; columns: { name: string }[]; primary_key: string[]; captured_at?: string | null }): SnapshotTable {
     return { table: t.table, columns: t.columns.length, columnNames: t.columns.map(c => c.name), comment: t.comment, primaryKey: t.primary_key ?? [], capturedAt: t.captured_at ?? null };
   }

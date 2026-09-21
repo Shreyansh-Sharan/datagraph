@@ -25,6 +25,7 @@ describe("datagraph shell", () => {
     const nav = screen.getByRole("complementary");
     expect(within(nav).getByText("Mapping")).toBeInTheDocument();
     expect(within(nav).getByText("78%")).toBeInTheDocument();
+    expect(screen.getByTitle("Source warehouse")).toHaveTextContent("warehouse · rgm");   // inside a domain: its primary source, not the deployment default
   });
   it("hides the design tabs behind a create-draft empty state when a domain has no version", async () => {
     renderAt("#/d/finops/ontology");
@@ -49,7 +50,7 @@ describe("Configure screen", () => {
     renderAt("#/d/rgm/settings");
     expect(await screen.findByLabelText("Source connection 1")).toHaveValue("c-warehouse");
     expect(screen.getByLabelText("AI connection")).toHaveValue("c-gpt");
-    expect(await screen.findByText("Databricks · finops_metadata")).toBeInTheDocument();
+    expect(await screen.findByText("warehouse · rgm")).toBeInTheDocument();
     expect(screen.getByText(/connection module is not configured/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "New connection" })).toBeNull();
   });
@@ -157,13 +158,13 @@ describe("Metadata screen · scan", () => {
     const api = new MockApi();
     renderAt("#/d/rgm/metadata?v=3", api);
     const user = userEvent.setup();
-    expect(await screen.findByText("8 in snapshot")).toBeInTheDocument();
+    expect(await screen.findByText("8 of 10 in snapshot")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Import selected" })).toBeDisabled();
     await user.click(screen.getByLabelText("Select dim_date"));
     await user.click(screen.getByLabelText("Select fct_returns"));
     await user.click(screen.getByRole("button", { name: "Import 2 selected" }));
     expect(await screen.findByText("Imported 2 tables into the snapshot of v3")).toBeInTheDocument();
-    expect(await screen.findByText("10 in snapshot")).toBeInTheDocument();
+    expect(await screen.findByText("10 of 10 in snapshot")).toBeInTheDocument();
   });
   it("cannot import into a published version", async () => {
     renderAt("#/d/hr/metadata?v=3");
@@ -206,5 +207,16 @@ describe("Mapping screen", () => {
     await user.selectOptions(await screen.findByLabelText("Column for channelName"), "name");
     expect(await screen.findByText("channelName → name")).toBeInTheDocument();
     expect((await api.mapping("rgm", 3)).Channel).toMatchObject({ fullName: "rgm.gold.dim_region", cols: { channelName: "name" }, state: "complete" });
+  });
+});
+
+
+describe("Metadata screen · list", () => {
+  it("groups the schema picker by connection and counts the snapshot per schema", async () => {
+    renderAt("#/d/rgm/metadata?v=3");
+    const picker = await screen.findByLabelText("Schema");
+    expect(within(picker).getByRole("group", { name: "warehouse" })).toBeInTheDocument();
+    expect(within(picker).getAllByRole("option").map(o => o.textContent)).toEqual(["rgm.gold", "rgm.silver"]);
+    expect(await screen.findByText("8 of 10 in snapshot")).toBeInTheDocument();
   });
 });

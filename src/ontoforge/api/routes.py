@@ -932,8 +932,10 @@ def catalog_schemas(request: Request, catalog: str | None = None):
 
 
 @router.get("/catalog/tables")
-def catalog_tables(request: Request, schema_name: str | None = None):
-    return _st(request).source.catalog.list_tables(schema_name)
+def catalog_tables(request: Request, schema_name: str | None = None, detail: bool = False):
+    """Table names of a schema; ``detail=true`` adds the column count and comment of each."""
+    cat = _st(request).source.catalog
+    return cat.list_tables_detailed(schema_name) if detail else cat.list_tables(schema_name)
 
 
 @router.get("/catalog/tables/{table}")

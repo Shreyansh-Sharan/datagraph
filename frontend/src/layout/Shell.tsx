@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Icon } from "@/components/icons";
 import { Dot, Toast, Pill } from "@/components/ui";
-import { useApp } from "@/state/app";
+import { useApp, useLoad } from "@/state/app";
 import { DomainProvider, useDomain, useGo, type Screen } from "@/state/domain";
 import { STATUS_COLOR, STATUS_LABEL, type Role } from "@/api";
 
@@ -51,7 +51,7 @@ function TopBar() {
       <div className="spacer" />
       <Link className="topnav" to="/tasks" title="My tasks"><Icon name="tasks" />My tasks<span className="count-badge">3</span></Link>
       {can("admin") && <Link className="topnav" to="/admin" title="Admin"><Icon name="shield" />Admin</Link>}
-      <span className="source-chip" title="Source warehouse"><Icon name="db" />{dbx ? `Databricks · ${config.catalog ?? "warehouse"}` : "Postgres"}</span>
+      <SourceChip fallback={dbx ? `Databricks · ${config.catalog ?? "warehouse"}` : "Postgres"} />
       <span className="identity">
         <span style={{ fontWeight: 600 }}>{me.name}</span><span className="role">{me.role}</span>
         <select aria-label="Switch role" className="btn xxs" style={{ padding: "0 6px" }} value={me.role} onChange={e => setRole(e.target.value as Role)}>{ROLES.map(r => <option key={r} value={r}>{r}</option>)}</select>
@@ -84,6 +84,16 @@ function DomainCrumbs() {
       ))}
     </>
   );
+}
+
+/** The source being read: inside a domain its primary source (connection · catalog), elsewhere the deployment default. */
+function SourceChip({ fallback }: { fallback: string }) {
+  const { api } = useApp();
+  const { name } = useParams();
+  const facts = useLoad(() => name ? api.sourceFacts(name).catch(() => null) : Promise.resolve(null), [name]);
+  const f = facts.data;
+  const label = f ? `${f.connection ?? (f.kind === "databricks" ? "Databricks" : f.kind === "postgres" ? "Postgres" : f.kind)}${f.catalog ? ` · ${f.catalog}` : ""}` : fallback;
+  return <span className="source-chip" title="Source warehouse"><Icon name="db" />{label}</span>;
 }
 
 function SideNav() {

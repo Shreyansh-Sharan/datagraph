@@ -8,6 +8,8 @@ import { tableName } from "@/api";
 type Tab = "columns" | "dq" | "onto" | "glossary";
 const BLUE = "#2249FF", ORANGE = "#FF7000", GREY = "#B3B3B7", DARK = "#1636E0";
 
+const full0 = (schema: string, table: string) => (schema ? `${schema}.${table}` : table);
+
 export function Metadata() {
   const { api, config, say } = useApp();
   const { domain, version, editable } = useDomain();
@@ -34,10 +36,11 @@ export function Metadata() {
   const dq = useLoad(() => api.tableDq(domain.name, table), [domain.name, table]);
   const glossary = useLoad(() => api.glossary(domain.name), [domain.name]);
   const diffs = useLoad(() => api.ontoDiffs(domain.name, table), [domain.name, table]);
-  const tcls = useLoad(() => api.tableClass(domain.name, table), [domain.name, table]);
+  const tcls = useLoad(() => table ? api.tableClass(domain.name, full0(schema, table), version?.version) : Promise.resolve(null), [domain.name, schema, table, version?.version]);
+  const caps = config.capabilities;
 
   const cols = detail.data?.columns ?? [];
-  const full = detail.data?.fullName ?? tableName(config.sourceKind, domain.catalog, schema, table);
+  const full = detail.data?.fullName ?? (schema.includes(".") ? full0(schema, table) : tableName(config.sourceKind, domain.catalog, schema, table));
   const cls = tcls.data ?? null;
   const dqIssues = (dq.data ?? []).filter(d => d.kind !== "—");
   const diffsLeft = (diffs.data ?? []).filter(d => !applied.includes(`${table}:${d.column}`));
@@ -85,13 +88,15 @@ export function Metadata() {
           <Button variant="primary" onClick={importSelected} disabled={!editable || !selected.length || importing}>{importing && <Spinner />}{selected.length ? `Import ${selected.length} selected` : "Import selected"}</Button>
         </div>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "280px minmax(0,1fr)", gap: 20, alignItems: "start" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "300px minmax(0,1fr)", gap: 20, alignItems: "start" }}>
         <Card flush style={{ position: "sticky", top: 0 }}>
           <div style={{ padding: 12, display: "grid", gap: 8, borderBottom: "1px solid var(--line)" }}>
-            <select aria-label="Schema" className="select mono sm" style={{ fontWeight: 600 }} value={schema} onChange={e => { setSchema(e.target.value); setTable(""); }}>{(schemas.data ?? []).map(s => <option key={s.id} value={s.id}>{s.label}</option>)}</select>
+            <select aria-label="Schema" className="select mono sm" style={{ fontWeight: 600, width: "100%" }} value={schema} onChange={e => { setSchema(e.target.value); setTable(""); }}>
+              {[...new Set((schemas.data ?? []).map(s => s.group ?? ""))].map(g => <optgroup key={g} label={g}>{(schemas.data ?? []).filter(s => (s.group ?? "") === g).map(s => <option key={s.id} value={s.id}>{s.label}</option>)}</optgroup>)}
+            </select>
             <input aria-label="Search tables" className="input sm" placeholder="Search tables" value={search} onChange={e => setSearch(e.target.value)} />
           </div>
-          <div className="row between label-caps" style={{ padding: "8px 14px 4px", fontSize: 10.5, color: "var(--muted-3)" }}><span>{catList.length} tables</span><span>{catList.filter(t => t.imported).length} in snapshot</span></div>
+          <div className="row between label-caps" style={{ padding: "8px 14px 4px", fontSize: 10.5, color: "var(--muted-3)" }}><span>{catList.length} tables</span><span>{catList.filter(t => t.imported).length} of {catList.length} in snapshot</span></div>
           {tables.error && <div style={{ padding: 12 }}><ErrorNotice error={tables.error} action={<span className="small">Ask the workspace admin for USE CATALOG / USE SCHEMA / SELECT on this catalog.</span>} /></div>}
           {tables.loading && <div style={{ padding: 12, display: "grid", gap: 8 }}><Skeleton h={30} /><Skeleton h={30} /><Skeleton h={30} /></div>}
           {catList.filter(t => !search || t.name.includes(search.toLowerCase())).map(t => { const on = t.name === (table || catList[0]?.name); return (
@@ -112,17 +117,17 @@ export function Metadata() {
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
                 <Pill size="lg" tone="outline" dot={imported ? BLUE : GREY}>{imported ? "in snapshot" : "not imported"}</Pill>
                 <Pill size="lg" tone={cls ? "blue" : "outline"} dot={cls ? BLUE : GREY} onClick={() => go("ontology", { cls: cls ?? "Customer", view: "map" })}>{cls ? `class ${cls}` : "no class"}</Pill>
-                <Pill size="lg" tone="outline" dot="#8FA1FF" onClick={() => setProfiled(true)}>{prof?.rows ?? "—"} rows</Pill>
-                <Pill size="lg" tone="outline" dot={dqIssues.length ? ORANGE : BLUE} onClick={() => setTab("dq")}>{dqIssues.length ? `${dqIssues.length} DQ issues` : "DQ passing"}</Pill>
+                {caps.profiling && <Pill size="lg" tone="outline" dot="#8FA1FF" onClick={() => setProfiled(true)}>{prof?.rows ?? "—"} rows</Pill>}
+                {caps.quality && <Pill size="lg" tone="outline" dot={dqIssues.length ? ORANGE : BLUE} onClick={() => setTab("dq")}>{dqIssues.length ? `${dqIssues.length} DQ issues` : "DQ passing"}</Pill>}
               </div>
             </div>
             <div className="row" style={{ flex: "none" }}>
-              {dbx && <Button size="sm" variant="outline" style={{ height: 30 }} onClick={() => say(`Inferred keys for ${table}`)}>Infer keys</Button>}
-              <Button size="sm" active={profiled} style={{ height: 30 }} onClick={() => { setProfiled(p => !p); if (!profiled) say(`Profiling ${table}…`); }}>{profile.loading && profiled ? <Spinner blue /> : null}{profiled ? "Hide profile" : "Profile table"}</Button>
+              {dbx && caps.profiling && <Button size="sm" variant="outline" style={{ height: 30 }} onClick={() => say(`Inferred keys for ${table}`)}>Infer keys</Button>}
+              {caps.profiling && <Button size="sm" active={profiled} style={{ height: 30 }} onClick={() => { setProfiled(p => !p); if (!profiled) say(`Profiling ${table}…`); }}>{profile.loading && profiled ? <Spinner blue /> : null}{profiled ? "Hide profile" : "Profile table"}</Button>}
             </div>
           </div>
           <div style={{ padding: "12px 20px 0" }}>
-            <Tabs<Tab> value={(tab as Tab) || "columns"} onChange={t => setTab(t)} items={[{ id: "columns", label: "Columns", count: cols.length }, { id: "dq", label: "Quick DQ", count: dqIssues.length || false, countStyle: { background: "#fff", color: "var(--orange-text)" } }, { id: "onto", label: "Ontology", count: diffsLeft.length || false, countStyle: { background: "var(--blue-soft)", color: DARK } }, { id: "glossary", label: "Glossary", count: glossaryForTable || false }]} />
+            <Tabs<Tab> value={(tab as Tab) || "columns"} onChange={t => setTab(t)} items={[{ id: "columns" as Tab, label: "Columns", count: cols.length }, ...(caps.quality ? [{ id: "dq" as Tab, label: "Quick DQ", count: (dqIssues.length || false) as number | false, countStyle: { background: "#fff", color: "var(--orange-text)" } }] : []), ...(caps.ontoDiffs ? [{ id: "onto" as Tab, label: "Ontology", count: (diffsLeft.length || false) as number | false, countStyle: { background: "var(--blue-soft)", color: DARK } }] : []), ...(caps.glossary ? [{ id: "glossary" as Tab, label: "Glossary", count: (glossaryForTable || false) as number | false }] : [])]} />
           </div>
 
           {tab === "columns" && (

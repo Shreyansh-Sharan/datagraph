@@ -217,3 +217,10 @@ def test_catalog_lists_the_schemas_of_the_source(client, db):
     names = client.get("/catalog/schemas").json()
     assert db.schema in names
     assert not [n for n in names if n.startswith("pg_") or n == "information_schema"]
+
+
+def test_catalog_tables_with_detail_carry_column_counts_and_comments(client):
+    rows = client.get("/catalog/tables", params={"detail": "true"}).json()
+    emp = next(r for r in rows if r["name"] == "employees")
+    assert emp["columns"] >= 3 and set(emp) == {"name", "columns", "comment"}
+    assert [r["name"] for r in rows] == client.get("/catalog/tables").json()

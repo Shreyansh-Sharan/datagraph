@@ -119,7 +119,7 @@ export class MockApi implements DatagraphApi {
 
   async config(): Promise<Config> {
     const dbx = this.kind === "databricks";
-    return { sourceKind: this.kind, catalog: dbx ? "finops_metadata" : null, authMode: "header", authHeader: dbx ? "X-Forwarded-Email" : "X-Actor", materialization: dbx ? "view" : "view" };
+    return { sourceKind: this.kind, catalog: dbx ? "finops_metadata" : null, authMode: "header", authHeader: dbx ? "X-Forwarded-Email" : "X-Actor", materialization: dbx ? "view" : "view", capabilities: { profiling: true, quality: true, glossary: true, ontoDiffs: true } };
   }
   async me(): Promise<Me> { return { name: "alice", role: this.role }; }
   async domains() { return this.wait(clone(this.domainsState)); }
@@ -213,11 +213,11 @@ export class MockApi implements DatagraphApi {
   }
   async setMcp(domain: string, exposed: boolean) { this.dom(domain).mcpExposed = exposed; }
 
-  async schemas(domain: string) {
+  async schemas(domain: string): Promise<{ id: string; label: string; group?: string }[]> {
     const d = this.dom(domain);
     return d.sources.flatMap(src => { const c = this.conns.find(x => x.id === src.connectionId); const dbx = (c?.kind ?? this.kind) === "databricks"; const cat = src.catalog || (dbx ? d.catalog : null);
       const schemas = src.schemas.length ? src.schemas : Object.keys(D.CATALOG);   // none chosen: every schema the source offers
-      return schemas.map(sch => ({ id: dbx && cat ? `${cat}.${sch}` : sch, label: `${c?.name ?? "deployment default"} · ${dbx && cat ? `${cat}.` : ""}${sch}` })); });
+      return schemas.map(sch => ({ id: dbx && cat ? `${cat}.${sch}` : sch, label: `${dbx && cat ? `${cat}.` : ""}${sch}`, group: c?.name ?? "deployment default" })); });
   }
   async catalogSchemas(domain: string) { return [...new Set([...Object.keys(D.CATALOG), ...this.dom(domain).schemas])]; }
   async catalogTables(domain: string, schema: string, version?: number): Promise<CatalogTable[]> {
@@ -254,7 +254,7 @@ export class MockApi implements DatagraphApi {
   }
   async glossary(_domain: string): Promise<GlossaryTerm[]> { return clone(D.GLOSSARY); }
   async ontoDiffs(_domain: string, table: string): Promise<OntoDiff[]> { return clone(D.ONTO_DIFFS[table] || []); }
-  async tableClass(_domain: string, table: string) { return D.TABLE_CLASS[table] || null; }
+  async tableClass(_domain: string, table: string, _version?: number) { return D.TABLE_CLASS[table] || null; }
 
   async ontology(_domain: string, _version: number): Promise<OntoClass[]> { return clone(D.CLASSES); }
   async ontologyChecks(_domain: string, _version: number): Promise<OntoCheck[]> { return clone(D.CHECKS); }

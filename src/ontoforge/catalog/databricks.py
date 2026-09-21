@@ -43,6 +43,14 @@ class DatabricksCatalog(CatalogAdapter):
                               "AND schema_name NOT IN ('information_schema') ORDER BY schema_name", (cat,))
         return [r[0] for r in rows]
 
+    def list_tables_detailed(self, schema: str | None = None) -> list[dict]:
+        catalog, sch = self._schema_parts(schema)
+        rows = self.run_query(
+            "SELECT t.table_name, count(c.column_name), max(t.comment) FROM system.information_schema.tables t "
+            "LEFT JOIN system.information_schema.columns c ON c.table_catalog = t.table_catalog AND c.table_schema = t.table_schema AND c.table_name = t.table_name "
+            "WHERE t.table_catalog = ? AND t.table_schema = ? AND t.table_name NOT LIKE '\\_\\_%' GROUP BY t.table_name ORDER BY t.table_name", (catalog, sch))
+        return [{"name": r[0], "columns": int(r[1] or 0), "comment": r[2]} for r in rows]
+
     def list_tables(self, schema: str | None = None) -> list[str]:
         catalog, sch = self._schema_parts(schema)
         rows = self.run_query("SELECT table_name FROM system.information_schema.tables WHERE table_catalog = ? AND table_schema = ? "

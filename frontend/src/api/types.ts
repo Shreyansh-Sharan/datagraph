@@ -14,6 +14,7 @@ export interface Config {
   authMode: "header" | "token";
   authHeader: string;
   materialization: string;     // "none" | "view" | "table" (+ clustering notes)
+  capabilities: { profiling: boolean; quality: boolean; glossary: boolean; ontoDiffs: boolean };   // what this deployment offers beyond the core; screens hide the rest
 }
 
 export interface Me { name: string; role: Role }
@@ -158,7 +159,7 @@ export interface DatagraphApi {
   exportBundle(domain: string, version: number): Promise<unknown>;   // portable JSON of one version, for download
   setMcp(domain: string, exposed: boolean): Promise<void>;
 
-  schemas(domain: string): Promise<{ id: string; label: string }[]>;   // the domain's own schemas, labelled for the picker
+  schemas(domain: string): Promise<{ id: string; label: string; group?: string }[]>;   // the domain's own schemas, labelled for the picker and grouped by connection
   catalogSchemas(domain: string): Promise<string[]>;                     // what the source offers, for choosing them
   catalogTables(domain: string, schema: string, version?: number): Promise<CatalogTable[]>;   // with a version: marks what its snapshot holds
   snapshot(domain: string, version: number): Promise<SnapshotTable[]>;
@@ -169,7 +170,7 @@ export interface DatagraphApi {
   tableDq(domain: string, table: string): Promise<DqColumnIssue[]>;
   glossary(domain: string): Promise<GlossaryTerm[]>;
   ontoDiffs(domain: string, table: string): Promise<OntoDiff[]>;
-  tableClass(domain: string, table: string): Promise<string | null>;
+  tableClass(domain: string, table: string, version?: number): Promise<string | null>;
 
   ontology(domain: string, version: number): Promise<OntoClass[]>;
   ontologyChecks(domain: string, version: number): Promise<OntoCheck[]>;

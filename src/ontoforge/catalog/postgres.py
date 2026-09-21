@@ -89,6 +89,15 @@ class PostgresCatalog(CatalogAdapter):
                 "SELECT schema_name FROM information_schema.schemata "
                 "WHERE schema_name NOT LIKE 'pg\\_%' AND schema_name <> 'information_schema' ORDER BY 1")]
 
+    def list_tables_detailed(self, schema: str | None = None) -> list[dict]:
+        with self.db.transaction() as cur:
+            rows = cur.execute(
+                "SELECT t.table_name, count(c.column_name) AS columns, obj_description(format('%%I.%%I', t.table_schema, t.table_name)::regclass, 'pg_class') AS comment "
+                "FROM information_schema.tables t LEFT JOIN information_schema.columns c ON c.table_schema = t.table_schema AND c.table_name = t.table_name "
+                "WHERE t.table_schema = coalesce(%s, current_schema()) AND t.table_type = 'BASE TABLE' GROUP BY t.table_schema, t.table_name ORDER BY t.table_name",
+                (schema or self.default_schema,)).fetchall()
+        return [{"name": r[0], "columns": int(r[1]), "comment": r[2]} for r in rows if r[0] not in INTERNAL_TABLES]
+
     def list_tables(self, schema: str | None = None) -> list[str]:
         with self.db.transaction() as cur:
             return [r[0] for r in cur.execute(
