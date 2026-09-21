@@ -48,12 +48,27 @@ class Domain:
     created_at: datetime
     mcp_policy: dict = field(default_factory=lambda: {"exposed": True})
     active_version_id: UUID | None = None
-    connection_id: UUID | None = None        # source warehouse (None: the deployment's env source)
-    ai_connection_id: UUID | None = None     # AI provider for drafts/assist (None: the deployment's env provider)
-    default_catalog: str | None = None
-    schemas: list[str] = field(default_factory=list)   # source schemas this domain reads; the first is the default
+    ai_connection_id: UUID | None = None     # AI provider for drafts/assist; required once the connection module is configured
+    sources: list[dict] = field(default_factory=list)   # [{connection_id, catalog, schemas}], the first is the primary
     materialization: str = "none"            # none | view | table
     target_schema: str | None = None
+
+    # The primary source, as the single-source API and screens still read it.
+    @property
+    def primary(self) -> dict:
+        return self.sources[0] if self.sources else {"connection_id": None, "catalog": None, "schemas": []}
+
+    @property
+    def connection_id(self) -> str | None:
+        return self.primary.get("connection_id") or None
+
+    @property
+    def default_catalog(self) -> str | None:
+        return self.primary.get("catalog") or None
+
+    @property
+    def schemas(self) -> list[str]:
+        return list(self.primary.get("schemas") or [])
 
     @property
     def default_schema(self) -> str | None:
@@ -169,5 +184,5 @@ class AuditEntry:
     created_at: datetime
 
 
-DOMAIN_SETTINGS = ("description", "review_quorum", "base_iri", "connection_id", "ai_connection_id", "default_catalog", "schemas", "materialization", "target_schema")
+DOMAIN_SETTINGS = ("description", "review_quorum", "base_iri", "ai_connection_id", "sources", "materialization", "target_schema")
 MATERIALIZATIONS = ("none", "view", "table")

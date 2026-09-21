@@ -52,23 +52,32 @@ def _version_json(v: DomainVersion) -> dict:
 
 # -- models ----------------------------------------------------------------------
 
+class SourceIn(BaseModel):
+    connection_id: str | None = None     # a hub connection; None: the deployment's env source
+    catalog: str | None = None
+    schemas: list[str] = []
+
+
 class DomainIn(BaseModel):
     name: str = Field(min_length=1, max_length=120, pattern=r"^[A-Za-z0-9_\-]+$")
     description: str | None = None
     base_iri: str
     review_quorum: int = 1
-    schemas: list[str] = []
+    ai_connection_id: UUID | None = None
+    sources: list[SourceIn] = []
+    schemas: list[str] = []               # legacy: schemas of one env-default source
 
 
 class DomainUpdateIn(BaseModel):
     description: str | None = None
     review_quorum: int | None = Field(default=None, ge=0)
     base_iri: str | None = None
-    connection_id: UUID | None = None
     ai_connection_id: UUID | None = None
-    default_catalog: str | None = None
-    schemas: list[str] | None = None          # every schema the domain reads, first = default
-    default_schema: str | None = None         # legacy single-schema form: moves that schema to the front
+    sources: list[SourceIn] | None = None     # every source: connection + catalog + ordered schemas; the first is the primary
+    connection_id: UUID | None = None         # legacy, acts on the primary source: names its connection (or moves that source first)
+    default_catalog: str | None = None        # legacy: the primary source's catalog
+    schemas: list[str] | None = None          # legacy: the primary source's schemas, first = default
+    default_schema: str | None = None         # legacy: moves that schema to the front of the primary source
     materialization: str | None = None
     target_schema: str | None = None
 
@@ -265,11 +274,54 @@ def list_domains(request: Request):
 
 @router.post("/domains", status_code=201)
 def create_domain(body: DomainIn, request: Request, me: Principal = Depends(builder)):
-    return _domain_json(_st(request).registry.create_domain(body.name, body.description, base_iri=body.base_iri, review_quorum=body.review_quorum, schemas=body.schemas))
+    st = _st(request)
+    sources = [s.model_dump() for s in body.sources] or ([{"connection_id": None, "catalog": None, "schemas": body.schemas}] if body.schemas else [])
+    _check_sources(st, sources, body.ai_connection_id)
+    return _domain_json(st.registry.create_domain(body.name, body.description, base_iri=body.base_iri, review_quorum=body.review_quorum,
+                                                  sources=sources, ai_connection_id=body.ai_connection_id))
 
 
 def _domain_json(d: Domain) -> dict:
-    return {**asdict(d), "default_schema": d.default_schema}
+    return {**asdict(d), "connection_id": d.connection_id, "default_catalog": d.default_catalog, "schemas": d.schemas, "default_schema": d.default_schema}
+
+
+def _check_sources(st, sources: list[dict], ai_connection_id) -> None:
+    """Every referenced connection must exist in the connection module; an AI connection is required once the module is configured."""
+    for s in sources:
+        if s.get("connection_id"):
+            st.connections.get(str(s["connection_id"]))      # NotFound / HubUnavailable
+    if ai_connection_id:
+        st.connections.get(str(ai_connection_id))
+    elif st.connections.source != "none":
+        raise ValueError("An AI connection is required: pick one for this domain")
+
+
+def _legacy_source_edits(domain: Domain, changes: dict) -> None:
+    """Translate the single-source settings onto the primary source of the list."""
+    legacy = {k: changes.pop(k) for k in ("connection_id", "default_catalog", "schemas", "default_schema") if k in changes}
+    if not legacy:
+        return
+    sources = [dict(s) for s in (changes["sources"] if changes.get("sources") is not None else domain.sources)]
+    if "connection_id" in legacy:
+        cid = str(legacy["connection_id"]) if legacy["connection_id"] else None
+        idx = next((i for i, s in enumerate(sources) if cid and s.get("connection_id") == cid), None)
+        if idx is not None:
+            sources.insert(0, sources.pop(idx))
+        elif sources:
+            sources[0]["connection_id"] = cid
+        else:
+            sources.append({"connection_id": cid, "catalog": None, "schemas": []})
+    if not sources:
+        sources.append({"connection_id": None, "catalog": None, "schemas": []})
+    primary = sources[0]
+    if "default_catalog" in legacy:
+        primary["catalog"] = legacy["default_catalog"]
+    if "schemas" in legacy:
+        primary["schemas"] = list(legacy["schemas"] or [])
+    if "default_schema" in legacy:
+        first = (legacy["default_schema"] or "").strip()
+        primary["schemas"] = ([first] if first else []) + [x for x in primary.get("schemas", []) if x != first]
+    changes["sources"] = sources
 
 
 def _source_facts(st, d: Domain) -> dict:
@@ -285,17 +337,26 @@ def _source_facts(st, d: Domain) -> dict:
         except NotFound:
             return None
 
-    c = lookup(d.connection_id)
-    if c:
-        cfg = c["config"]
-        facts = {"kind": c["kind"], "connection": c["name"], "connection_id": c["id"], "catalog": d.default_catalog or cfg.get("catalog"),
-                 "schema": d.default_schema or cfg.get("schema"), "schemas": list(d.schemas), "host": cfg.get("host") or cfg.get("endpoint"), "last_test": c.get("last_test")}
-    else:
-        facts = {"kind": settings.source_kind, "connection": None, "connection_id": None,
-                 "catalog": d.default_catalog or (settings.databricks_catalog if settings.source_kind == "databricks" else None),
-                 "schema": d.default_schema or (settings.databricks_schema if settings.source_kind == "databricks" else None), "schemas": list(d.schemas), "host": None, "last_test": None}
-        if d.connection_id:
-            facts["missing_connection_id"] = str(d.connection_id)
+    def describe(src: dict) -> dict:
+        c = lookup(src.get("connection_id"))
+        if c:
+            cfg = c["config"]
+            return {"kind": c["kind"], "connection": c["name"], "connection_id": c["id"], "catalog": src.get("catalog") or cfg.get("catalog"),
+                    "schemas": list(src.get("schemas") or []), "host": cfg.get("host") or cfg.get("endpoint"), "last_test": c.get("last_test"),
+                    "missing_connection_id": None}
+        return {"kind": settings.source_kind, "connection": None, "connection_id": None,
+                "catalog": src.get("catalog") or (settings.databricks_catalog if settings.source_kind == "databricks" else None),
+                "schemas": list(src.get("schemas") or []), "host": None, "last_test": None,
+                "missing_connection_id": str(src["connection_id"]) if src.get("connection_id") else None}
+
+    sources = [describe(src) for src in d.sources]
+    facts = dict(sources[0] if sources else describe({}))
+    if not facts["schemas"] and facts["connection"] is None and settings.source_kind == "databricks":
+        facts["schemas"] = [settings.databricks_schema] if settings.databricks_schema else []
+    facts["schema"] = facts["schemas"][0] if facts["schemas"] else None
+    if facts["missing_connection_id"] is None:
+        facts.pop("missing_connection_id")
+    facts["sources"] = sources
     facts.update({"auth_mode": settings.auth_mode, "auth_header": settings.auth_header, "materialization": d.materialization, "target_schema": d.target_schema,
                   "connections_backend": st.connections.source})
     a = lookup(d.ai_connection_id)
@@ -326,6 +387,7 @@ def domain_cards(request: Request):
                     "triples": st.store.count(served.id) if served else 0,
                     "last_build": {"status": build.status, "finished_at": build.finished_at, "triple_count": build.triple_count} if build else None,
                     "source": {"kind": src["kind"], "connection": src["connection"], "catalog": src["catalog"], "schema": src["schema"], "schemas": src["schemas"]},
+                    "source_count": len(d.sources),
                     "mcp": {"exposed": d.mcp_exposed, "disabled_tools": list(d.mcp_policy.get("disabled_tools", []))}})
     return out
 
@@ -1175,14 +1237,10 @@ def _spec(request: Request, version_id: UUID) -> MappingSpec:
 def update_domain(name: str, body: DomainUpdateIn, request: Request, me: Principal = Depends(builder)):
     st = _st(request)
     changes = body.model_dump(exclude_unset=True)
-    for key in ("connection_id", "ai_connection_id"):
-        if changes.get(key):
-            st.connections.get(str(changes[key]))   # NotFound when the backend does not know it
     domain = st.registry.get_domain(name)
-    if "default_schema" in changes:   # legacy single-schema form: that schema becomes the first of the list
-        first = (changes.pop("default_schema") or "").strip()
-        current = changes.get("schemas") if changes.get("schemas") is not None else list(domain.schemas)
-        changes["schemas"] = ([first] if first else []) + [x for x in current if x != first]
+    _legacy_source_edits(domain, changes)
+    if "sources" in changes or "ai_connection_id" in changes:
+        _check_sources(st, changes.get("sources", domain.sources), changes["ai_connection_id"] if "ai_connection_id" in changes else domain.ai_connection_id)
     return _domain_json(st.registry.update_domain(domain.id, changes, actor=me.name))
 
 

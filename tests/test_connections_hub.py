@@ -154,10 +154,10 @@ def test_datagraph_reads_types_and_connections_from_the_hub(client, hub):
 
 
 def test_domain_settings_reference_hub_connections(client, hub):
-    client.post("/domains", json={"name": "hr", "description": "People", "base_iri": BASE})
     conn = seed(hub, "warehouse", "databricks", {"host": "adb-1.azuredatabricks.net", "http_path": "/p", "catalog": "rgm", "token": "t"})
     ai = seed(hub, "gpt", "azureopenai", {"endpoint": "https://x.openai.azure.com", "deployment": "gpt-5.1", "api_key": "k"})
-    r = client.put("/domains/hr", json={"connection_id": conn["id"], "ai_connection_id": ai["id"], "default_schema": "gold"})
+    client.post("/domains", json={"name": "hr", "description": "People", "base_iri": BASE, "ai_connection_id": ai["id"]})
+    r = client.put("/domains/hr", json={"connection_id": conn["id"], "default_schema": "gold"})
     assert r.status_code == 200, r.text
     assert client.put("/domains/hr", json={"connection_id": str(uuid.uuid4())}).status_code == 404
     src = client.get("/domains/hr/source").json()
@@ -171,12 +171,15 @@ def test_domain_settings_reference_hub_connections(client, hub):
     assert client.delete("/connections/not-a-uuid/references").status_code == 404
 
 
-def test_source_facts_survive_a_connection_the_hub_no_longer_knows(client, db):
+def test_source_facts_survive_a_connection_the_hub_no_longer_knows(client, hub, db):
     """A stale id (deleted in the hub without the reference cleanup) must not break the screen."""
-    client.post("/domains", json={"name": "hr", "description": "People", "base_iri": BASE})
+    ai = seed(hub, "gpt", "azureopenai", {"endpoint": "https://x.openai.azure.com", "deployment": "gpt-5.1", "api_key": "k"})
+    assert client.post("/domains", json={"name": "hr", "description": "People", "base_iri": BASE, "ai_connection_id": ai["id"]}).status_code == 201
     stale = str(uuid.uuid4())
+    from psycopg.types.json import Jsonb
     with db.transaction() as cur:
-        cur.execute("UPDATE domains SET connection_id = %s, ai_connection_id = %s WHERE name = 'hr'", (stale, stale))
+        cur.execute("UPDATE domains SET sources = %s, ai_connection_id = %s WHERE name = 'hr'",
+                    (Jsonb([{"connection_id": stale, "catalog": None, "schemas": ["gold"]}]), stale))
     src = client.get("/domains/hr/source").json()
     assert src["connection"] is None and src["kind"] == "postgres" and src["missing_connection_id"] == stale and src["ai"] is None
     assert client.get("/domains/cards").json()[0]["source"]["connection"] is None
@@ -198,3 +201,38 @@ def test_hub_client_masks_and_maps(hub):
     assert got["has_secret"] is True and got["config"] == {"endpoint": "https://x.openai.azure.com", "deployment": "d"}
     res = api.test(c["id"])
     assert res["ok"] and res["title"] == "Connected" and res["detail"].splitlines()[0].startswith("authenticate: passed")
+
+
+def test_domain_has_several_sources_and_a_required_ai_connection(client, hub):
+    wh = seed(hub, "warehouse", "databricks", {"host": "adb-1.azuredatabricks.net", "http_path": "/p", "catalog": "rgm", "token": "t"})
+    lake = seed(hub, "lake", "databricks", {"host": "adb-2.azuredatabricks.net", "http_path": "/q", "token": "t"})
+    ai = seed(hub, "gpt", "azureopenai", {"endpoint": "https://x.openai.azure.com", "deployment": "gpt-5.1", "api_key": "k"})
+    # an AI connection is mandatory once the connection module is configured
+    r = client.post("/domains", json={"name": "hr", "base_iri": BASE})
+    assert r.status_code == 400 and "AI connection" in r.json()["detail"]
+    r = client.post("/domains", json={"name": "hr", "base_iri": BASE, "ai_connection_id": ai["id"],
+                                      "sources": [{"connection_id": wh["id"], "catalog": "rgm", "schemas": ["gold", "silver"]}]})
+    assert r.status_code == 201, r.text
+    d = r.json()
+    assert d["sources"] == [{"connection_id": wh["id"], "catalog": "rgm", "schemas": ["gold", "silver"]}]
+    assert d["connection_id"] == wh["id"] and d["default_catalog"] == "rgm" and d["schemas"] == ["gold", "silver"]   # the first source is the primary
+    # a second source (another connection with its own schemas); unknown and duplicate connections are refused
+    r = client.put("/domains/hr", json={"sources": d["sources"] + [{"connection_id": lake["id"], "schemas": ["public", "people"]}]})
+    assert r.status_code == 200, r.text
+    assert [s["connection_id"] for s in r.json()["sources"]] == [wh["id"], lake["id"]]
+    assert client.put("/domains/hr", json={"sources": [{"connection_id": str(uuid.uuid4()), "schemas": []}]}).status_code == 404
+    assert client.put("/domains/hr", json={"sources": [{"connection_id": wh["id"], "schemas": []}, {"connection_id": wh["id"], "schemas": []}]}).status_code == 400
+    assert client.put("/domains/hr", json={"ai_connection_id": None}).status_code == 400
+    # facts and cards describe every source, the primary first
+    src = client.get("/domains/hr/source").json()
+    assert src["connection"] == "warehouse" and src["catalog"] == "rgm" and src["schemas"] == ["gold", "silver"]
+    assert [(x["connection"], x["kind"], x["catalog"], x["schemas"]) for x in src["sources"]] == \
+        [("warehouse", "databricks", "rgm", ["gold", "silver"]), ("lake", "databricks", None, ["public", "people"])]
+    card = client.get("/domains/cards").json()[0]
+    assert card["source"]["connection"] == "warehouse" and card["source_count"] == 2
+    # the legacy single-connection keys act on the primary source: naming another source moves it to the front
+    r = client.put("/domains/hr", json={"connection_id": lake["id"], "default_schema": "people"})
+    assert [s["connection_id"] for s in r.json()["sources"]] == [lake["id"], wh["id"]] and r.json()["schemas"] == ["people", "public"]
+    # deleting a connection in the hub drops the sources that used it
+    assert client.delete(f"/connections/{lake['id']}/references").status_code == 204
+    assert [s["connection_id"] for s in client.get("/domains/hr").json()["sources"]] == [wh["id"]]

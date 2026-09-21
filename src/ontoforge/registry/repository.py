@@ -20,6 +20,23 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def clean_sources(sources: list[dict]) -> list[dict]:
+    """Normalised source list: trimmed ids and catalogs, clean schemas, no connection listed twice."""
+    out: list[dict] = []
+    seen: set[str] = set()
+    for raw in sources:
+        if not isinstance(raw, dict):
+            raise ValueError("Each source must be an object with connection_id, catalog and schemas")
+        cid = (str(raw.get("connection_id") or "").strip()) or None
+        if cid and cid in seen:
+            raise ValueError(f"Connection {cid} is listed twice; give it all its schemas in one source")
+        if cid:
+            seen.add(cid)
+        catalog = (str(raw.get("catalog") or "").strip()) or None
+        out.append({"connection_id": cid, "catalog": catalog, "schemas": clean_schemas(list(raw.get("schemas") or []))})
+    return out
+
+
 def clean_schemas(schemas: list[str]) -> list[str]:
     """Trimmed, de-duplicated (first occurrence wins, so order = priority), never blank."""
     out: list[str] = []
@@ -39,12 +56,13 @@ class Registry:
     # -- domains -------------------------------------------------------------
 
     def create_domain(self, name: str, description: str | None = None, *, base_iri: str,
-                      review_quorum: int = 1, schemas: list[str] | None = None) -> Domain:
+                      review_quorum: int = 1, sources: list[dict] | None = None, ai_connection_id: UUID | None = None) -> Domain:
         with self._cur() as cur:
             try:
                 row = cur.execute(
-                    "INSERT INTO domains (name, description, base_iri, review_quorum, schemas) VALUES (%s, %s, %s, %s, %s) RETURNING *",
-                    (name, description, base_iri, review_quorum, clean_schemas(schemas or []))).fetchone()
+                    "INSERT INTO domains (name, description, base_iri, review_quorum, sources, ai_connection_id) "
+                    "VALUES (%s, %s, %s, %s, %s, %s) RETURNING *",
+                    (name, description, base_iri, review_quorum, Jsonb(clean_sources(sources or [])), ai_connection_id)).fetchone()
             except psycopg.errors.UniqueViolation:
                 raise LifecycleError(f"Domain {name!r} already exists") from None
             return Domain(**row)
@@ -119,8 +137,8 @@ class Registry:
             raise ValueError(f"materialization must be one of {', '.join(MATERIALIZATIONS)}")
         if "review_quorum" in changes and (changes["review_quorum"] is None or int(changes["review_quorum"]) < 0):
             raise ValueError("review_quorum must be 0 or more")
-        if "schemas" in changes:
-            changes = {**changes, "schemas": clean_schemas(changes["schemas"] or [])}
+        if "sources" in changes:
+            changes = {**changes, "sources": Jsonb(clean_sources(changes["sources"] or []))}
         if not changes:
             return self.get_domain_by_id(domain_id)
         cols = ", ".join(f"{k} = %s" for k in changes)
@@ -140,7 +158,10 @@ class Registry:
 
     @staticmethod
     def _detach(cur, connection_id: UUID) -> None:
-        cur.execute("UPDATE domains SET connection_id = NULL WHERE connection_id = %s", (connection_id,))
+        cid = str(connection_id)
+        for row in cur.execute("SELECT id, sources FROM domains WHERE sources @> %s", (Jsonb([{"connection_id": cid}]),)).fetchall():
+            kept = [s for s in row["sources"] if s.get("connection_id") != cid]
+            cur.execute("UPDATE domains SET sources = %s WHERE id = %s", (Jsonb(kept), row["id"]))
         cur.execute("UPDATE domains SET ai_connection_id = NULL WHERE ai_connection_id = %s", (connection_id,))
 
     # -- versions ------------------------------------------------------------
