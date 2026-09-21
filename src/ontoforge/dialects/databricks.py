@@ -1,7 +1,7 @@
 """Spark SQL as spoken by Databricks SQL Warehouses."""
 from __future__ import annotations
 
-from .base import SqlDialect
+from .base import SqlDialect, _num
 
 
 class DatabricksDialect(SqlDialect):
@@ -29,3 +29,29 @@ class DatabricksDialect(SqlDialect):
     def iri_encode(self, expr: str) -> str:
         # url_encode() is form-encoding (space -> '+'); IRIs want '%20'.
         return f"replace(url_encode({expr}), '+', '%20')"
+
+    # -- profiling and data-quality primitives in Spark SQL ----------------------------------------
+
+    def count_if(self, predicate: str) -> str:
+        return f"count_if({predicate})"
+
+    def approx_distinct(self, expr: str) -> str:
+        return f"approx_count_distinct({expr})"
+
+    def distinct_count(self, exprs: list[str]) -> str:
+        return f"count(DISTINCT {', '.join(exprs)})"
+
+    def regex_match(self, expr: str, pattern: str) -> str:
+        return f"{expr} RLIKE {self.string_literal(pattern)}"
+
+    def top_value(self, expr: str) -> str:
+        return f"mode({expr})"
+
+    def sample_clause(self, pct: float) -> str:
+        return f"TABLESAMPLE ({_num(pct)} PERCENT)"
+
+    def hours_ago(self, hours: int) -> str:
+        return f"current_timestamp() - INTERVAL {int(hours)} HOURS"
+
+    def to_double(self, expr: str) -> str:
+        return f"CAST({expr} AS DOUBLE)"

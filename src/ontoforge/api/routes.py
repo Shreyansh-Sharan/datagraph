@@ -26,6 +26,7 @@ from ontoforge.r2rml import serialize_r2rml
 from ontoforge.reasoning import generate_shapes
 from ontoforge.quality import ConstraintSet, QualityEngine, QualityError
 from ontoforge.rules import Rule, RuleEngine, RuleError, RuleSet
+from ontoforge.metadata import MetadataError
 from ontoforge.registry import Domain, DomainVersion, LifecycleError, NotFound, Status
 
 router = APIRouter(dependencies=[Depends(viewer)])   # every route needs an authenticated caller
@@ -1373,4 +1374,158 @@ def detach_connection(connection_id: str, request: Request, me: Principal = Depe
         _st(request).registry.detach_connection(UUID(connection_id))
     except ValueError:
         raise NotFound(f"Connection {connection_id}") from None
+    return Response(status_code=204)
+
+
+# -- table insights: profile, data-quality rules, glossary ----------------------------------------
+
+class RuleIn(BaseModel):
+    name: str
+    kind: str
+    column: str | None = None
+    params: dict = {}
+    dimension: str | None = None
+    threshold: float = 0.95
+    owner: str | None = None
+    enabled: bool = True
+
+
+class RulePatch(BaseModel):
+    name: str | None = None
+    kind: str | None = None
+    column: str | None = None
+    params: dict | None = None
+    dimension: str | None = None
+    threshold: float | None = None
+    owner: str | None = None
+    enabled: bool | None = None
+
+
+class TermIn(BaseModel):
+    kind: str
+    name: str
+    definition: str = ""
+    table: str | None = None
+    columns: list[str] = []
+    status: str = "draft"
+    owner: str | None = None
+    class_name: str | None = None
+    formula: str | None = None
+    unit: str | None = None
+    frequency: str | None = None
+
+
+class TermPatch(BaseModel):
+    kind: str | None = None
+    name: str | None = None
+    definition: str | None = None
+    table: str | None = None
+    columns: list[str] | None = None
+    status: str | None = None
+    owner: str | None = None
+    class_name: str | None = None
+    formula: str | None = None
+    unit: str | None = None
+    frequency: str | None = None
+
+
+def _run_job(request: Request, version_id: UUID, kind: str, background: bool, response: Response, actor: str, work):
+    """Run a source-reading task now, or in the background with a job to poll."""
+    if not background:
+        return work(lambda _msg: None)
+    job = _st(request).jobs.submit(kind, version_id, work, actor=actor)
+    response.status_code = 202
+    return job.to_dict()
+
+
+def _snapshot_or_404(st, version_id: UUID, table: str):
+    try:
+        return st.metadata.get(version_id, table)
+    except MetadataError as exc:
+        raise NotFound(str(exc)) from None
+
+
+@router.get("/versions/{version_id}/tables/{table}/profile")
+def table_profile(version_id: UUID, table: str, request: Request):
+    st = _st(request)
+    _snapshot_or_404(st, version_id, table)
+    prof = st.profiles.get(version_id, table)
+    if prof is None:
+        raise NotFound(f"No profile of {table} yet")
+    return prof.to_dict()
+
+
+@router.post("/versions/{version_id}/tables/{table}/profile")
+def table_profile_run(version_id: UUID, table: str, request: Request, response: Response, me: Principal = Depends(builder),
+                      background: bool = Query(default=False, description="return a job to poll instead of waiting")):
+    st = _st(request)
+    st.metadata.get(version_id, table)
+    return _run_job(request, version_id, "profile", background, response, me.name,
+                    lambda report: st.profiles.run(version_id, table, actor=me.name, on_progress=report).to_dict())
+
+
+@router.get("/versions/{version_id}/tables/{table}/dq")
+def table_dq(version_id: UUID, table: str, request: Request):
+    _snapshot_or_404(_st(request), version_id, table)
+    return _st(request).tabledq.status(version_id, table)
+
+
+@router.post("/versions/{version_id}/tables/{table}/dq/run")
+def table_dq_run(version_id: UUID, table: str, request: Request, response: Response, me: Principal = Depends(builder),
+                 background: bool = Query(default=False)):
+    st = _st(request)
+    st.metadata.get(version_id, table)
+    return _run_job(request, version_id, "dq-run", background, response, me.name,
+                    lambda report: st.tabledq.run(version_id, table, actor=me.name, on_progress=report).to_dict())
+
+
+@router.post("/versions/{version_id}/tables/{table}/dq/rules", status_code=201)
+def table_dq_add_rule(version_id: UUID, table: str, body: RuleIn, request: Request, me: Principal = Depends(builder)):
+    return _st(request).tabledq.add_rule(version_id, table, actor=me.name, name=body.name, kind=body.kind, column=body.column, params=body.params,
+                                         dimension=body.dimension, threshold=body.threshold, owner=body.owner, enabled=body.enabled).to_dict()
+
+
+@router.put("/dq/rules/{rule_id}")
+def dq_update_rule(rule_id: UUID, body: RulePatch, request: Request, me: Principal = Depends(builder)):
+    changes = {k: v for k, v in body.model_dump().items() if v is not None}
+    if "column" in changes:
+        changes["column_name"] = changes.pop("column")
+    return _st(request).tabledq.update_rule(rule_id, actor=me.name, **changes).to_dict()
+
+
+@router.delete("/dq/rules/{rule_id}", status_code=204)
+def dq_delete_rule(rule_id: UUID, request: Request, me: Principal = Depends(builder)):
+    _st(request).tabledq.delete_rule(rule_id, actor=me.name)
+    return Response(status_code=204)
+
+
+@router.post("/versions/{version_id}/tables/{table}/dq/suggest")
+def table_dq_suggest(version_id: UUID, table: str, request: Request, response: Response, me: Principal = Depends(builder),
+                     background: bool = Query(default=False)):
+    st = _st(request)
+    return _run_ai(request, version_id, "dq-suggest", background, response, me.name,
+                   lambda llm, report: st.tabledq.suggest(version_id, table, llm, actor=me.name, on_progress=report))
+
+
+@router.get("/domains/{name}/glossary")
+def glossary_list(name: str, request: Request, kind: str | None = None, table: str | None = None, q: str | None = None):
+    st = _st(request)
+    return [t.to_dict() for t in st.glossary.list(st.registry.get_domain(name).id, kind=kind, table=table, q=q)]
+
+
+@router.post("/domains/{name}/glossary", status_code=201)
+def glossary_add(name: str, body: TermIn, request: Request, me: Principal = Depends(builder)):
+    st = _st(request)
+    return st.glossary.add(st.registry.get_domain(name).id, actor=me.name, **body.model_dump()).to_dict()
+
+
+@router.put("/glossary/{term_id}")
+def glossary_update(term_id: UUID, body: TermPatch, request: Request, me: Principal = Depends(builder)):
+    changes = {k: v for k, v in body.model_dump().items() if v is not None}
+    return _st(request).glossary.update(term_id, actor=me.name, **changes).to_dict()
+
+
+@router.delete("/glossary/{term_id}", status_code=204)
+def glossary_delete(term_id: UUID, request: Request, me: Principal = Depends(builder)):
+    _st(request).glossary.delete(term_id, actor=me.name)
     return Response(status_code=204)

@@ -65,3 +65,13 @@ relationship, ONE of:
 - nothing (all null) when neither exists in the tables shown.
 Use only column and table names exactly as given. Never invent a column.
 """
+
+SUGGEST_DQ_RULES = """\
+You propose data-quality rules for one warehouse table. You are given its columns with types, comments
+and, when available, a profile (null rate, distinct count, range, top value). Propose the rules a data
+steward would actually enforce: keys unique and present, mandatory columns not null, codes in a known
+set, numbers within a sensible range, identifiers matching a pattern, freshness of the update timestamp.
+Kinds and their params: not_null {}; unique {}; in_set {"values": [...]}; range {"min", "max"};
+regex {"pattern"}; freshness {"hours"}; row_count {"min", "max"}. Use column names exactly as given, one
+rule per line of reasoning, at most 12 rules, threshold as a fraction (1.0 for keys, 0.95 otherwise).
+"""

@@ -71,3 +71,11 @@ RELATIONS_SCHEMA = {
         "required": ["property", "source_class", "column", "link_table", "link_source_column", "link_target_column"],
         "properties": {"property": _S, "source_class": _S, "column": _NS, "link_table": _NS, "link_source_column": _NS, "link_target_column": _NS}}}},
 }
+
+DQ_RULES_SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["rules"],
+    "properties": {"rules": {"type": "array", "items": {
+        "type": "object", "additionalProperties": False,
+        "required": ["name", "column", "kind", "params", "threshold", "rationale"],
+        "properties": {"name": _S, "column": _NS, "kind": _S, "params": {"type": "object"}, "threshold": {"type": "number"}, "rationale": _S}}}},
+}

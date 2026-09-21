@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from typing import Iterator
 
 import psycopg
+from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
 
@@ -19,6 +20,13 @@ class Database:
         with self.pool.connection() as conn:
             with conn.transaction():
                 yield conn.cursor()
+
+    @contextmanager
+    def rows(self) -> Iterator[psycopg.Cursor]:
+        """A transaction whose cursor returns dict rows (columns by name)."""
+        with self.pool.connection() as conn:
+            with conn.transaction():
+                yield conn.cursor(row_factory=dict_row)
 
     @contextmanager
     def connection(self) -> Iterator[psycopg.Connection]:

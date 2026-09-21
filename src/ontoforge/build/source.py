@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Iterator
 
 from ontoforge.catalog import CatalogAdapter, PostgresCatalog
@@ -41,6 +42,10 @@ class SourceEngine(ABC):
             raise ValueError("Only SELECT queries can be previewed")
         return sql
 
+    def table_stats(self, table: str) -> tuple[int | None, "datetime | None"]:
+        """(size in bytes, last modified) when the warehouse can tell; (None, None) otherwise."""
+        return None, None
+
     def ensure_schema(self, schema: str) -> None:
         self.execute(f"CREATE SCHEMA IF NOT EXISTS {self.dialect.quote_table(schema)}")
 
@@ -70,6 +75,11 @@ class PostgresSource(SourceEngine):
         with self.db.transaction() as cur:
             cur.execute(f"SELECT * FROM ({self.guard_select(sql)}) preview LIMIT {int(limit)}")
             return [d.name for d in cur.description], cur.fetchall()
+
+    def table_stats(self, table: str) -> tuple[int | None, "datetime | None"]:
+        with self.db.transaction() as cur:
+            cur.execute("SELECT pg_total_relation_size(%s::regclass)", (self.dialect.quote_table(table),))
+            return int(cur.fetchone()[0]), None
 
     def query_params(self, sql: str, params: dict, limit: int = 100) -> tuple[list[str], list[tuple]]:
         import re

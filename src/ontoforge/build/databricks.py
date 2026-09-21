@@ -50,7 +50,7 @@ class DatabricksSource(SourceEngine):
         try:
             with conn.cursor() as cur:
                 cur.execute(f"SELECT * FROM ({self.guard_select(sql)}) preview LIMIT {int(limit)}")
-                return [d[0] for d in cur.description], [tuple(r) for r in cur.fetchall()]
+                return [d[0] for d in (getattr(cur, "description", None) or [])], [tuple(r) for r in cur.fetchall()]
         finally:
             conn.close()
 
@@ -60,6 +60,22 @@ class DatabricksSource(SourceEngine):
             with conn.cursor() as cur:
                 cur.execute(f"SELECT * FROM ({self.guard_select(sql)}) preview LIMIT {int(limit)}", params)
                 return [d[0] for d in cur.description], [tuple(r) for r in cur.fetchall()]
+        finally:
+            conn.close()
+
+    def table_stats(self, table: str) -> tuple[int | None, "datetime | None"]:
+        """DESCRIBE DETAIL: Delta's size in bytes and last modification time."""
+        conn = self.connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"DESCRIBE DETAIL {self.dialect.quote_table(table)}")
+                names = [d[0] for d in (getattr(cur, "description", None) or [])]
+                rows = cur.fetchall()
+                if not rows or not names:
+                    return None, None
+                row = dict(zip(names, rows[0]))
+                size = row.get("sizeInBytes")
+                return (int(size) if size is not None else None), row.get("lastModified")
         finally:
             conn.close()
 

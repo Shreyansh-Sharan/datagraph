@@ -50,6 +50,44 @@ class SqlDialect(ABC):
         t = sql_type.strip().upper().split("(")[0]
         return _NATURAL_XSD.get(t)
 
+    # -- profiling and data-quality primitives (defaults follow standard SQL / PostgreSQL) --------
+
+    def count_if(self, predicate: str) -> str:
+        return f"count(*) FILTER (WHERE {predicate})"
+
+    def approx_distinct(self, expr: str) -> str:
+        return f"count(DISTINCT {expr})"
+
+    def distinct_count(self, exprs: list[str]) -> str:
+        return f"count(DISTINCT {exprs[0]})" if len(exprs) == 1 else f"count(DISTINCT ({', '.join(exprs)}))"
+
+    def regex_match(self, expr: str, pattern: str) -> str:
+        return f"{expr} ~ {self.string_literal(pattern)}"
+
+    def top_value(self, expr: str) -> str:
+        return f"mode() WITHIN GROUP (ORDER BY {expr})"
+
+    def sample_clause(self, pct: float) -> str:
+        return f"TABLESAMPLE SYSTEM ({_num(pct)})"
+
+    def hours_ago(self, hours: int) -> str:
+        return f"now() - interval '{int(hours)} hours'"
+
+    def to_double(self, expr: str) -> str:
+        return f"CAST({expr} AS DOUBLE PRECISION)"
+
+    def literal(self, value) -> str:
+        """A SQL literal for a JSON value: numbers and booleans as they are, anything else as text."""
+        if isinstance(value, bool):
+            return "TRUE" if value else "FALSE"
+        if isinstance(value, (int, float)):
+            return _num(value)
+        return self.string_literal(str(value))
+
+
+def _num(value: float) -> str:
+    return str(int(value)) if float(value).is_integer() else repr(float(value))
+
 
 _NATURAL_XSD = {
     "INT": XSD + "integer", "INTEGER": XSD + "integer", "BIGINT": XSD + "integer",

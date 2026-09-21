@@ -35,6 +35,9 @@ from ontoforge.llm import AnthropicProvider, AzureOpenAIProvider, LLMOutputError
 from ontoforge.mapping import MappingSpecError
 from ontoforge.mcp import GraphTools, create_mcp_server
 from ontoforge.metadata import MetadataError, MetadataService
+from ontoforge.profiling import ProfileService
+from ontoforge.tabledq import TableQuality
+from ontoforge.glossary import GlossaryService
 from ontoforge.observability import RequestLoggingMiddleware, configure_logging
 from ontoforge.r2rml import MappingError
 from ontoforge.reasoning import Reasoner
@@ -69,6 +72,9 @@ def create_app(db: Database, source_db: Database | None = None, settings: Settin
     publish = PublishConfig(settings.warehouse_target_schema, settings.warehouse_materialization) \
         if settings.warehouse_target_schema else None
     app.state.metadata = MetadataService(app.state.registry, app.state.sources.catalog_for, db)
+    app.state.profiles = ProfileService(app.state.registry, app.state.metadata, app.state.sources.for_version, db)
+    app.state.tabledq = TableQuality(app.state.registry, app.state.metadata, app.state.sources.for_version, db)
+    app.state.glossary = GlossaryService(app.state.registry, db)
     app.state.pipeline = BuildPipeline(app.state.registry, app.state.store, app.state.sources.for_version, publish=publish,
                                        metadata=app.state.metadata)
     app.state.scheduler = BuildScheduler(app.state.pipeline, app.state.registry, workers=settings.build_workers)

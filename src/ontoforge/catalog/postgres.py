@@ -30,7 +30,8 @@ ORDER BY con.contype, con.conname
 
 # ontoforge's own tables are never mapping sources, even when registry and data share a schema.
 INTERNAL_TABLES = frozenset({"schema_migrations", "domains", "domain_versions", "connections", "reviews", "build_runs", "audit_log", "triples",
-                             "principals", "api_keys", "metadata_snapshots", "analytics_runs", "comments", "cohorts"})
+                             "principals", "api_keys", "metadata_snapshots", "analytics_runs", "comments", "cohorts",
+                             "table_profiles", "dq_rules", "dq_runs", "dq_results", "glossary_terms"})
 
 _DETAILS_SQL = """
 SELECT c.column_name, c.data_type,
