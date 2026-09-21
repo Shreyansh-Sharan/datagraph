@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 from contextlib import asynccontextmanager
 
+import httpx
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -36,6 +38,8 @@ from ontoforge.metadata import MetadataError, MetadataService
 from ontoforge.observability import RequestLoggingMiddleware, configure_logging
 from ontoforge.r2rml import MappingError
 from ontoforge.reasoning import Reasoner
+from ontoforge.connectors.hub import HubConnections, HubUnavailable
+from ontoforge.connectors.local import LocalConnections
 from ontoforge.connectors.secrets import SecretBox
 from ontoforge.registry import LifecycleError, LockedError, NotFound, Registry
 from ontoforge.quality import QualityError
@@ -44,12 +48,12 @@ from ontoforge.store import TripleStore
 
 from .routes import open_router, router
 
-_STATUS = {AuthError: 401, Forbidden: 403, NotFound: 404, LifecycleError: 409, LockedError: 423, LLMUnavailable: 503, LLMOutputError: 502,
+_STATUS = {HubUnavailable: 502, AuthError: 401, Forbidden: 403, NotFound: 404, LifecycleError: 409, LockedError: 423, LLMUnavailable: 503, LLMOutputError: 502,
            MetadataError: 409, RuleError: 400, QualityError: 400, AnalyticsError: 400, AttachmentError: 400, CohortError: 400, MappingSpecError: 400, MappingError: 400, CompileError: 400, IdentifierError: 400, ValueError: 400}
 
 
 def create_app(db: Database, source_db: Database | None = None, settings: Settings | None = None,
-               llm: LLMProvider | None = None) -> FastAPI:
+               llm: LLMProvider | None = None, hub_client: "httpx.Client | None" = None) -> FastAPI:
     settings = settings or load_settings()
     configure_logging(settings.log_format, settings.log_level)
     app = FastAPI(title="ontoforge", version="0.1.0")
@@ -58,6 +62,7 @@ def create_app(db: Database, source_db: Database | None = None, settings: Settin
     app.state.db = db
     app.state.registry = Registry(db)
     app.state.secrets = SecretBox(settings.secret_key)
+    app.state.connections = _connections_backend(settings, app.state.registry, app.state.secrets, hub_client)
     app.state.principals = Principals(db)
     app.state.store = TripleStore(db)
     app.state.source = _source_engine(settings, source_db or db)
@@ -130,6 +135,17 @@ def _llm_provider(settings: Settings) -> LLMProvider | None:
         return AzureOpenAIProvider(deployment=settings.azure_openai_deployment, api_key=settings.azure_openai_api_key,
                                    endpoint=settings.azure_openai_endpoint, api_version=settings.azure_openai_api_version)
     return None
+
+
+def _connections_backend(settings: Settings, registry: Registry, secrets: SecretBox, hub_client=None):
+    """Local table by default; the Polestar connection module when ONTOFORGE_CONNECTIONS_HUB_URL is set."""
+    if not settings.connections_hub_url:
+        return LocalConnections(registry, secrets)
+    import httpx
+    if hub_client is None:
+        headers = {"Authorization": f"Bearer {settings.connections_hub_token}"} if settings.connections_hub_token else {}
+        hub_client = httpx.Client(base_url=settings.connections_hub_url.rstrip("/"), headers=headers, timeout=httpx.Timeout(180.0, connect=10.0))
+    return HubConnections(hub_client)
 
 
 def _source_engine(settings: Settings, db: Database) -> SourceEngine:

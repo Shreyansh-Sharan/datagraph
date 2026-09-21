@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     secret_key: str = "change-me-in-production"   # encrypts connection secrets at rest (ONTOFORGE_SECRET_KEY)
+    connections_hub_url: str | None = None        # Polestar connection module; when set, connections live there
+    connections_hub_token: str | None = None      # bearer token for the hub (platform user token), optional
     auth_mode: str = "header"           # "header" (trusted proxy / dev) | "token" (API keys)
     auth_header: str = "X-Actor"        # identity header in header mode (Databricks Apps: X-Forwarded-Email)
     auth_default_role: str = "viewer"   # role for principals without an explicit one

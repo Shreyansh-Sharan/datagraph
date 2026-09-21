@@ -111,10 +111,7 @@ class Registry:
             return self.get_domain_by_id(domain_id)
         cols = ", ".join(f"{k} = %s" for k in changes)
         with self._cur() as cur:
-            try:
-                row = cur.execute(f"UPDATE domains SET {cols} WHERE id = %s RETURNING *", (*changes.values(), domain_id)).fetchone()
-            except psycopg.errors.ForeignKeyViolation:
-                raise NotFound("Connection") from None
+            row = cur.execute(f"UPDATE domains SET {cols} WHERE id = %s RETURNING *", (*changes.values(), domain_id)).fetchone()
             if row is None:
                 raise NotFound(f"Domain {domain_id}")
             self._audit(cur, None, actor, "domain.updated", {"domain": str(domain_id), "fields": sorted(changes)})
@@ -174,7 +171,18 @@ class Registry:
             cur.execute("DELETE FROM connections WHERE id = %s", (connection_id,))
             if cur.rowcount == 0:
                 raise NotFound(f"Connection {connection_id}")
+            self._detach(cur, connection_id)
             self._audit(cur, None, actor, "connection.deleted", {"connection": str(connection_id)})
+
+    def detach_connection(self, connection_id: UUID) -> None:
+        """Clear every domain reference to a connection (used when a hub connection is deleted)."""
+        with self._cur() as cur:
+            self._detach(cur, connection_id)
+
+    @staticmethod
+    def _detach(cur, connection_id: UUID) -> None:
+        cur.execute("UPDATE domains SET connection_id = NULL WHERE connection_id = %s", (connection_id,))
+        cur.execute("UPDATE domains SET ai_connection_id = NULL WHERE ai_connection_id = %s", (connection_id,))
 
     # -- versions ------------------------------------------------------------
 

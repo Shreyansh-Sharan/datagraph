@@ -2,9 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { Button, Card, Dialog, Dot, ErrorNotice, KV, Label, Pill, Skeleton, Spinner, Toggle } from "@/components/ui";
 import { useApp, useLoad } from "@/state/app";
 import { useDomain } from "@/state/domain";
-import type { ConnResult, ConnectionRec, ConnectorSpec, ConnectorKind } from "@/api";
+import type { ConnResult, ConnectionRec, ConnectorField, ConnectorSpec, ConnectorKind } from "@/api";
 
-const KIND_LABEL: Record<string, string> = { postgres: "Postgres", databricks: "Databricks", sqlserver: "SQL Server", azure_openai: "Azure OpenAI" };
+const KIND_LABEL: Record<string, string> = { postgres: "Postgres", databricks: "Databricks", sqlserver: "SQL Server", mssql: "SQL Server", azure_openai: "Azure OpenAI", azureopenai: "Azure OpenAI" };
+const kindLabel = (k: string, specs?: ConnectorSpec[] | null) => specs?.find(s => s.kind === k)?.label ?? KIND_LABEL[k] ?? k;
+/** A field applies while every field named in show_when holds the expected value (the hub's x-show-when). */
+const visible = (f: ConnectorField, values: Record<string, string>, spec?: ConnectorSpec) => !f.show_when || Object.entries(f.show_when).every(([n, v]) => String(values[n] ?? spec?.fields.find(x => x.name === n)?.default ?? "") === String(v));
 
 export function Settings() {
   const { api, config, say, can } = useApp();
@@ -29,8 +32,9 @@ export function Settings() {
   useEffect(() => { setDescription(domain.description); setQuorum(domain.quorum); setBaseIri(domain.base_iri); setConnectionId(domain.connectionId ?? ""); setAiId(domain.aiConnectionId ?? ""); }, [domain]);
   useEffect(() => { if (facts.data) { setDefCatalog(facts.data.catalog ?? ""); setDefSchema(facts.data.schema ?? ""); setMat((facts.data.materialization as "none" | "view" | "table") || "none"); setTarget(facts.data.target_schema ?? ""); } }, [facts.data]);
 
-  const sources = (conns.data ?? []).filter(c => c.kind !== "azure_openai");
-  const ais = (conns.data ?? []).filter(c => c.kind === "azure_openai");
+  const isAi = (kind: string) => (specs.data?.find(s => s.kind === kind)?.category ?? (kind.includes("openai") ? "ai" : "source")) === "ai";
+  const sources = (conns.data ?? []).filter(c => !isAi(c.kind));
+  const ais = (conns.data ?? []).filter(c => isAi(c.kind));
   const f = facts.data;
   const sourceRows: [string, string][] = f ? [["Kind", f.kind], ["Connection", f.connection ?? "deployment default (env)"], ...(f.host ? [["Host", f.host] as [string, string]] : []), ["Catalog · schema", `${f.catalog ?? "—"} · ${f.schema ?? "—"}`], ["Auth mode", `${f.auth_mode} · ${f.auth_header}`], ["Materialization", f.materialization + (f.target_schema ? ` → ${f.target_schema}` : "")], ["AI", f.ai ? `${f.ai.connection ?? f.ai.kind} · ${f.ai.deployment ?? "—"}` : "none"]] : [];
 
@@ -62,7 +66,7 @@ export function Settings() {
             {conn && <TestNotice r={conn} />}
             <div style={{ marginTop: 16, display: "grid", gap: 12 }}>
               <div className="grid two" style={{ gap: 12 }}>
-                <div><Label>Source connection</Label><select id="src-conn" aria-label="Source connection" className="select full" value={connectionId} onChange={e => setConnectionId(e.target.value)}><option value="">Deployment default ({KIND_LABEL[config.sourceKind]})</option>{sources.map(c => <option key={c.id} value={c.id}>{c.name} · {KIND_LABEL[c.kind] ?? c.kind}</option>)}</select></div>
+                <div><Label>Source connection</Label><select id="src-conn" aria-label="Source connection" className="select full" value={connectionId} onChange={e => setConnectionId(e.target.value)}><option value="">Deployment default ({KIND_LABEL[config.sourceKind]})</option>{sources.map(c => <option key={c.id} value={c.id}>{c.name} · {kindLabel(c.kind, specs.data)}</option>)}</select></div>
                 <div><Label>AI connection</Label><select id="ai-conn" aria-label="AI connection" className="select full" value={aiId} onChange={e => setAiId(e.target.value)}><option value="">None</option>{ais.map(c => <option key={c.id} value={c.id}>{c.name} · {String(c.config.deployment ?? "")}</option>)}</select></div>
               </div>
               <div className="grid two" style={{ gap: 12 }}>
@@ -78,13 +82,13 @@ export function Settings() {
             <p className="muted-3" style={{ margin: "12px 0 0", fontSize: 11.5 }}>Secrets are encrypted at rest and never returned by the API.</p>
           </Card>
           <Card flush>
-            <div className="card-head" style={{ alignItems: "center" }}><h2 className="h2">Connections</h2>{can("admin") && <Button size="sm" variant="primary" onClick={() => setDialog({ open: true })}>New connection</Button>}</div>
+            <div className="card-head" style={{ alignItems: "center" }}><h2 className="h2">Connections{f?.connections_backend === "hub" && <span className="pill blue" style={{ marginLeft: 8 }}>connection module</span>}</h2>{can("admin") && <Button size="sm" variant="primary" onClick={() => setDialog({ open: true })}>New connection</Button>}</div>
             <div className="grid-head" style={{ gridTemplateColumns: "1.2fr 1fr 1.6fr 1fr auto" }}><span>Name</span><span>Kind</span><span>Host</span><span>Last test</span><span /></div>
             {conns.loading && <div style={{ padding: 20 }}><Skeleton h={16} /></div>}
             {(conns.data ?? []).map(c => (
               <div key={c.id} className="grid-row" style={{ gridTemplateColumns: "1.2fr 1fr 1.6fr 1fr auto", padding: "10px 20px" }}>
                 <span style={{ fontWeight: 600 }}>{c.name}</span>
-                <Pill tone={c.kind === "azure_openai" ? "outline" : "blue"}>{KIND_LABEL[c.kind] ?? c.kind}</Pill>
+                <Pill tone={isAi(c.kind) ? "outline" : "blue"}>{kindLabel(c.kind, specs.data)}</Pill>
                 <span className="mono small" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{String(c.config.host ?? c.config.endpoint ?? "—")}</span>
                 <span className="row small"><Dot color={c.last_test ? (c.last_test.ok ? "var(--blue)" : "var(--orange)") : "var(--grey)"} />{c.last_test ? (c.last_test.ok ? `ok · ${c.last_test.latency_ms ?? 0} ms` : "failed") : "never"}</span>
                 <span className="row" style={{ gap: 4 }}>
@@ -131,7 +135,7 @@ function TestNotice({ r }: { r: ConnResult }) {
 /** Create or edit a connection: the kind picks the field list from the connector spec; Test probes before Save. */
 export function ConnectionDialog({ open, edit, specs, onClose, onSaved }: { open: boolean; edit?: ConnectionRec; specs: ConnectorSpec[]; onClose: () => void; onSaved: (c: ConnectionRec) => void }) {
   const { api } = useApp();
-  const [kind, setKind] = useState<ConnectorKind>("databricks");
+  const [kind, setKind] = useState<ConnectorKind>(specs[0]?.kind ?? "databricks");
   const [name, setName] = useState("");
   const [values, setValues] = useState<Record<string, string>>({});
   const [result, setResult] = useState<ConnResult | null>(null);
@@ -142,11 +146,11 @@ export function ConnectionDialog({ open, edit, specs, onClose, onSaved }: { open
     if (!open) return;
     setResult(null); setError(null);
     if (edit) { setKind(edit.kind); setName(edit.name); setValues(Object.fromEntries(Object.entries(edit.config).map(([k, v]) => [k, String(v)]))); }
-    else { setKind("databricks"); setName(""); setValues({}); }
-  }, [open, edit]);
+    else { setKind(specs.find(s => s.kind === "databricks")?.kind ?? specs[0]?.kind ?? "databricks"); setName(""); setValues({}); }
+  }, [open, edit, specs]);
   useEffect(() => { if (spec && !edit) setValues(v => ({ ...Object.fromEntries(spec.fields.filter(f => f.default != null).map(f => [f.name, String(f.default)])), ...v })); }, [spec, edit]);
   if (!spec && specs.length === 0) return null;
-  const config = () => { const cfg: Record<string, string | number> = {}; for (const f of spec?.fields ?? []) { const v = values[f.name]; if (v === undefined || v === "" || f.name === spec?.secret_field) continue; cfg[f.name] = f.kind === "number" ? Number(v) : v; } return cfg; };
+  const config = () => { const cfg: Record<string, string | number> = {}; for (const f of spec?.fields ?? []) { if (!visible(f, values, spec)) continue; const v = values[f.name]; if (v === undefined || v === "" || f.name === spec?.secret_field) continue; cfg[f.name] = f.kind === "number" ? Number(v) : v; } return cfg; };
   const secret = () => (spec ? values[spec.secret_field] || undefined : undefined);
   const run = async (mode: "test" | "save") => {
     if (!spec) return; setBusy(mode); setError(null);
@@ -163,11 +167,11 @@ export function ConnectionDialog({ open, edit, specs, onClose, onSaved }: { open
         <div><Label>Kind</Label><select id="cn-kind" aria-label="Kind" className="select full" value={kind} disabled={!!edit} onChange={e => { setKind(e.target.value as ConnectorKind); setValues({}); setResult(null); }}>{specs.map(s => <option key={s.kind} value={s.kind}>{s.label}{s.category === "ai" ? " (AI)" : ""}</option>)}</select></div>
       </div>
       <div style={{ display: "grid", gap: 10 }}>
-        {(spec?.fields ?? []).map(f => (
+        {(spec?.fields ?? []).filter(f => visible(f, values, spec)).map(f => (
           <div key={f.name}>
             <Label>{f.label}{f.required && <span style={{ color: "var(--orange)" }}> *</span>}</Label>
             {f.kind === "select"
-              ? <select aria-label={f.label} className="select full" value={values[f.name] ?? String(f.default ?? "")} onChange={e => setValues(v => ({ ...v, [f.name]: e.target.value }))}>{f.options.map(o => <option key={o} value={o}>{o}</option>)}</select>
+              ? <select aria-label={f.label} className="select full" value={values[f.name] ?? String(f.default ?? "")} onChange={e => setValues(v => ({ ...v, [f.name]: e.target.value }))}>{f.options.map(o => <option key={o} value={o}>{f.option_titles?.[o] ?? o}</option>)}</select>
               : <input aria-label={f.label} className={`input full ${f.kind === "password" ? "" : "mono"}`} type={f.kind === "password" ? "password" : f.kind === "number" ? "number" : "text"} value={values[f.name] ?? ""} placeholder={f.name === spec?.secret_field && edit?.has_secret ? "•••••• (unchanged)" : f.help ?? ""} onChange={e => setValues(v => ({ ...v, [f.name]: e.target.value }))} />}
             {f.help && f.kind !== "password" && <div className="muted-2 xs" style={{ marginTop: 3 }}>{f.help}</div>}
           </div>

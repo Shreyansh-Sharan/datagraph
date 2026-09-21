@@ -17,7 +17,6 @@ from ontoforge.autodraft import draft_from_catalog
 from ontoforge.bundle import export_bundle, import_bundle
 from ontoforge.cohorts import Cohort, CohortError
 from ontoforge.compiler import compile_mapping
-from ontoforge.connectors import connector, specs as connector_specs
 from ontoforge.dialects import DIALECTS
 from ontoforge.graphql import build_schema
 from ontoforge.llm import LLMUnavailable, MappingSuggester, OntologyAssistant, OntologyDrafter, describe_tables
@@ -283,18 +282,19 @@ def _source_facts(st, d: Domain) -> dict:
     """Where a domain's tables come from: its own connection, else the deployment's env source."""
     settings = st.settings
     if d.connection_id:
-        c = st.registry.get_connection(d.connection_id)
-        cfg = c.config
-        facts = {"kind": c.kind, "connection": c.name, "connection_id": str(c.id), "catalog": d.default_catalog or cfg.get("catalog"),
-                 "schema": d.default_schema or cfg.get("schema"), "host": cfg.get("host") or cfg.get("endpoint"), "last_test": c.last_test}
+        c = st.connections.get(str(d.connection_id))
+        cfg = c["config"]
+        facts = {"kind": c["kind"], "connection": c["name"], "connection_id": c["id"], "catalog": d.default_catalog or cfg.get("catalog"),
+                 "schema": d.default_schema or cfg.get("schema"), "host": cfg.get("host") or cfg.get("endpoint"), "last_test": c.get("last_test")}
     else:
         facts = {"kind": settings.source_kind, "connection": None, "connection_id": None,
                  "catalog": d.default_catalog or (settings.databricks_catalog if settings.source_kind == "databricks" else None),
                  "schema": d.default_schema or (settings.databricks_schema if settings.source_kind == "databricks" else None), "host": None, "last_test": None}
-    facts.update({"auth_mode": settings.auth_mode, "auth_header": settings.auth_header, "materialization": d.materialization, "target_schema": d.target_schema})
+    facts.update({"auth_mode": settings.auth_mode, "auth_header": settings.auth_header, "materialization": d.materialization, "target_schema": d.target_schema,
+                  "connections_backend": st.connections.source})
     if d.ai_connection_id:
-        a = st.registry.get_connection(d.ai_connection_id)
-        facts["ai"] = {"connection": a.name, "kind": a.kind, "deployment": a.config.get("deployment")}
+        a = st.connections.get(str(d.ai_connection_id))
+        facts["ai"] = {"connection": a["name"], "kind": a["kind"], "deployment": a["config"].get("deployment")}
     else:
         facts["ai"] = {"connection": None, "kind": settings.llm_provider, "deployment": settings.azure_openai_deployment if settings.llm_provider == "azure_openai" else settings.llm_model} if settings.llm_provider != "none" else None
     return facts
@@ -1113,9 +1113,12 @@ def _spec(request: Request, version_id: UUID) -> MappingSpec:
 
 @router.put("/domains/{name}")
 def update_domain(name: str, body: DomainUpdateIn, request: Request, me: Principal = Depends(builder)):
-    reg = _st(request).registry
+    st = _st(request)
     changes = body.model_dump(exclude_unset=True)
-    return reg.update_domain(reg.get_domain(name).id, changes, actor=me.name)
+    for key in ("connection_id", "ai_connection_id"):
+        if changes.get(key):
+            st.connections.get(str(changes[key]))   # NotFound when the backend does not know it
+    return st.registry.update_domain(st.registry.get_domain(name).id, changes, actor=me.name)
 
 
 @router.get("/domains/{name}/source")
@@ -1125,62 +1128,48 @@ def domain_source(name: str, request: Request):
 
 
 @router.get("/connectors")
-def list_connectors():
+def list_connectors(request: Request):
     """The adapters this deployment can configure, with the fields the Configure form renders."""
-    return connector_specs()
+    return _st(request).connections.specs()
 
 
 @router.get("/connections")
 def list_connections(request: Request):
-    return [c.public() for c in _st(request).registry.list_connections()]
+    return _st(request).connections.list()
 
 
 @router.post("/connections", status_code=201)
 def create_connection(body: ConnectionIn, request: Request, me: Principal = Depends(admin)):
-    st = _st(request)
-    spec = connector(body.kind).spec
-    config = spec.validate(body.config)
-    secret = body.secret or body.config.get(spec.secret_field)
-    config.pop(spec.secret_field, None)
-    return st.registry.create_connection(body.name, body.kind, config, st.secrets.encrypt(secret), actor=me.name).public()
+    return _st(request).connections.create(body.name, body.kind, body.config, body.secret, actor=me.name)
 
 
 @router.get("/connections/{connection_id}")
-def get_connection(connection_id: UUID, request: Request):
-    return _st(request).registry.get_connection(connection_id).public()
+def get_connection(connection_id: str, request: Request):
+    return _st(request).connections.get(connection_id)
 
 
 @router.put("/connections/{connection_id}")
-def update_connection(connection_id: UUID, body: ConnectionUpdateIn, request: Request, me: Principal = Depends(admin)):
-    st = _st(request)
-    current = st.registry.get_connection(connection_id)
-    spec = connector(current.kind).spec
-    config = spec.validate(body.config) if body.config is not None else None
-    secret = body.secret or (body.config or {}).get(spec.secret_field)
-    if config is not None:
-        config.pop(spec.secret_field, None)
-    return st.registry.update_connection(connection_id, name=body.name, config=config, secret=st.secrets.encrypt(secret), actor=me.name).public()
+def update_connection(connection_id: str, body: ConnectionUpdateIn, request: Request, me: Principal = Depends(admin)):
+    return _st(request).connections.update(connection_id, name=body.name, config=body.config, secret=body.secret, actor=me.name)
 
 
 @router.delete("/connections/{connection_id}", status_code=204)
-def delete_connection(connection_id: UUID, request: Request, me: Principal = Depends(admin)):
-    _st(request).registry.delete_connection(connection_id, actor=me.name)
+def delete_connection(connection_id: str, request: Request, me: Principal = Depends(admin)):
+    st = _st(request)
+    st.connections.delete(connection_id, actor=me.name)
+    try:
+        st.registry.detach_connection(UUID(connection_id))
+    except ValueError:
+        pass   # a non-uuid hub id cannot be referenced by a domain column
     return Response(status_code=204)
 
 
 @router.post("/connections/test")
 def test_connection_draft(body: ConnectionTestIn, request: Request, me: Principal = Depends(builder)):
     """Probe an unsaved configuration (the Configure form's Test button before saving)."""
-    spec = connector(body.kind).spec
-    config = spec.validate(body.config)
-    secret = body.secret or body.config.get(spec.secret_field)
-    return connector(body.kind).test(config, secret).to_dict()
+    return _st(request).connections.test_draft(body.kind, body.config, body.secret)
 
 
 @router.post("/connections/{connection_id}/test")
-def test_connection(connection_id: UUID, request: Request, me: Principal = Depends(builder)):
-    st = _st(request)
-    c = st.registry.get_connection(connection_id)
-    result = connector(c.kind).test(c.config, st.secrets.decrypt(c.secret)).to_dict()
-    st.registry.record_connection_test(connection_id, result)
-    return result
+def test_connection(connection_id: str, request: Request, me: Principal = Depends(builder)):
+    return _st(request).connections.test(connection_id, actor=me.name)

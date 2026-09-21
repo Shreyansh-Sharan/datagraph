@@ -27,7 +27,7 @@ class ConnectorSpec:
 
     def to_dict(self) -> dict:
         return {"kind": self.kind, "label": self.label, "category": self.category, "secret_field": self.secret_field, "docs": self.docs,
-                "fields": [{k: (list(v) if isinstance(v, tuple) else v) for k, v in asdict(f).items()} for f in self.fields]}
+                "fields": [{**{k: (list(v) if isinstance(v, tuple) else v) for k, v in asdict(f).items()}, "option_titles": None, "show_when": None} for f in self.fields]}
 
     def validate(self, config: dict) -> dict:
         """Keep known fields only, apply defaults, coerce numbers, and require what is required."""
