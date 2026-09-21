@@ -241,16 +241,30 @@ describe("Ontology screen · drafting", () => {
 });
 
 
-describe("Metadata screen · schema picker", () => {
-  it("clicking a schema in the tree opens its first table", async () => {
+describe("Metadata screen · schema overview", () => {
+  it("opens on the schema's table list, drills into a table from it and back to another schema from the tree", async () => {
     renderAt("#/d/rgm/metadata?v=3");
     const user = userEvent.setup();
-    expect(await screen.findByText("dim_customer")).toBeInTheDocument();
+    const list = await screen.findByRole("table", { name: "Tables in rgm.gold" });         // no table chosen: the pane is the schema, not an arbitrary first table
+    expect(within(list).getByText("dim_customer")).toBeInTheDocument();
+    expect(screen.getByText("10 tables · 8 in snapshot · 8 with a class")).toBeInTheDocument();
+    await user.click(within(list).getByRole("link", { name: "dim_customer" }));
+    expect(window.location.hash).toContain("table=dim_customer");
+    expect(await screen.findByRole("tab", { name: /Columns/ })).toBeInTheDocument();
     const tree = screen.getByRole("tree", { name: "Schemas and tables" });
-    await user.click(await within(tree).findByText("silver"));
+    await user.click(within(tree).getByText("silver"));
     expect(window.location.hash).toContain("schema=rgm.silver");
-    expect(window.location.hash).toContain("table=promo_calendar");
+    expect(window.location.hash).not.toContain("table=");
+    expect(await screen.findByRole("table", { name: "Tables in rgm.silver" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { level: 1, name: "Metadata" })).toBeInTheDocument();
+  });
+  it("ticks tables for import from the schema's list too", async () => {
+    renderAt("#/d/rgm/metadata?v=3");
+    const user = userEvent.setup();
+    const list = await screen.findByRole("table", { name: "Tables in rgm.gold" });
+    await user.click(within(list).getByLabelText("Select rgm.gold.dim_date"));
+    expect(screen.getByRole("button", { name: "Import 1 selected" })).toBeInTheDocument();
+    expect(screen.getByRole("tree", { name: "Schemas and tables" }).querySelector<HTMLInputElement>('input[aria-label="Select dim_date"]')?.checked).toBe(true);   // one selection, shown in both places
   });
 });
 
