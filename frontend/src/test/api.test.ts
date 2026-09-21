@@ -99,3 +99,29 @@ describe("Ask", () => {
     expect(answer("how does a build work", await ctx("postgres")).text).toContain("Postgres SQL");
   });
 });
+
+describe("connections and domain settings (mock)", () => {
+  it("lists the four connector specs and seeds a warehouse + AI connection", async () => {
+    const api = new MockApi();
+    expect((await api.connectors()).map(s => s.kind).sort()).toEqual(["azure_openai", "databricks", "postgres", "sqlserver"]);
+    const cs = await api.connections();
+    expect(cs.map(c => c.kind)).toEqual(["databricks", "azure_openai"]);
+    expect((await new MockApi({ sourceKind: "postgres" }).connections())[0].kind).toBe("postgres");
+  });
+  it("creates, tests and attaches a connection to a domain", async () => {
+    const api = new MockApi({ latency: 0 });
+    await expect(api.createConnection({ name: "warehouse", kind: "postgres", config: { host: "h", port: 5432, database: "d", user: "u" } })).rejects.toThrow(/already exists/);
+    await expect(api.createConnection({ name: "pg", kind: "postgres", config: { host: "h" } })).rejects.toThrow(/Database is required/);
+    const c = await api.createConnection({ name: "pg", kind: "postgres", config: { host: "h", port: 5432, database: "d", user: "u", password: "s3cret" } });
+    expect(c.has_secret).toBe(true); expect(c.config).not.toHaveProperty("password");
+    expect((await api.testConnectionDraft({ kind: "sqlserver", config: { host: "h" } })).title).toBe("Driver not installed");
+    const t = await api.testConnectionById(c.id); expect(t.ok).toBe(true);
+    const d = await api.updateDomain("hr", { connection_id: c.id, default_schema: "people", materialization: "table", target_schema: "hr_graph" });
+    expect(d.connectionId).toBe(c.id);
+    const f = await api.sourceFacts("hr");
+    expect(f).toMatchObject({ kind: "postgres", connection: "pg", schema: "people", materialization: "table", target_schema: "hr_graph" });
+    await api.deleteConnection(c.id);
+    expect((await api.sourceFacts("hr")).connection).toBeNull();
+    await expect(api.updateDomain("hr", { materialization: "sideways" as never })).rejects.toThrow(/materialization/);
+  });
+});

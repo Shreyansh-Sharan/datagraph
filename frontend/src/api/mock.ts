@@ -6,7 +6,7 @@ import type {
   Analytics, ApiKey, AuditEntry, BuildRun, BuildStep, CatalogTable, ChecklistItem, ClassMapping, Comment, Config, ConnResult, Constraint,
   DatagraphApi, DomainSummary, DqColumnIssue, EntityDetail, GlossaryTerm, GraphStatus, Lock, MappingKpis, Me, NewDomainInput, OntoCheck,
   OntoClass, OntoDiff, Principal, Role, Rule, SearchHit, SourceKind, TableDetail, TablePreview, TableProfile, Task, TriplePage, TripleQuery,
-  VersionStatus,
+  VersionStatus, ConnectorSpec, ConnectionRec, ConnectionInput, SourceFacts, DomainSettingsPatch,
 } from "./types";
 
 export interface MockOptions { sourceKind?: SourceKind; role?: Role; catalogDenied?: boolean; latency?: number; stepScale?: number }
@@ -19,6 +19,8 @@ export class MockApi implements DatagraphApi {
   private runs: Record<string, BuildRun[]> = {};
   private live: Record<string, { run: BuildRun; timers: ReturnType<typeof setTimeout>[] }> = {};
   private nextRun = 0xb105;
+  private conns: ConnectionRec[] = [];
+  private nextConn = 1;
   readonly kind: SourceKind;
   readonly role: Role;
   protected mockOpts: MockOptions;
@@ -27,6 +29,67 @@ export class MockApi implements DatagraphApi {
     this.mockOpts = opts;
     this.kind = opts.sourceKind ?? "databricks";
     this.role = opts.role ?? "admin";
+    this.conns = clone(D.CONNECTIONS(this.kind));
+    for (const d of this.domainsState) { d.connectionId = d.name === "finops" ? null : "c-warehouse"; d.aiConnectionId = d.name === "rgm" ? "c-gpt" : null; d.targetSchema = d.target; }
+  }
+
+  private simulateTest(kind: string, config: Record<string, string | number>): ConnResult {
+    const dbx = kind === "databricks";
+    if (dbx && this.mockOpts.catalogDenied) return { ok: false, title: "Connection failed", detail: "[INSUFFICIENT_PERMISSIONS] User does not have USE CATALOG on Catalog 'finops_metadata'.", action: "Ask the workspace admin for USE CATALOG / USE SCHEMA / SELECT on the catalog for this principal.", latency_ms: 1620 };
+    if (kind === "sqlserver") return { ok: false, title: "Driver not installed", detail: "Neither pyodbc nor pymssql is installed in this deployment.", action: "Install a driver: pip install pyodbc (needs the Microsoft ODBC Driver 18) or pip install pymssql.", latency_ms: 2 };
+    if (!config.host && !config.endpoint) return { ok: false, title: "Connection failed", detail: "host is required", latency_ms: 1 };
+    if (kind === "azure_openai") return { ok: true, title: "Connected", detail: `42 models available · deployment ${config.deployment ?? "—"}`, latency_ms: 410 };
+    if (kind === "postgres") return { ok: true, title: "Connected", detail: `PostgreSQL 16.4 · 17 tables in ${config.schema ?? "public"}`, latency_ms: 38 };
+    return { ok: true, title: "Connected", detail: `alice on ${config.catalog ?? "hive_metastore"}.${config.schema ?? "default"} · 17 tables`, latency_ms: 1842 };
+  }
+  async connectors(): Promise<ConnectorSpec[]> { return clone(D.CONNECTOR_SPECS); }
+  async connections(): Promise<ConnectionRec[]> { return clone(this.conns); }
+  async createConnection(input: ConnectionInput): Promise<ConnectionRec> {
+    if (!input.name.trim()) throw new Error("Name is required");
+    if (this.conns.some(c => c.name === input.name)) throw new Error(`Connection '${input.name}' already exists`);
+    const spec = D.CONNECTOR_SPECS.find(s => s.kind === input.kind); if (!spec) throw new Error(`Unknown connection kind '${input.kind}'`);
+    for (const f of spec.fields) if (f.required && (input.config[f.name] ?? f.default) == null) throw new Error(`${spec.label}: ${f.label} is required`);
+    const config = { ...input.config }; delete config[spec.secret_field];
+    const now = new Date().toISOString();
+    const rec: ConnectionRec = { id: `c-${this.nextConn++}`, name: input.name, kind: input.kind, config, has_secret: !!(input.secret ?? input.config[spec.secret_field]), last_test: null, created_by: "alice", created_at: now, updated_at: now };
+    this.conns.push(rec); return clone(rec);
+  }
+  async updateConnection(id: string, input: Partial<ConnectionInput>): Promise<ConnectionRec> {
+    const c = this.conns.find(x => x.id === id); if (!c) throw new Error(`Connection ${id} not found`);
+    if (input.name) c.name = input.name;
+    if (input.config) { const spec = D.CONNECTOR_SPECS.find(s => s.kind === c.kind)!; const cfg = { ...input.config }; if (cfg[spec.secret_field]) c.has_secret = true; delete cfg[spec.secret_field]; c.config = cfg; }
+    if (input.secret) c.has_secret = true;
+    c.updated_at = new Date().toISOString(); return clone(c);
+  }
+  async deleteConnection(id: string): Promise<void> {
+    this.conns = this.conns.filter(c => c.id !== id);
+    for (const d of this.domainsState) { if (d.connectionId === id) d.connectionId = null; if (d.aiConnectionId === id) d.aiConnectionId = null; }
+  }
+  async testConnectionDraft(input: Omit<ConnectionInput, "name">): Promise<ConnResult> { await new Promise(r => setTimeout(r, this.mockOpts.latency ?? (input.kind === "databricks" ? 900 : 200))); return this.simulateTest(input.kind, input.config); }
+  async testConnectionById(id: string): Promise<ConnResult> {
+    const c = this.conns.find(x => x.id === id); if (!c) throw new Error(`Connection ${id} not found`);
+    const r = await this.testConnectionDraft({ kind: c.kind, config: c.config }); c.last_test = { ...r, at: new Date().toISOString() }; return r;
+  }
+  async updateDomain(domain: string, patch: DomainSettingsPatch): Promise<DomainSummary> {
+    const d = this.dom(domain);
+    if (patch.materialization && !["none", "view", "table"].includes(patch.materialization)) throw new Error("materialization must be one of none, view, table");
+    if (patch.description !== undefined) d.description = patch.description;
+    if (patch.review_quorum !== undefined) d.quorum = patch.review_quorum;
+    if (patch.base_iri !== undefined) d.base_iri = patch.base_iri;
+    if (patch.connection_id !== undefined) d.connectionId = patch.connection_id;
+    if (patch.ai_connection_id !== undefined) d.aiConnectionId = patch.ai_connection_id;
+    if (patch.default_catalog !== undefined) d.catalog = patch.default_catalog ?? d.catalog;
+    if (patch.default_schema !== undefined) d.schema = patch.default_schema ?? d.schema;
+    if (patch.materialization !== undefined) d.materialization = patch.materialization;
+    if (patch.target_schema !== undefined) { d.targetSchema = patch.target_schema; d.target = patch.target_schema ?? ""; }
+    return clone(d);
+  }
+  async sourceFacts(domain: string): Promise<SourceFacts> {
+    const d = this.dom(domain); const c = this.conns.find(x => x.id === d.connectionId) ?? null; const a = this.conns.find(x => x.id === d.aiConnectionId) ?? null;
+    const dbx = this.kind === "databricks";
+    return { kind: c?.kind ?? this.kind, connection: c?.name ?? null, connection_id: c?.id ?? null, catalog: c ? (d.catalog || String(c.config.catalog ?? "")) || null : (dbx ? "finops_metadata" : null), schema: d.schema || (c ? String(c.config.schema ?? "") : null) || null,
+      host: c ? String(c.config.host ?? c.config.endpoint ?? "") : null, auth_mode: "header", auth_header: dbx ? "X-Forwarded-Email" : "X-Actor", materialization: d.materialization.split(" ")[0] || "none", target_schema: d.targetSchema ?? d.target ?? null, last_test: c?.last_test ?? null,
+      ai: a ? { connection: a.name, kind: a.kind, deployment: String(a.config.deployment ?? "") } : null };
   }
 
   private async wait<T>(value: T, ms = this.mockOpts.latency ?? 0): Promise<T> {

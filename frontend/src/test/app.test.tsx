@@ -43,3 +43,20 @@ describe("datagraph shell", () => {
     expect(await screen.findByText(/"rgm_gold"\."dim_customer"/)).toBeInTheDocument();
   });
 });
+
+describe("Configure screen", () => {
+  it("shows the domain's source facts, the connection pickers and the connector form", async () => {
+    renderAt("#/d/rgm/settings");
+    const user = userEvent.setup();
+    expect(await screen.findByLabelText("Source connection")).toHaveValue("c-warehouse");
+    expect(screen.getByLabelText("AI connection")).toHaveValue("c-gpt");
+    expect(await screen.findByText("Databricks · finops_metadata")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "New connection" }));
+    expect(await screen.findByRole("dialog", { name: "New connection" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Workspace host")).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Kind"), "sqlserver");
+    expect(await screen.findByLabelText("Driver")).toHaveValue("auto");
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Test" }));
+    expect(await screen.findByText("Driver not installed")).toBeInTheDocument();
+  });
+});

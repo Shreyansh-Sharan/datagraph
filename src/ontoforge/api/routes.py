@@ -17,6 +17,7 @@ from ontoforge.autodraft import draft_from_catalog
 from ontoforge.bundle import export_bundle, import_bundle
 from ontoforge.cohorts import Cohort, CohortError
 from ontoforge.compiler import compile_mapping
+from ontoforge.connectors import connector, specs as connector_specs
 from ontoforge.dialects import DIALECTS
 from ontoforge.graphql import build_schema
 from ontoforge.llm import LLMUnavailable, MappingSuggester, OntologyAssistant, OntologyDrafter, describe_tables
@@ -26,7 +27,7 @@ from ontoforge.r2rml import serialize_r2rml
 from ontoforge.reasoning import generate_shapes
 from ontoforge.quality import ConstraintSet, QualityEngine, QualityError
 from ontoforge.rules import Rule, RuleEngine, RuleError, RuleSet
-from ontoforge.registry import DomainVersion, LifecycleError, NotFound, Status
+from ontoforge.registry import Domain, DomainVersion, LifecycleError, NotFound, Status
 
 router = APIRouter(dependencies=[Depends(viewer)])   # every route needs an authenticated caller
 open_router = APIRouter()                                # /health only
@@ -53,6 +54,37 @@ class DomainIn(BaseModel):
     description: str | None = None
     base_iri: str
     review_quorum: int = 1
+
+
+class DomainUpdateIn(BaseModel):
+    description: str | None = None
+    review_quorum: int | None = Field(default=None, ge=0)
+    base_iri: str | None = None
+    connection_id: UUID | None = None
+    ai_connection_id: UUID | None = None
+    default_catalog: str | None = None
+    default_schema: str | None = None
+    materialization: str | None = None
+    target_schema: str | None = None
+
+
+class ConnectionIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    kind: str
+    config: dict = Field(default_factory=dict)
+    secret: str | None = None
+
+
+class ConnectionUpdateIn(BaseModel):
+    name: str | None = None
+    config: dict | None = None
+    secret: str | None = None      # omitted: keep the stored secret
+
+
+class ConnectionTestIn(BaseModel):
+    kind: str
+    config: dict = Field(default_factory=dict)
+    secret: str | None = None
 
 
 class OntologyIn(BaseModel):
@@ -245,6 +277,49 @@ def list_domains(request: Request):
 @router.post("/domains", status_code=201)
 def create_domain(body: DomainIn, request: Request, me: Principal = Depends(builder)):
     return _st(request).registry.create_domain(body.name, body.description, base_iri=body.base_iri, review_quorum=body.review_quorum)
+
+
+def _source_facts(st, d: Domain) -> dict:
+    """Where a domain's tables come from: its own connection, else the deployment's env source."""
+    settings = st.settings
+    if d.connection_id:
+        c = st.registry.get_connection(d.connection_id)
+        cfg = c.config
+        facts = {"kind": c.kind, "connection": c.name, "connection_id": str(c.id), "catalog": d.default_catalog or cfg.get("catalog"),
+                 "schema": d.default_schema or cfg.get("schema"), "host": cfg.get("host") or cfg.get("endpoint"), "last_test": c.last_test}
+    else:
+        facts = {"kind": settings.source_kind, "connection": None, "connection_id": None,
+                 "catalog": d.default_catalog or (settings.databricks_catalog if settings.source_kind == "databricks" else None),
+                 "schema": d.default_schema or (settings.databricks_schema if settings.source_kind == "databricks" else None), "host": None, "last_test": None}
+    facts.update({"auth_mode": settings.auth_mode, "auth_header": settings.auth_header, "materialization": d.materialization, "target_schema": d.target_schema})
+    if d.ai_connection_id:
+        a = st.registry.get_connection(d.ai_connection_id)
+        facts["ai"] = {"connection": a.name, "kind": a.kind, "deployment": a.config.get("deployment")}
+    else:
+        facts["ai"] = {"connection": None, "kind": settings.llm_provider, "deployment": settings.azure_openai_deployment if settings.llm_provider == "azure_openai" else settings.llm_model} if settings.llm_provider != "none" else None
+    return facts
+
+
+@router.get("/domains/cards")
+def domain_cards(request: Request):
+    """One row per domain for the Home screen: versions, served graph size, last build, source, MCP."""
+    st = _st(request)
+    out = []
+    for d in st.registry.list_domains():
+        versions = st.registry.list_versions(d.id)
+        latest = max(versions, key=lambda v: v.version) if versions else None
+        active = next((v for v in versions if v.id == d.active_version_id), None)
+        served = st.registry.served_version(d.id) if versions else None
+        build = st.registry.latest_build(served.id) if served else None
+        src = _source_facts(st, d)
+        out.append({"name": d.name, "description": d.description, "base_iri": d.base_iri, "review_quorum": d.review_quorum,
+                    "version_count": len(versions), "active_version": {"version": active.version} if active else None,
+                    "latest_version": {"version": latest.version, "status": latest.status.value} if latest else None,
+                    "triples": st.store.count(served.id) if served else 0,
+                    "last_build": {"status": build.status, "finished_at": build.finished_at, "triple_count": build.triple_count} if build else None,
+                    "source": {"kind": src["kind"], "connection": src["connection"], "catalog": src["catalog"], "schema": src["schema"]},
+                    "mcp": {"exposed": d.mcp_exposed, "disabled_tools": list(d.mcp_policy.get("disabled_tools", []))}})
+    return out
 
 
 @router.get("/domains/{name}")
@@ -1032,3 +1107,80 @@ def _spec(request: Request, version_id: UUID) -> MappingSpec:
     if not mapping:
         raise NotFound("Version has no mapping")
     return MappingSpec.from_dict(mapping)
+
+
+# -- domain settings and connections (Configure screen) ---------------------------
+
+@router.put("/domains/{name}")
+def update_domain(name: str, body: DomainUpdateIn, request: Request, me: Principal = Depends(builder)):
+    reg = _st(request).registry
+    changes = body.model_dump(exclude_unset=True)
+    return reg.update_domain(reg.get_domain(name).id, changes, actor=me.name)
+
+
+@router.get("/domains/{name}/source")
+def domain_source(name: str, request: Request):
+    st = _st(request)
+    return _source_facts(st, st.registry.get_domain(name))
+
+
+@router.get("/connectors")
+def list_connectors():
+    """The adapters this deployment can configure, with the fields the Configure form renders."""
+    return connector_specs()
+
+
+@router.get("/connections")
+def list_connections(request: Request):
+    return [c.public() for c in _st(request).registry.list_connections()]
+
+
+@router.post("/connections", status_code=201)
+def create_connection(body: ConnectionIn, request: Request, me: Principal = Depends(admin)):
+    st = _st(request)
+    spec = connector(body.kind).spec
+    config = spec.validate(body.config)
+    secret = body.secret or body.config.get(spec.secret_field)
+    config.pop(spec.secret_field, None)
+    return st.registry.create_connection(body.name, body.kind, config, st.secrets.encrypt(secret), actor=me.name).public()
+
+
+@router.get("/connections/{connection_id}")
+def get_connection(connection_id: UUID, request: Request):
+    return _st(request).registry.get_connection(connection_id).public()
+
+
+@router.put("/connections/{connection_id}")
+def update_connection(connection_id: UUID, body: ConnectionUpdateIn, request: Request, me: Principal = Depends(admin)):
+    st = _st(request)
+    current = st.registry.get_connection(connection_id)
+    spec = connector(current.kind).spec
+    config = spec.validate(body.config) if body.config is not None else None
+    secret = body.secret or (body.config or {}).get(spec.secret_field)
+    if config is not None:
+        config.pop(spec.secret_field, None)
+    return st.registry.update_connection(connection_id, name=body.name, config=config, secret=st.secrets.encrypt(secret), actor=me.name).public()
+
+
+@router.delete("/connections/{connection_id}", status_code=204)
+def delete_connection(connection_id: UUID, request: Request, me: Principal = Depends(admin)):
+    _st(request).registry.delete_connection(connection_id, actor=me.name)
+    return Response(status_code=204)
+
+
+@router.post("/connections/test")
+def test_connection_draft(body: ConnectionTestIn, request: Request, me: Principal = Depends(builder)):
+    """Probe an unsaved configuration (the Configure form's Test button before saving)."""
+    spec = connector(body.kind).spec
+    config = spec.validate(body.config)
+    secret = body.secret or body.config.get(spec.secret_field)
+    return connector(body.kind).test(config, secret).to_dict()
+
+
+@router.post("/connections/{connection_id}/test")
+def test_connection(connection_id: UUID, request: Request, me: Principal = Depends(builder)):
+    st = _st(request)
+    c = st.registry.get_connection(connection_id)
+    result = connector(c.kind).test(c.config, st.secrets.decrypt(c.secret)).to_dict()
+    st.registry.record_connection_test(connection_id, result)
+    return result

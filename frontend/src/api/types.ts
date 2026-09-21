@@ -54,6 +54,9 @@ export interface DomainSummary {
   versions: VersionInfo[];
   lease: Lease | null;
   review: Review | null;
+  connectionId?: string | null;
+  aiConnectionId?: string | null;
+  targetSchema?: string | null;
 }
 
 export interface AuditEntry { who: string; what: string; version: number; when: string }
@@ -110,7 +113,16 @@ export interface Analytics {
 }
 
 // -- settings / admin --------------------------------------------------------------------
-export interface ConnResult { ok: boolean; title: string; detail: string; action?: string }
+export interface ConnResult { ok: boolean; title: string; detail: string; action?: string | null; latency_ms?: number; at?: string }
+
+// -- connections (Configure screen) -----------------------------------------------------
+export type ConnectorKind = "postgres" | "databricks" | "sqlserver" | "azure_openai";
+export interface ConnectorField { name: string; label: string; kind: "text" | "password" | "number" | "select"; required: boolean; default: string | number | null; options: string[]; help: string | null }
+export interface ConnectorSpec { kind: ConnectorKind; label: string; category: "source" | "ai"; secret_field: string; docs: string | null; fields: ConnectorField[] }
+export interface ConnectionRec { id: string; name: string; kind: ConnectorKind; config: Record<string, string | number>; has_secret: boolean; last_test: ConnResult | null; created_by: string | null; created_at: string; updated_at: string }
+export interface ConnectionInput { name: string; kind: ConnectorKind; config: Record<string, string | number>; secret?: string | null }
+export interface SourceFacts { kind: string; connection: string | null; connection_id: string | null; catalog: string | null; schema: string | null; host: string | null; auth_mode: string; auth_header: string; materialization: string; target_schema: string | null; last_test: ConnResult | null; ai: { connection: string | null; kind: string; deployment: string | null } | null }
+export interface DomainSettingsPatch { description?: string; review_quorum?: number; base_iri?: string; connection_id?: string | null; ai_connection_id?: string | null; default_catalog?: string | null; default_schema?: string | null; materialization?: "none" | "view" | "table"; target_schema?: string | null }
 export interface Task { title: string; sub: string; when: string; icon: string; go: { screen: string; domain?: string; version?: number } }
 export interface Principal { name: string; role: Role; seen: string }
 export interface ApiKey { name: string; prefix: string; role: Role }
@@ -164,7 +176,16 @@ export interface DatagraphApi {
   triples(domain: string, query: TripleQuery): Promise<TriplePage>;
   analytics(domain: string): Promise<Analytics>;
 
-  testConnection(): Promise<ConnResult>;
+  testConnection(): Promise<ConnResult>;               // the deployment's env source (no connection attached)
+  connectors(): Promise<ConnectorSpec[]>;
+  connections(): Promise<ConnectionRec[]>;
+  createConnection(input: ConnectionInput): Promise<ConnectionRec>;
+  updateConnection(id: string, input: Partial<ConnectionInput>): Promise<ConnectionRec>;
+  deleteConnection(id: string): Promise<void>;
+  testConnectionDraft(input: Omit<ConnectionInput, "name">): Promise<ConnResult>;
+  testConnectionById(id: string): Promise<ConnResult>;
+  updateDomain(domain: string, patch: DomainSettingsPatch): Promise<DomainSummary>;
+  sourceFacts(domain: string): Promise<SourceFacts>;
   tasks(): Promise<Task[]>;
   principals(): Promise<Principal[]>;
   apiKeys(): Promise<ApiKey[]>;

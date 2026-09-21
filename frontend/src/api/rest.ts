@@ -2,7 +2,7 @@
 // Methods with a settled contract call the API; the rest fall through to the mock so the
 // app stays usable while integration proceeds. Replace fallbacks method by method.
 import { MockApi } from "./mock";
-import type { AuditEntry, BuildRun, CatalogTable, ClassMapping, Comment, Config, ConnResult, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, TableDetail, TablePreview, TriplePage, TripleQuery, VersionInfo, VersionStatus } from "./types";
+import type { AuditEntry, BuildRun, CatalogTable, ClassMapping, Comment, Config, ConnResult, ConnectionInput, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, SourceFacts, TableDetail, TablePreview, TriplePage, TripleQuery, VersionInfo, VersionStatus } from "./types";
 import { tableName } from "./types";
 
 export class ApiError extends Error {
@@ -12,7 +12,8 @@ export class ApiError extends Error {
 export interface RestOptions { base?: string; actor?: string; token?: string }
 
 interface BackendVersion { id: string; version: number; status: VersionStatus; has_ontology: boolean; has_mapping: boolean; rule_count: number; constraint_count: number; created_at?: string; created_by?: string; lease?: { holder: string; expires_at: string } | null }
-interface BackendDomain { name: string; description: string | null; base_iri: string; review_quorum: number; active_version_id?: string | null }
+interface BackendDomain { name: string; description: string | null; base_iri: string; review_quorum: number; active_version_id?: string | null; connection_id?: string | null; ai_connection_id?: string | null; default_catalog?: string | null; default_schema?: string | null; materialization?: string; target_schema?: string | null; mcp_policy?: { exposed?: boolean; disabled_tools?: string[] } }
+interface BackendCard { name: string; version_count: number; active_version: { version: number } | null; latest_version: { version: number; status: string } | null; triples: number; last_build: { status: string; finished_at: string | null; triple_count: number | null } | null; source: { kind: string; connection: string | null; catalog: string | null; schema: string | null }; mcp: { exposed: boolean; disabled_tools: string[] } }
 
 export class RestApi extends MockApi {
   private base: string;
@@ -53,13 +54,29 @@ export class RestApi extends MockApi {
     const parts = [v.has_ontology ? "ontology" : "no ontology", v.has_mapping ? "mapping" : "no mapping", `${v.rule_count} rules`, `${v.constraint_count} constraints`];
     return { id: v.id, version: v.version, status: v.status, content: parts.join(" · "), mappingPct: null, lastBuild: "—", active: d.active_version_id === v.id, created: v.created_at ?? "", by: v.created_by ?? "", stats: { classes: 0, attrs: 0, rels: 0, bindings: 0, rules: v.rule_count, constraints: v.constraint_count, triples: 0 }, lease: v.lease ? { holder: v.lease.holder, expires: v.lease.expires_at } : null, review: null, changes: [] };
   }
-  private async toDomain(d: BackendDomain): Promise<DomainSummary> {
+  private async toDomain(d: BackendDomain, card?: BackendCard): Promise<DomainSummary> {
     const vs = await this.req<BackendVersion[]>("GET", `/domains/${encodeURIComponent(d.name)}/versions`);
     const cfg = this.cfg ?? await this.config();
     const versions = vs.map(v => this.toVersion(d, v)).sort((a, b) => b.version - a.version);
-    return { name: d.name, description: d.description ?? "", base_iri: d.base_iri, quorum: d.review_quorum, schema: "", catalog: cfg.catalog ?? d.name, materialization: cfg.materialization, target: "", mcpExposed: true, disabledTools: [], triples: "—", lastBuild: "—", versions, lease: versions.find(v => v.lease)?.lease ?? null, review: null };
+    const c = card ?? (await this.req<BackendCard[]>("GET", "/domains/cards")).find(x => x.name === d.name);
+    return { name: d.name, description: d.description ?? "", base_iri: d.base_iri, quorum: d.review_quorum, schema: c?.source.schema ?? d.default_schema ?? "", catalog: c?.source.catalog ?? d.default_catalog ?? cfg.catalog ?? d.name,
+      materialization: d.materialization ?? cfg.materialization, target: d.target_schema ?? "", mcpExposed: c?.mcp.exposed ?? d.mcp_policy?.exposed ?? true, disabledTools: c?.mcp.disabled_tools ?? d.mcp_policy?.disabled_tools ?? [],
+      triples: c ? c.triples.toLocaleString() : "—", lastBuild: c?.last_build ? `${c.last_build.status}${c.last_build.finished_at ? " · " + new Date(c.last_build.finished_at).toLocaleString() : ""}` : "never",
+      versions, lease: versions.find(v => v.lease)?.lease ?? null, review: null, connectionId: d.connection_id ?? null, aiConnectionId: d.ai_connection_id ?? null, targetSchema: d.target_schema ?? null };
   }
-  override async domains(): Promise<DomainSummary[]> { const ds = await this.req<BackendDomain[]>("GET", "/domains"); return Promise.all(ds.map(d => this.toDomain(d))); }
+  override async domains(): Promise<DomainSummary[]> {
+    const [ds, cards] = await Promise.all([this.req<BackendDomain[]>("GET", "/domains"), this.req<BackendCard[]>("GET", "/domains/cards")]);
+    return Promise.all(ds.map(d => this.toDomain(d, cards.find(c => c.name === d.name))));
+  }
+  override async updateDomain(domain: string, patch: DomainSettingsPatch): Promise<DomainSummary> { await this.req("PUT", `/domains/${encodeURIComponent(domain)}`, patch); return this.domain(domain); }
+  override async sourceFacts(domain: string): Promise<SourceFacts> { return this.req<SourceFacts>("GET", `/domains/${encodeURIComponent(domain)}/source`); }
+  override async connectors(): Promise<ConnectorSpec[]> { return this.req<ConnectorSpec[]>("GET", "/connectors"); }
+  override async connections(): Promise<ConnectionRec[]> { return this.req<ConnectionRec[]>("GET", "/connections"); }
+  override async createConnection(input: ConnectionInput): Promise<ConnectionRec> { return this.req<ConnectionRec>("POST", "/connections", input); }
+  override async updateConnection(id: string, input: Partial<ConnectionInput>): Promise<ConnectionRec> { return this.req<ConnectionRec>("PUT", `/connections/${id}`, input); }
+  override async deleteConnection(id: string): Promise<void> { await this.req("DELETE", `/connections/${id}`); }
+  override async testConnectionDraft(input: Omit<ConnectionInput, "name">): Promise<ConnResult> { return this.req<ConnResult>("POST", "/connections/test", input); }
+  override async testConnectionById(id: string): Promise<ConnResult> { return this.req<ConnResult>("POST", `/connections/${id}/test`); }
   override async domain(name: string): Promise<DomainSummary> { return this.toDomain(await this.req<BackendDomain>("GET", `/domains/${encodeURIComponent(name)}`)); }
   override async createDomain(input: NewDomainInput): Promise<DomainSummary> {
     return this.toDomain(await this.req<BackendDomain>("POST", "/domains", { name: input.name, description: input.description, base_iri: input.base_iri, review_quorum: input.quorum }));

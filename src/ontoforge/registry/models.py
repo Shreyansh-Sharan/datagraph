@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import Enum
 from uuid import UUID
@@ -48,6 +48,12 @@ class Domain:
     created_at: datetime
     mcp_policy: dict = field(default_factory=lambda: {"exposed": True})
     active_version_id: UUID | None = None
+    connection_id: UUID | None = None        # source warehouse (None: the deployment's env source)
+    ai_connection_id: UUID | None = None     # AI provider for drafts/assist (None: the deployment's env provider)
+    default_catalog: str | None = None
+    default_schema: str | None = None
+    materialization: str = "none"            # none | view | table
+    target_schema: str | None = None
 
     @property
     def mcp_exposed(self) -> bool:
@@ -157,3 +163,25 @@ class AuditEntry:
     action: str
     detail: dict | None
     created_at: datetime
+
+
+DOMAIN_SETTINGS = ("description", "review_quorum", "base_iri", "connection_id", "ai_connection_id", "default_catalog", "default_schema", "materialization", "target_schema")
+MATERIALIZATIONS = ("none", "view", "table")
+
+
+@dataclass(frozen=True)
+class Connection:
+    id: UUID
+    name: str
+    kind: str
+    config: dict
+    secret: str | None            # encrypted; only the connectors service decrypts it
+    last_test: dict | None
+    created_by: str | None
+    created_at: datetime
+    updated_at: datetime
+
+    def public(self) -> dict:
+        d = {k: v for k, v in asdict(self).items() if k != "secret"}
+        d["has_secret"] = bool(self.secret)
+        return d

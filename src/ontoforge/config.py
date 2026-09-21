@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     log_format: str = "text"            # "text" | "json"
     log_level: str = "INFO"
 
+    secret_key: str = "change-me-in-production"   # encrypts connection secrets at rest (ONTOFORGE_SECRET_KEY)
     auth_mode: str = "header"           # "header" (trusted proxy / dev) | "token" (API keys)
     auth_header: str = "X-Actor"        # identity header in header mode (Databricks Apps: X-Forwarded-Email)
     auth_default_role: str = "viewer"   # role for principals without an explicit one

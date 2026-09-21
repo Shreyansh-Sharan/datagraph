@@ -36,6 +36,7 @@ from ontoforge.metadata import MetadataError, MetadataService
 from ontoforge.observability import RequestLoggingMiddleware, configure_logging
 from ontoforge.r2rml import MappingError
 from ontoforge.reasoning import Reasoner
+from ontoforge.connectors.secrets import SecretBox
 from ontoforge.registry import LifecycleError, LockedError, NotFound, Registry
 from ontoforge.quality import QualityError
 from ontoforge.rules import RuleError
@@ -56,6 +57,7 @@ def create_app(db: Database, source_db: Database | None = None, settings: Settin
     app.state.settings = settings
     app.state.db = db
     app.state.registry = Registry(db)
+    app.state.secrets = SecretBox(settings.secret_key)
     app.state.principals = Principals(db)
     app.state.store = TripleStore(db)
     app.state.source = _source_engine(settings, source_db or db)
