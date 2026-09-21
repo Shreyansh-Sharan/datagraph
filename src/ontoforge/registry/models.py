@@ -167,21 +167,3 @@ class AuditEntry:
 
 DOMAIN_SETTINGS = ("description", "review_quorum", "base_iri", "connection_id", "ai_connection_id", "default_catalog", "default_schema", "materialization", "target_schema")
 MATERIALIZATIONS = ("none", "view", "table")
-
-
-@dataclass(frozen=True)
-class Connection:
-    id: UUID
-    name: str
-    kind: str
-    config: dict
-    secret: str | None            # encrypted; only the connectors service decrypts it
-    last_test: dict | None
-    created_by: str | None
-    created_at: datetime
-    updated_at: datetime
-
-    def public(self) -> dict:
-        d = {k: v for k, v in asdict(self).items() if k != "secret"}
-        d["has_secret"] = bool(self.secret)
-        return d

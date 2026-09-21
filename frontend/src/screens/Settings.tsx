@@ -1,24 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
+import { ConnectionForm, TestReportView, ValidationError, useConnectionTypes, useConnections, useConnectionsClient, useTestConnection, type Connection, type ConnectorSummary } from "@polestar/connections";
 import { Button, Card, Dialog, Dot, ErrorNotice, KV, Label, Pill, Skeleton, Spinner, Toggle } from "@/components/ui";
 import { useApp, useLoad } from "@/state/app";
 import { useDomain } from "@/state/domain";
-import type { ConnResult, ConnectionRec, ConnectorField, ConnectorSpec, ConnectorKind } from "@/api";
+import { CONNECTIONS_URL } from "@/config";
+import type { ConnResult } from "@/api";
 
 const KIND_LABEL: Record<string, string> = { postgres: "Postgres", databricks: "Databricks", sqlserver: "SQL Server", mssql: "SQL Server", azure_openai: "Azure OpenAI", azureopenai: "Azure OpenAI" };
-const kindLabel = (k: string, specs?: ConnectorSpec[] | null) => specs?.find(s => s.kind === k)?.label ?? KIND_LABEL[k] ?? k;
-/** A field applies while every field named in show_when holds the expected value (the hub's x-show-when). */
-const visible = (f: ConnectorField, values: Record<string, string>, spec?: ConnectorSpec) => !f.show_when || Object.entries(f.show_when).every(([n, v]) => String(values[n] ?? spec?.fields.find(x => x.name === n)?.default ?? "") === String(v));
+const isAiKind = (kind: string, types?: ConnectorSummary[]) => (types?.find(t => t.type === kind)?.category ?? (kind.includes("openai") ? "ai" : "source")) === "ai";
 
 export function Settings() {
   const { api, config, say, can } = useApp();
   const { domain, patch } = useDomain();
   const facts = useLoad(() => api.sourceFacts(domain.name), [domain.name]);
-  const conns = useLoad(() => api.connections(), []);
-  const specs = useLoad(() => api.connectors(), []);
+  const conns = useLoad(() => api.connections().catch(() => []), []);
+  const specs = useLoad(() => api.connectors().catch(() => []), []);
   const [testing, setTesting] = useState(false);
   const [conn, setConn] = useState<ConnResult | null>(null);
   const [mcp, setMcp] = useState(domain.mcpExposed);
-  const [dialog, setDialog] = useState<{ open: boolean; edit?: ConnectionRec }>({ open: false });
   // domain form
   const [description, setDescription] = useState(domain.description);
   const [quorum, setQuorum] = useState(domain.quorum);
@@ -33,6 +32,7 @@ export function Settings() {
   useEffect(() => { if (facts.data) { setDefCatalog(facts.data.catalog ?? ""); setDefSchema(facts.data.schema ?? ""); setMat((facts.data.materialization as "none" | "view" | "table") || "none"); setTarget(facts.data.target_schema ?? ""); } }, [facts.data]);
 
   const isAi = (kind: string) => (specs.data?.find(s => s.kind === kind)?.category ?? (kind.includes("openai") ? "ai" : "source")) === "ai";
+  const kindLabel = (k: string) => specs.data?.find(s => s.kind === k)?.label ?? KIND_LABEL[k] ?? k;
   const sources = (conns.data ?? []).filter(c => !isAi(c.kind));
   const ais = (conns.data ?? []).filter(c => isAi(c.kind));
   const f = facts.data;
@@ -52,6 +52,7 @@ export function Settings() {
     try { patch(await api.updateDomain(domain.name, { description, review_quorum: quorum, base_iri: baseIri })); say("Domain settings saved"); }
     catch (e) { say(e instanceof Error ? e.message : String(e)); }
   };
+  const refreshAll = () => { conns.reload(); facts.reload(); };
 
   return (
     <>
@@ -63,10 +64,11 @@ export function Settings() {
             {facts.loading && <Skeleton h={120} />}
             {facts.error && <ErrorNotice error={facts.error} />}
             {sourceRows.map(([k, v]) => <KV key={k} k={k} v={v} />)}
+            {f?.missing_connection_id && <div className="notice error" style={{ marginTop: 10 }}><div className="row" style={{ fontWeight: 700, color: "var(--orange)" }}><Dot color="var(--orange)" size={8} />The attached connection no longer exists in the connection module</div><div className="muted xs" style={{ marginTop: 4 }}>Pick another one below and save.</div></div>}
             {conn && <TestNotice r={conn} />}
             <div style={{ marginTop: 16, display: "grid", gap: 12 }}>
               <div className="grid two" style={{ gap: 12 }}>
-                <div><Label>Source connection</Label><select id="src-conn" aria-label="Source connection" className="select full" value={connectionId} onChange={e => setConnectionId(e.target.value)}><option value="">Deployment default ({KIND_LABEL[config.sourceKind]})</option>{sources.map(c => <option key={c.id} value={c.id}>{c.name} · {kindLabel(c.kind, specs.data)}</option>)}</select></div>
+                <div><Label>Source connection</Label><select id="src-conn" aria-label="Source connection" className="select full" value={connectionId} onChange={e => setConnectionId(e.target.value)}><option value="">Deployment default ({KIND_LABEL[config.sourceKind]})</option>{sources.map(c => <option key={c.id} value={c.id}>{c.name} · {kindLabel(c.kind)}</option>)}</select></div>
                 <div><Label>AI connection</Label><select id="ai-conn" aria-label="AI connection" className="select full" value={aiId} onChange={e => setAiId(e.target.value)}><option value="">None</option>{ais.map(c => <option key={c.id} value={c.id}>{c.name} · {String(c.config.deployment ?? "")}</option>)}</select></div>
               </div>
               <div className="grid two" style={{ gap: 12 }}>
@@ -79,27 +81,11 @@ export function Settings() {
               </div>
               {can("builder") && <div className="row" style={{ justifyContent: "flex-end" }}><Button variant="primary" size="sm" onClick={saveSource}>Save source settings</Button></div>}
             </div>
-            <p className="muted-3" style={{ margin: "12px 0 0", fontSize: 11.5 }}>Secrets are encrypted at rest and never returned by the API.</p>
+            <p className="muted-3" style={{ margin: "12px 0 0", fontSize: 11.5 }}>Credentials live in the connection module and never pass through datagraph.</p>
           </Card>
-          <Card flush>
-            <div className="card-head" style={{ alignItems: "center" }}><h2 className="h2">Connections{f?.connections_backend === "hub" && <span className="pill blue" style={{ marginLeft: 8 }}>connection module</span>}</h2>{can("admin") && <Button size="sm" variant="primary" onClick={() => setDialog({ open: true })}>New connection</Button>}</div>
-            <div className="grid-head" style={{ gridTemplateColumns: "1.2fr 1fr 1.6fr 1fr auto" }}><span>Name</span><span>Kind</span><span>Host</span><span>Last test</span><span /></div>
-            {conns.loading && <div style={{ padding: 20 }}><Skeleton h={16} /></div>}
-            {(conns.data ?? []).map(c => (
-              <div key={c.id} className="grid-row" style={{ gridTemplateColumns: "1.2fr 1fr 1.6fr 1fr auto", padding: "10px 20px" }}>
-                <span style={{ fontWeight: 600 }}>{c.name}</span>
-                <Pill tone={isAi(c.kind) ? "outline" : "blue"}>{kindLabel(c.kind, specs.data)}</Pill>
-                <span className="mono small" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{String(c.config.host ?? c.config.endpoint ?? "—")}</span>
-                <span className="row small"><Dot color={c.last_test ? (c.last_test.ok ? "var(--blue)" : "var(--orange)") : "var(--grey)"} />{c.last_test ? (c.last_test.ok ? `ok · ${c.last_test.latency_ms ?? 0} ms` : "failed") : "never"}</span>
-                <span className="row" style={{ gap: 4 }}>
-                  <Button size="xs" onClick={async () => { try { const r = await api.testConnectionById(c.id); say(`${c.name}: ${r.title} · ${r.detail}`); conns.reload(); } catch (e) { say(e instanceof Error ? e.message : String(e)); } }}>Test</Button>
-                  {can("admin") && <Button size="xs" onClick={() => setDialog({ open: true, edit: c })}>Edit</Button>}
-                  {can("admin") && <Button size="xs" variant="danger" onClick={async () => { await api.deleteConnection(c.id); conns.reload(); facts.reload(); say(`Connection ${c.name} deleted`); }}>Delete</Button>}
-                </span>
-              </div>
-            ))}
-            {conns.data?.length === 0 && <p className="muted" style={{ padding: 20 }}>No connections yet. The deployment's environment source is used until one is attached.</p>}
-          </Card>
+          {CONNECTIONS_URL
+            ? <HubConnectionManager canEdit={can("admin")} onChanged={refreshAll} />
+            : <Card><div className="row between"><h2 className="h2">Connections</h2><Pill tone="outline">connection module</Pill></div><p className="muted" style={{ marginTop: 8 }}>The connection module is not configured for this front end. Set <span className="mono">VITE_CONNECTIONS_URL</span> to the mf-studio-connectors hub (the gateway route in production, <span className="mono">/hub</span> in development) to add, edit and test connections here.</p></Card>}
         </div>
         <div className="grid">
           <Card>
@@ -117,7 +103,6 @@ export function Settings() {
           </Card>
         </div>
       </div>
-      <ConnectionDialog open={dialog.open} edit={dialog.edit} specs={specs.data ?? []} onClose={() => setDialog({ open: false })} onSaved={c => { setDialog({ open: false }); conns.reload(); facts.reload(); say(`Connection ${c.name} saved`); }} />
     </>
   );
 }
@@ -132,52 +117,84 @@ function TestNotice({ r }: { r: ConnResult }) {
   );
 }
 
-/** Create or edit a connection: the kind picks the field list from the connector spec; Test probes before Save. */
-export function ConnectionDialog({ open, edit, specs, onClose, onSaved }: { open: boolean; edit?: ConnectionRec; specs: ConnectorSpec[]; onClose: () => void; onSaved: (c: ConnectionRec) => void }) {
-  const { api } = useApp();
-  const [kind, setKind] = useState<ConnectorKind>(specs[0]?.kind ?? "databricks");
-  const [name, setName] = useState("");
-  const [values, setValues] = useState<Record<string, string>>({});
-  const [result, setResult] = useState<ConnResult | null>(null);
-  const [busy, setBusy] = useState<"test" | "save" | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const spec = useMemo(() => specs.find(s => s.kind === kind), [specs, kind]);
-  useEffect(() => {
-    if (!open) return;
-    setResult(null); setError(null);
-    if (edit) { setKind(edit.kind); setName(edit.name); setValues(Object.fromEntries(Object.entries(edit.config).map(([k, v]) => [k, String(v)]))); }
-    else { setKind(specs.find(s => s.kind === "databricks")?.kind ?? specs[0]?.kind ?? "databricks"); setName(""); setValues({}); }
-  }, [open, edit, specs]);
-  useEffect(() => { if (spec && !edit) setValues(v => ({ ...Object.fromEntries(spec.fields.filter(f => f.default != null).map(f => [f.name, String(f.default)])), ...v })); }, [spec, edit]);
-  if (!spec && specs.length === 0) return null;
-  const config = () => { const cfg: Record<string, string | number> = {}; for (const f of spec?.fields ?? []) { if (!visible(f, values, spec)) continue; const v = values[f.name]; if (v === undefined || v === "" || f.name === spec?.secret_field) continue; cfg[f.name] = f.kind === "number" ? Number(v) : v; } return cfg; };
-  const secret = () => (spec ? values[spec.secret_field] || undefined : undefined);
-  const run = async (mode: "test" | "save") => {
-    if (!spec) return; setBusy(mode); setError(null);
-    try {
-      if (mode === "test") setResult(await api.testConnectionDraft({ kind, config: config(), secret: secret() }));
-      else onSaved(edit ? await api.updateConnection(edit.id, { name, config: config(), secret: secret() }) : await api.createConnection({ name, kind, config: config(), secret: secret() }));
-    } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(null); }
-  };
+/** The connection module's own list, form and test report, rendered with @polestar/connections. */
+function HubConnectionManager({ canEdit, onChanged }: { canEdit: boolean; onChanged: () => void }) {
+  const { api, say } = useApp();
+  const client = useConnectionsClient();
+  const types = useConnectionTypes();
+  const list = useConnections();
+  const rowTest = useTestConnection();
+  const [testingId, setTestingId] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<{ open: boolean; edit?: Connection }>({ open: false });
+  const typeLabel = (t: string) => types.data?.find(x => x.type === t)?.display_name ?? KIND_LABEL[t] ?? t;
+  const changed = () => { list.reload(); onChanged(); };
+
   return (
-    <Dialog title={edit ? `Edit ${edit.name}` : "New connection"} open={open} onClose={onClose} width={520}
-      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="outline" onClick={() => run("test")} disabled={busy !== null}>{busy === "test" && <Spinner blue />}Test</Button><Button variant="primary" onClick={() => run("save")} disabled={busy !== null || !name.trim()}>{busy === "save" && <Spinner />}{edit ? "Save changes" : "Create connection"}</Button></>}>
-      <div className="grid two" style={{ gap: 12, marginBottom: 12 }}>
-        <div><Label>Name</Label><input id="cn-name" className="input full" placeholder="warehouse" value={name} onChange={e => setName(e.target.value)} /></div>
-        <div><Label>Kind</Label><select id="cn-kind" aria-label="Kind" className="select full" value={kind} disabled={!!edit} onChange={e => { setKind(e.target.value as ConnectorKind); setValues({}); setResult(null); }}>{specs.map(s => <option key={s.kind} value={s.kind}>{s.label}{s.category === "ai" ? " (AI)" : ""}</option>)}</select></div>
-      </div>
-      <div style={{ display: "grid", gap: 10 }}>
-        {(spec?.fields ?? []).filter(f => visible(f, values, spec)).map(f => (
-          <div key={f.name}>
-            <Label>{f.label}{f.required && <span style={{ color: "var(--orange)" }}> *</span>}</Label>
-            {f.kind === "select"
-              ? <select aria-label={f.label} className="select full" value={values[f.name] ?? String(f.default ?? "")} onChange={e => setValues(v => ({ ...v, [f.name]: e.target.value }))}>{f.options.map(o => <option key={o} value={o}>{f.option_titles?.[o] ?? o}</option>)}</select>
-              : <input aria-label={f.label} className={`input full ${f.kind === "password" ? "" : "mono"}`} type={f.kind === "password" ? "password" : f.kind === "number" ? "number" : "text"} value={values[f.name] ?? ""} placeholder={f.name === spec?.secret_field && edit?.has_secret ? "•••••• (unchanged)" : f.help ?? ""} onChange={e => setValues(v => ({ ...v, [f.name]: e.target.value }))} />}
-            {f.help && f.kind !== "password" && <div className="muted-2 xs" style={{ marginTop: 3 }}>{f.help}</div>}
+    <>
+      <Card flush>
+        <div className="card-head" style={{ alignItems: "center" }}><h2 className="h2">Connections <Pill tone="blue" style={{ marginLeft: 6 }}>connection module</Pill></h2>{canEdit && <Button size="sm" variant="primary" onClick={() => setDialog({ open: true })}>New connection</Button>}</div>
+        <div className="grid-head" style={{ gridTemplateColumns: "1.2fr 1fr 1.6fr 1fr auto" }}><span>Name</span><span>Kind</span><span>Host</span><span>Last test</span><span /></div>
+        {list.loading && <div style={{ padding: 20 }}><Skeleton h={16} /></div>}
+        {list.error && <div style={{ padding: "0 20px 16px" }}><ErrorNotice error={`The connection module did not answer: ${list.error.message}`} action={<span className="small">Is the hub running at the configured URL?</span>} /></div>}
+        {(list.data ?? []).map(c => (
+          <div key={c.id}>
+            <div className="grid-row" style={{ gridTemplateColumns: "1.2fr 1fr 1.6fr 1fr auto", padding: "10px 20px" }}>
+              <span style={{ fontWeight: 600 }}>{c.name}</span>
+              <Pill tone={isAiKind(c.type, types.data) ? "outline" : "blue"}>{typeLabel(c.type)}</Pill>
+              <span className="mono small" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{String(c.config.host ?? c.config.endpoint ?? "—")}</span>
+              <span className="row small"><Dot color={c.last_test_ok == null ? "var(--grey)" : c.last_test_ok ? "var(--blue)" : "var(--orange)"} />{c.last_test_ok == null ? "never" : c.last_test_ok ? "ok" : "failed"}{c.last_tested_at && <span className="muted-3 xs">· {new Date(c.last_tested_at).toLocaleString()}</span>}</span>
+              <span className="row" style={{ gap: 4 }}>
+                <Button size="xs" disabled={rowTest.testing} onClick={async () => { setTestingId(c.id); const r = await rowTest.run({ id: c.id }); if (r) say(`${c.name}: ${r.ok ? "connected" : "failed"}`); changed(); }}>Test</Button>
+                {canEdit && <Button size="xs" onClick={() => setDialog({ open: true, edit: c })}>Edit</Button>}
+                {canEdit && <Button size="xs" variant="danger" onClick={async () => { await client.deleteConnection(c.id); await api.detachConnection(c.id).catch(() => {}); say(`Connection ${c.name} deleted`); changed(); }}>Delete</Button>}
+              </span>
+            </div>
+            {testingId === c.id && (rowTest.testing || rowTest.report) && <div style={{ padding: "0 20px 14px" }}><TestReportView report={rowTest.report} testing={rowTest.testing} /></div>}
           </div>
         ))}
+        {list.data?.length === 0 && <p className="muted" style={{ padding: 20 }}>No connections yet. Add the warehouse this domain reads from, and an AI provider for drafts.</p>}
+      </Card>
+      <ConnectionDialog open={dialog.open} edit={dialog.edit} types={types.data ?? []} onClose={() => setDialog({ open: false })} onSaved={c => { setDialog({ open: false }); say(`Connection ${c.name} saved`); changed(); }} />
+    </>
+  );
+}
+
+/** Create or edit a connection through the module: its JSON Schema renders the form, its hub runs the test. */
+function ConnectionDialog({ open, edit, types, onClose, onSaved }: { open: boolean; edit?: Connection; types: ConnectorSummary[]; onClose: () => void; onSaved: (c: Connection) => void }) {
+  const client = useConnectionsClient();
+  const { run, report, testing, reset } = useTestConnection();
+  const [type, setType] = useState("");
+  const [name, setName] = useState("");
+  const [config, setConfig] = useState<Record<string, unknown>>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const sorted = useMemo(() => [...types].sort((a, b) => a.category.localeCompare(b.category) || a.display_name.localeCompare(b.display_name)), [types]);
+  useEffect(() => {
+    if (!open) return;
+    reset(); setErrors({}); setError(null);
+    if (edit) { setType(edit.type); setName(edit.name); setConfig(edit.config); }
+    else { setType(types.find(t => t.type === "databricks")?.type ?? types[0]?.type ?? ""); setName(""); setConfig({}); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, edit, types]);
+  const cleaned = () => Object.fromEntries(Object.entries(config).filter(([, v]) => v !== "" && v !== undefined && v !== "********"));
+  const save = async () => {
+    setSaving(true); setError(null); setErrors({});
+    try { onSaved(edit ? await client.updateConnection(edit.id, { name, config: cleaned() }) : await client.createConnection({ name, type, config: cleaned() })); }
+    catch (e) {
+      if (e instanceof ValidationError) setErrors(Object.fromEntries(e.errors.map(line => { const [field, ...rest] = line.split(": "); return [field, rest.join(": ")]; })));
+      else setError(e instanceof Error ? e.message : String(e));
+    } finally { setSaving(false); }
+  };
+  return (
+    <Dialog title={edit ? `Edit ${edit.name}` : "New connection"} open={open} onClose={onClose} width={560}
+      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="outline" disabled={testing || !type} onClick={() => run({ type, config: cleaned() })}>{testing && <Spinner blue />}Test</Button><Button variant="primary" disabled={saving || !name.trim() || !type} onClick={save}>{saving && <Spinner />}{edit ? "Save changes" : "Create connection"}</Button></>}>
+      <div className="grid two" style={{ gap: 12, marginBottom: 12 }}>
+        <div><Label>Name</Label><input id="cn-name" className="input full" placeholder="warehouse" value={name} onChange={e => setName(e.target.value)} /></div>
+        <div><Label>Kind</Label><select id="cn-kind" aria-label="Kind" className="select full" value={type} disabled={!!edit} onChange={e => { setType(e.target.value); setConfig({}); reset(); }}>{sorted.map(t => <option key={t.type} value={t.type}>{t.display_name}{t.category === "ai" ? " (AI)" : ""}</option>)}</select></div>
       </div>
-      {result && <TestNotice r={result} />}
+      {type && <ConnectionForm key={`${type}-${edit?.id ?? "new"}`} type={type} value={edit?.config} errors={errors} onChange={setConfig} />}
+      <div style={{ marginTop: 12 }}><TestReportView report={report} testing={testing} /></div>
       {error && <ErrorNotice error={error} />}
     </Dialog>
   );

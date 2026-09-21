@@ -21,6 +21,27 @@ Environment (`.env.local`, see `.env.example`):
 | `VITE_SOURCE_KIND` | `databricks` (default) / `postgres` | Mock only. Switches the source chip, catalog naming (`rgm.gold.dim_customer` vs `rgm_gold.dim_customer`), inferred-key badges and the SQL dialect of the mapping designer. In `rest` mode the kind comes from `GET /auth/config`. |
 | `VITE_ROLE` | `viewer` / `builder` / `reviewer` / `admin` | Mock identity; the top-bar switch changes it at runtime. |
 | `VITE_CATALOG_DENIED` | `true` | Mock: makes the Databricks catalog fail with `INSUFFICIENT_PERMISSIONS` so the permission-error paths (Metadata, Settings → Test connection) can be exercised. |
+| `VITE_CONNECTIONS_URL` | `/hub` (dev) / gateway route (prod) | Where the **connection module** (`mf-studio-connectors` hub) is reached from the browser. Empty: the Configure screen shows the domain's connection pickers only and says the module is not configured. |
+| `VITE_HUB_TARGET` | `http://127.0.0.1:8025` | Dev only: what the `/hub` proxy forwards to. |
+
+## The connection module
+
+Connections (warehouses and AI providers) are **not** implemented here. They belong to the
+Polestar connection module, a separate microservice (`mf-studio-connectors`: hub API + connector
+plugins). This front end consumes it as a package:
+
+- `@polestar/connections` (from the `microservices-shared` feed, see `.npmrc`) renders the
+  connection form from each connector's JSON Schema, runs tests through the hub and shows the
+  step-by-step report. `ConnectionsProvider` is mounted in `App.tsx`; the Configure screen's
+  connection manager is built from `ConnectionForm`, `TestReportView`, `useConnections`,
+  `useConnectionTypes` and `useTestConnection`.
+- The datagraph API only *reads* the hub (connector types, masked configs, a test of a saved
+  connection) to render the Home cards and a domain's source facts, and stores hub connection
+  ids on domains. Credentials never pass through datagraph.
+
+Locally: run the hub (`uvicorn hub.main:app --port 8025` in the connectors repo), set
+`ONTOFORGE_CONNECTIONS_HUB_URL=http://127.0.0.1:8025` for the datagraph API and
+`VITE_CONNECTIONS_URL=/hub` for this front end.
 
 ```bash
 npm test               # vitest: adapter naming/SQL dialects, lifecycle, builds, triples, Ask, shell rendering

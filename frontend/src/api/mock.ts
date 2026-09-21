@@ -6,7 +6,7 @@ import type {
   Analytics, ApiKey, AuditEntry, BuildRun, BuildStep, CatalogTable, ChecklistItem, ClassMapping, Comment, Config, ConnResult, Constraint,
   DatagraphApi, DomainSummary, DqColumnIssue, EntityDetail, GlossaryTerm, GraphStatus, Lock, MappingKpis, Me, NewDomainInput, OntoCheck,
   OntoClass, OntoDiff, Principal, Role, Rule, SearchHit, SourceKind, TableDetail, TablePreview, TableProfile, Task, TriplePage, TripleQuery,
-  VersionStatus, ConnectorSpec, ConnectionRec, ConnectionInput, SourceFacts, DomainSettingsPatch,
+  VersionStatus, ConnectorSpec, ConnectionRec, SourceFacts, DomainSettingsPatch,
 } from "./types";
 
 export interface MockOptions { sourceKind?: SourceKind; role?: Role; catalogDenied?: boolean; latency?: number; stepScale?: number }
@@ -20,7 +20,6 @@ export class MockApi implements DatagraphApi {
   private live: Record<string, { run: BuildRun; timers: ReturnType<typeof setTimeout>[] }> = {};
   private nextRun = 0xb105;
   private conns: ConnectionRec[] = [];
-  private nextConn = 1;
   readonly kind: SourceKind;
   readonly role: Role;
   protected mockOpts: MockOptions;
@@ -44,31 +43,13 @@ export class MockApi implements DatagraphApi {
   }
   async connectors(): Promise<ConnectorSpec[]> { return clone(D.CONNECTOR_SPECS); }
   async connections(): Promise<ConnectionRec[]> { return clone(this.conns); }
-  async createConnection(input: ConnectionInput): Promise<ConnectionRec> {
-    if (!input.name.trim()) throw new Error("Name is required");
-    if (this.conns.some(c => c.name === input.name)) throw new Error(`Connection '${input.name}' already exists`);
-    const spec = D.CONNECTOR_SPECS.find(s => s.kind === input.kind); if (!spec) throw new Error(`Unknown connection kind '${input.kind}'`);
-    for (const f of spec.fields) if (f.required && (input.config[f.name] ?? f.default) == null) throw new Error(`${spec.label}: ${f.label} is required`);
-    const config = { ...input.config }; delete config[spec.secret_field];
-    const now = new Date().toISOString();
-    const rec: ConnectionRec = { id: `c-${this.nextConn++}`, name: input.name, kind: input.kind, config, has_secret: !!(input.secret ?? input.config[spec.secret_field]), last_test: null, created_by: "alice", created_at: now, updated_at: now };
-    this.conns.push(rec); return clone(rec);
-  }
-  async updateConnection(id: string, input: Partial<ConnectionInput>): Promise<ConnectionRec> {
-    const c = this.conns.find(x => x.id === id); if (!c) throw new Error(`Connection ${id} not found`);
-    if (input.name) c.name = input.name;
-    if (input.config) { const spec = D.CONNECTOR_SPECS.find(s => s.kind === c.kind)!; const cfg = { ...input.config }; if (cfg[spec.secret_field]) c.has_secret = true; delete cfg[spec.secret_field]; c.config = cfg; }
-    if (input.secret) c.has_secret = true;
-    c.updated_at = new Date().toISOString(); return clone(c);
-  }
-  async deleteConnection(id: string): Promise<void> {
-    this.conns = this.conns.filter(c => c.id !== id);
-    for (const d of this.domainsState) { if (d.connectionId === id) d.connectionId = null; if (d.aiConnectionId === id) d.aiConnectionId = null; }
-  }
-  async testConnectionDraft(input: Omit<ConnectionInput, "name">): Promise<ConnResult> { await new Promise(r => setTimeout(r, this.mockOpts.latency ?? (input.kind === "databricks" ? 900 : 200))); return this.simulateTest(input.kind, input.config); }
   async testConnectionById(id: string): Promise<ConnResult> {
     const c = this.conns.find(x => x.id === id); if (!c) throw new Error(`Connection ${id} not found`);
-    const r = await this.testConnectionDraft({ kind: c.kind, config: c.config }); c.last_test = { ...r, at: new Date().toISOString() }; return r;
+    await new Promise(r => setTimeout(r, this.mockOpts.latency ?? (c.kind === "databricks" ? 900 : 200)));
+    const r = this.simulateTest(c.kind, c.config); c.last_test = { ...r, at: new Date().toISOString() }; return r;
+  }
+  async detachConnection(id: string): Promise<void> {
+    for (const d of this.domainsState) { if (d.connectionId === id) d.connectionId = null; if (d.aiConnectionId === id) d.aiConnectionId = null; }
   }
   async updateDomain(domain: string, patch: DomainSettingsPatch): Promise<DomainSummary> {
     const d = this.dom(domain);

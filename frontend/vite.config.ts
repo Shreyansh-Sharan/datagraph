@@ -12,6 +12,9 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api": { target: process.env.VITE_API_TARGET ?? "http://127.0.0.1:8765", changeOrigin: true, rewrite: p => p.replace(/^\/api/, "") },
+      // The connection module (mf-studio-connectors hub) runs as its own service; in production the
+      // API gateway routes /api/v1/connection-hub to it. Locally /hub stands in for that route.
+      "/hub": { target: process.env.VITE_HUB_TARGET ?? "http://127.0.0.1:8025", changeOrigin: true, rewrite: p => p.replace(/^\/hub/, "") },
     },
   },
   build: { outDir: "dist", sourcemap: true },

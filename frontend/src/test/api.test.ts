@@ -108,19 +108,14 @@ describe("connections and domain settings (mock)", () => {
     expect(cs.map(c => c.kind)).toEqual(["databricks", "azure_openai"]);
     expect((await new MockApi({ sourceKind: "postgres" }).connections())[0].kind).toBe("postgres");
   });
-  it("creates, tests and attaches a connection to a domain", async () => {
+  it("tests a seeded connection, attaches it to a domain and detaches it", async () => {
     const api = new MockApi({ latency: 0 });
-    await expect(api.createConnection({ name: "warehouse", kind: "postgres", config: { host: "h", port: 5432, database: "d", user: "u" } })).rejects.toThrow(/already exists/);
-    await expect(api.createConnection({ name: "pg", kind: "postgres", config: { host: "h" } })).rejects.toThrow(/Database is required/);
-    const c = await api.createConnection({ name: "pg", kind: "postgres", config: { host: "h", port: 5432, database: "d", user: "u", password: "s3cret" } });
-    expect(c.has_secret).toBe(true); expect(c.config).not.toHaveProperty("password");
-    expect((await api.testConnectionDraft({ kind: "sqlserver", config: { host: "h" } })).title).toBe("Driver not installed");
-    const t = await api.testConnectionById(c.id); expect(t.ok).toBe(true);
-    const d = await api.updateDomain("hr", { connection_id: c.id, default_schema: "people", materialization: "table", target_schema: "hr_graph" });
-    expect(d.connectionId).toBe(c.id);
+    const t = await api.testConnectionById("c-warehouse"); expect(t.ok).toBe(true);
+    const d = await api.updateDomain("hr", { connection_id: "c-warehouse", default_schema: "people", materialization: "table", target_schema: "hr_graph" });
+    expect(d.connectionId).toBe("c-warehouse");
     const f = await api.sourceFacts("hr");
-    expect(f).toMatchObject({ kind: "postgres", connection: "pg", schema: "people", materialization: "table", target_schema: "hr_graph" });
-    await api.deleteConnection(c.id);
+    expect(f).toMatchObject({ kind: "databricks", connection: "warehouse", schema: "people", materialization: "table", target_schema: "hr_graph" });
+    await api.detachConnection("c-warehouse");
     expect((await api.sourceFacts("hr")).connection).toBeNull();
     await expect(api.updateDomain("hr", { materialization: "sideways" as never })).rejects.toThrow(/materialization/);
   });

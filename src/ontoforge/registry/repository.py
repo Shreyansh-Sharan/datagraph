@@ -12,7 +12,7 @@ from ontoforge.constants import MCP_REGISTRY_TOOLS, MCP_TOOLS
 from ontoforge.db import Database
 
 from .models import (
-    DOMAIN_SETTINGS, MATERIALIZATIONS, TRANSITIONS, AnalyticsRun, AuditEntry, Comment, Connection, Lock, Task, BuildRun, Domain, DomainVersion, LifecycleError, LockedError, NotFound, Review, Status,
+    DOMAIN_SETTINGS, MATERIALIZATIONS, TRANSITIONS, AnalyticsRun, AuditEntry, Comment, Lock, Task, BuildRun, Domain, DomainVersion, LifecycleError, LockedError, NotFound, Review, Status,
 )
 
 
@@ -117,62 +117,7 @@ class Registry:
             self._audit(cur, None, actor, "domain.updated", {"domain": str(domain_id), "fields": sorted(changes)})
             return Domain(**row)
 
-    # -- connections ---------------------------------------------------------
-
-    def create_connection(self, name: str, kind: str, config: dict, secret: str | None, *, actor: str | None = None) -> Connection:
-        with self._cur() as cur:
-            try:
-                row = cur.execute("INSERT INTO connections (name, kind, config, secret, created_by) VALUES (%s, %s, %s, %s, %s) RETURNING *",
-                                  (name, kind, Jsonb(config), secret, actor)).fetchone()
-            except psycopg.errors.UniqueViolation:
-                raise LifecycleError(f"Connection {name!r} already exists") from None
-            self._audit(cur, None, actor, "connection.created", {"connection": str(row["id"]), "name": name, "kind": kind})
-            return Connection(**row)
-
-    def get_connection(self, connection_id: UUID) -> Connection:
-        with self._cur() as cur:
-            row = cur.execute("SELECT * FROM connections WHERE id = %s", (connection_id,)).fetchone()
-        if row is None:
-            raise NotFound(f"Connection {connection_id}")
-        return Connection(**row)
-
-    def list_connections(self) -> list[Connection]:
-        with self._cur() as cur:
-            return [Connection(**r) for r in cur.execute("SELECT * FROM connections ORDER BY name")]
-
-    def update_connection(self, connection_id: UUID, *, name: str | None = None, config: dict | None = None,
-                          secret: str | None = None, actor: str | None = None) -> Connection:
-        sets, params = ["updated_at = now()"], []
-        if name is not None:
-            sets.append("name = %s"); params.append(name)
-        if config is not None:
-            sets.append("config = %s"); params.append(Jsonb(config))
-        if secret is not None:
-            sets.append("secret = %s"); params.append(secret)
-        with self._cur() as cur:
-            try:
-                row = cur.execute(f"UPDATE connections SET {', '.join(sets)} WHERE id = %s RETURNING *", (*params, connection_id)).fetchone()
-            except psycopg.errors.UniqueViolation:
-                raise LifecycleError(f"Connection {name!r} already exists") from None
-            if row is None:
-                raise NotFound(f"Connection {connection_id}")
-            self._audit(cur, None, actor, "connection.updated", {"connection": str(connection_id), "secret_changed": secret is not None})
-            return Connection(**row)
-
-    def record_connection_test(self, connection_id: UUID, result: dict) -> Connection:
-        with self._cur() as cur:
-            row = cur.execute("UPDATE connections SET last_test = %s WHERE id = %s RETURNING *", (Jsonb({**result, "at": _now().isoformat()}), connection_id)).fetchone()
-            if row is None:
-                raise NotFound(f"Connection {connection_id}")
-            return Connection(**row)
-
-    def delete_connection(self, connection_id: UUID, *, actor: str | None = None) -> None:
-        with self._cur() as cur:
-            cur.execute("DELETE FROM connections WHERE id = %s", (connection_id,))
-            if cur.rowcount == 0:
-                raise NotFound(f"Connection {connection_id}")
-            self._detach(cur, connection_id)
-            self._audit(cur, None, actor, "connection.deleted", {"connection": str(connection_id)})
+    # -- connections (owned by the connection module; only the references live here) ----
 
     def detach_connection(self, connection_id: UUID) -> None:
         """Clear every domain reference to a connection (used when a hub connection is deleted)."""

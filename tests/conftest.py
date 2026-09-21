@@ -8,6 +8,7 @@ import pytest
 os.environ.setdefault("ONTOFORGE_SOURCE_KIND", "postgres")
 os.environ.setdefault("ONTOFORGE_LLM_PROVIDER", "none")
 os.environ.setdefault("ONTOFORGE_WAREHOUSE_MATERIALIZATION", "none")
+os.environ.setdefault("ONTOFORGE_CONNECTIONS_HUB_URL", "")   # tests inject a stub hub explicitly
 for _k in ("ONTOFORGE_DATABRICKS_HOST", "ONTOFORGE_DATABRICKS_HTTP_PATH", "ONTOFORGE_DATABRICKS_TOKEN"):
     os.environ.setdefault(_k, "")
 

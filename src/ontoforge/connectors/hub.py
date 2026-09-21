@@ -1,11 +1,11 @@
-"""The Polestar connection module (hub) as the connections backend.
+"""Read-only client for the Polestar connection module (the hub), a separate microservice.
 
-When ``ONTOFORGE_CONNECTIONS_HUB_URL`` is set, the Configure screen's connectors and
-connections come from the hub instead of the local ``connections`` table: connector specs
-are derived from the hub's JSON Schemas, secrets never touch datagraph, and a domain's
-``connection_id`` is a hub connection id. Test reports (one step per check) are folded into
-the same result shape the local adapters return, so the UI does not know which backend it
-is talking to.
+The hub owns connections end to end (forms, credentials, tests, browse); the UI talks to it
+through its ``@polestar/connections`` package. datagraph only needs to *read* what the hub
+knows: the connector types (for the Home cards and the domain pickers), a connection's
+masked config (for a domain's source facts) and, on request, a test of a saved connection.
+Creating, editing and deleting connections is not proxied here on purpose: that is the
+package's job, and duplicating it would make datagraph a second place credentials pass.
 """
 from __future__ import annotations
 
@@ -20,6 +20,22 @@ MASK = "********"
 
 class HubUnavailable(RuntimeError):
     """The hub answered with an error datagraph cannot translate, or not at all."""
+
+
+class NoConnectionModule:
+    """Backend used when ONTOFORGE_CONNECTIONS_HUB_URL is unset: every call says so plainly."""
+
+    source = "none"
+    MESSAGE = ("The connection module is not configured: set ONTOFORGE_CONNECTIONS_HUB_URL to the "
+               "mf-studio-connectors hub (e.g. http://localhost:8025) to manage connections.")
+
+    def __getattr__(self, name: str):
+        if name.startswith("_"):
+            raise AttributeError(name)
+
+        def missing(*args, **kwargs):
+            raise HubUnavailable(self.MESSAGE)
+        return missing
 
 
 def spec_from_schema(kind: str, category: str, display_name: str, schema: dict) -> dict:
@@ -141,36 +157,11 @@ class HubConnections:
                 "last_test": {"ok": bool(ok), "title": "Connected" if ok else "Failed", "detail": "", "at": c.get("last_tested_at")} if ok is not None else None,
                 "created_by": None, "created_at": c.get("created_at"), "updated_at": c.get("updated_at"), "source": "hub"}
 
-    def _payload(self, kind: str, config: dict, secret: str | None) -> dict:
-        spec = self.spec(kind)
-        cfg = {k: v for k, v in config.items() if v != MASK}
-        if secret and spec["secret_field"]:
-            cfg[spec["secret_field"]] = secret
-        return cfg
-
     def list(self) -> list[dict]:
         return [self._public(c) for c in self._call("GET", "/connections")]
 
     def get(self, connection_id: str) -> dict:
         return self._public(self._call("GET", f"/connections/{connection_id}"))
-
-    def create(self, name: str, kind: str, config: dict, secret: str | None, actor: str | None = None) -> dict:
-        return self._public(self._call("POST", "/connections", json={"name": name, "type": kind, "config": self._payload(kind, config, secret)}, actor=actor))
-
-    def update(self, connection_id: str, *, name: str | None = None, config: dict | None = None, secret: str | None = None, actor: str | None = None) -> dict:
-        current = self._call("GET", f"/connections/{connection_id}")
-        body: dict = {}
-        if name is not None:
-            body["name"] = name
-        if config is not None or secret:
-            body["config"] = self._payload(current["type"], config if config is not None else current.get("config") or {}, secret)
-        return self._public(self._call("PATCH", f"/connections/{connection_id}", json=body, actor=actor))
-
-    def delete(self, connection_id: str, actor: str | None = None) -> None:
-        self._call("DELETE", f"/connections/{connection_id}", actor=actor)
-
-    def test_draft(self, kind: str, config: dict, secret: str | None) -> dict:
-        return result_from_report(self._call("POST", "/connection-types/test", json={"type": kind, "config": self._payload(kind, config, secret)}))
 
     def test(self, connection_id: str, actor: str | None = None) -> dict:
         return result_from_report(self._call("POST", f"/connections/{connection_id}/test", actor=actor))

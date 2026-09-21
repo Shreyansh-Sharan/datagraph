@@ -1,4 +1,5 @@
 import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
+import { ConnectionsProvider } from "@polestar/connections";
 import type { DatagraphApi } from "@/api";
 import { AppProvider } from "@/state/app";
 import { AppShell, DomainShell, PlainMain } from "@/layout/Shell";
@@ -20,9 +21,12 @@ import { Tasks } from "@/screens/Tasks";
 import { Admin } from "@/screens/Admin";
 import { NeedsVersion } from "@/screens/NeedsVersion";
 
-export function App({ api }: { api: DatagraphApi }) {
+import { CONNECTIONS_URL } from "@/config";
+
+export function App({ api, connectionsUrl = CONNECTIONS_URL }: { api: DatagraphApi; connectionsUrl?: string }) {
   return (
     <AppProvider api={api}>
+      <ConnectionsProvider baseUrl={connectionsUrl || "/hub"} headers={() => ({ "X-Actor": "alice" })}>
       <HashRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <Routes>
           <Route element={<AppShell />}>
@@ -51,6 +55,7 @@ export function App({ api }: { api: DatagraphApi }) {
           </Route>
         </Routes>
       </HashRouter>
+      </ConnectionsProvider>
     </AppProvider>
   );
 }

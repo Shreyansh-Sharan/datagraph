@@ -191,3 +191,6 @@ h1, h2, h3, p { margin: 0; }
 .empty-state .icon { width: 44px; height: 44px; border-radius: 12px; background: var(--blue-soft); color: var(--blue); display: inline-flex; align-items: center; justify-content: center; margin-bottom: 12px; }
 .skeleton { background: linear-gradient(90deg, var(--surface-3) 25%, var(--line) 50%, var(--surface-3) 75%); background-size: 800px 100%; animation: dg-shimmer 1.2s linear infinite; border-radius: 6px; }
 @keyframes dg-shimmer { 0% { background-position: -400px 0; } 100% { background-position: 400px 0; } }
+
+/* @polestar/connections (the connection module's form and test report) themed with the same tokens */
+:root { --pc-accent: var(--blue); --pc-fg: var(--ink); --pc-fg-muted: var(--muted); --pc-bg: #fff; --pc-border: var(--grey-2); --pc-danger: var(--orange); --pc-success: var(--blue); --pc-radius: 6px; --pc-gap: 12px; --pc-font: var(--font); --pc-font-size: 13px; }

@@ -1,27 +1,8 @@
-"""Connection adapters: one per warehouse or AI provider, each with a field schema the UI renders
-and a ``test`` that reports success or the provider's error verbatim.
-
-Postgres and Databricks are the primary source adapters; SQL Server is the next warehouse;
-Azure OpenAI is the AI adapter.
+"""Connections are owned by the Polestar connection module, a separate microservice
+(mf-studio-connectors). datagraph never holds adapters or credentials of its own: this package
+is only the HTTP client that the API and the Home/Configure screens use to read what the hub
+knows. The UI itself renders connection forms with the hub's ``@polestar/connections`` package.
 """
-from .base import Connector, ConnectorSpec, Field, TestResult
-from .postgres import PostgresConnector
-from .databricks import DatabricksConnector
-from .sqlserver import SqlServerConnector
-from .azure_openai import AzureOpenAIConnector
+from .hub import HubConnections, HubUnavailable, NoConnectionModule, result_from_report, spec_from_schema
 
-CONNECTORS: dict[str, Connector] = {c.spec.kind: c for c in (PostgresConnector(), DatabricksConnector(), SqlServerConnector(), AzureOpenAIConnector())}
-
-
-def specs() -> list[dict]:
-    return [c.spec.to_dict() for c in CONNECTORS.values()]
-
-
-def connector(kind: str) -> Connector:
-    try:
-        return CONNECTORS[kind]
-    except KeyError:
-        raise ValueError(f"Unknown connection kind {kind!r}; choose from {', '.join(CONNECTORS)}") from None
-
-
-__all__ = ["CONNECTORS", "Connector", "ConnectorSpec", "Field", "TestResult", "connector", "specs"]
+__all__ = ["HubConnections", "HubUnavailable", "NoConnectionModule", "result_from_report", "spec_from_schema"]

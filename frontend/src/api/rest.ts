@@ -2,7 +2,7 @@
 // Methods with a settled contract call the API; the rest fall through to the mock so the
 // app stays usable while integration proceeds. Replace fallbacks method by method.
 import { MockApi } from "./mock";
-import type { AuditEntry, BuildRun, CatalogTable, ClassMapping, Comment, Config, ConnResult, ConnectionInput, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, SourceFacts, TableDetail, TablePreview, TriplePage, TripleQuery, VersionInfo, VersionStatus } from "./types";
+import type { AuditEntry, BuildRun, CatalogTable, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, SourceFacts, TableDetail, TablePreview, TriplePage, TripleQuery, VersionInfo, VersionStatus } from "./types";
 import { tableName } from "./types";
 
 export class ApiError extends Error {
@@ -72,11 +72,8 @@ export class RestApi extends MockApi {
   override async sourceFacts(domain: string): Promise<SourceFacts> { return this.req<SourceFacts>("GET", `/domains/${encodeURIComponent(domain)}/source`); }
   override async connectors(): Promise<ConnectorSpec[]> { return this.req<ConnectorSpec[]>("GET", "/connectors"); }
   override async connections(): Promise<ConnectionRec[]> { return this.req<ConnectionRec[]>("GET", "/connections"); }
-  override async createConnection(input: ConnectionInput): Promise<ConnectionRec> { return this.req<ConnectionRec>("POST", "/connections", input); }
-  override async updateConnection(id: string, input: Partial<ConnectionInput>): Promise<ConnectionRec> { return this.req<ConnectionRec>("PUT", `/connections/${id}`, input); }
-  override async deleteConnection(id: string): Promise<void> { await this.req("DELETE", `/connections/${id}`); }
-  override async testConnectionDraft(input: Omit<ConnectionInput, "name">): Promise<ConnResult> { return this.req<ConnResult>("POST", "/connections/test", input); }
   override async testConnectionById(id: string): Promise<ConnResult> { return this.req<ConnResult>("POST", `/connections/${id}/test`); }
+  override async detachConnection(id: string): Promise<void> { await this.req("DELETE", `/connections/${id}/references`); }
   override async domain(name: string): Promise<DomainSummary> { return this.toDomain(await this.req<BackendDomain>("GET", `/domains/${encodeURIComponent(name)}`)); }
   override async createDomain(input: NewDomainInput): Promise<DomainSummary> {
     return this.toDomain(await this.req<BackendDomain>("POST", "/domains", { name: input.name, description: input.description, base_iri: input.base_iri, review_quorum: input.quorum }));

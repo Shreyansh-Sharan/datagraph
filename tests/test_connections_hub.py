@@ -1,8 +1,8 @@
-"""Configure screen backed by the Polestar connection module (the hub) instead of the local table.
+"""Connections come from the Polestar connection module (a separate service, mf-studio-connectors).
 
-With ONTOFORGE_CONNECTIONS_HUB_URL set, /connectors and /connections proxy the hub: connector
-specs come from its JSON Schemas, connections live there (secrets never touch datagraph), and
-domain settings reference hub connection ids. A stub hub with the real API shape stands in.
+datagraph reads connector types and connections from the hub, tests a saved connection through it
+and stores hub connection ids on domains. It never creates connections or sees a secret: the UI
+does that with the hub's own package. A stub hub with the real API shape stands in.
 """
 import uuid
 
@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from ontoforge.api import create_app
 from ontoforge.config import Settings
-from ontoforge.connectors.hub import HubConnections, spec_from_schema
+from ontoforge.connectors import HubConnections, result_from_report, spec_from_schema
 from tests.hr_fixture import BASE
 
 MASK = "********"
@@ -40,9 +40,9 @@ AI_SCHEMA = {
 
 
 def stub_hub() -> FastAPI:
-    """The hub's API surface the Configure screen uses, with in-memory state."""
+    """The hub's API surface datagraph uses, with in-memory state."""
     app = FastAPI()
-    state: dict = {"connections": {}, "tests": []}
+    state: dict = {"connections": {}}
     types = {"databricks": ("database", DBX_SCHEMA), "azureopenai": ("ai", AI_SCHEMA)}
     secret_names = lambda t: {k for k, v in types[t][1]["properties"].items() if v.get("format") == "password"}
 
@@ -51,12 +51,12 @@ def stub_hub() -> FastAPI:
 
     def report(t, config):
         ok = bool(config.get("host") or config.get("endpoint")) and config.get("token", config.get("api_key")) != "bad"
-        steps = [{"name": "authenticate", "status": "passed" if ok else "failed", "description": "Authenticate.", "required": True, "duration_ms": 12,
-                  "summary": "3 deployment(s): a, b, c" if ok else "API key rejected", "error": None if ok else "401 from /openai/deployments: Access denied",
-                  "remediation": None if ok else "Copy Key 1 or Key 2 from Keys and Endpoint."},
-                 {"name": "complete", "status": "passed" if ok else "skipped", "description": "Ask for a completion.", "required": True, "duration_ms": 30 if ok else 0,
-                  "summary": "Deployment answered" if ok else "A previous required step failed.", "error": None, "remediation": None}]
-        return {"ok": ok, "steps": steps}
+        return {"ok": ok, "steps": [
+            {"name": "authenticate", "status": "passed" if ok else "failed", "description": "Authenticate.", "required": True, "duration_ms": 12,
+             "summary": "3 deployment(s): a, b, c" if ok else "API key rejected", "error": None if ok else "401 from /openai/deployments: Access denied",
+             "remediation": None if ok else "Copy Key 1 or Key 2 from Keys and Endpoint."},
+            {"name": "complete", "status": "passed" if ok else "skipped", "description": "Ask for a completion.", "required": True, "duration_ms": 30 if ok else 0,
+             "summary": "Deployment answered" if ok else "A previous required step failed.", "error": None, "remediation": None}]}
 
     @app.get("/connection-types")
     def list_types():
@@ -68,17 +68,8 @@ def stub_hub() -> FastAPI:
             raise HTTPException(404, f"No connector installed for type {t!r}")
         return types[t][1]
 
-    @app.post("/connection-types/test")
-    def test_config(body: dict):
-        missing = [k for k in types[body["type"]][1]["required"] if k not in body["config"]]
-        if missing:
-            raise HTTPException(422, detail={"detail": "Configuration is not valid for this connector.", "errors": [f"{m}: '{m}' is a required property" for m in missing]})
-        return report(body["type"], body["config"])
-
     @app.post("/connections", status_code=201)
-    def create(body: dict):
-        if any(c["name"] == body["name"] for c in state["connections"].values()):
-            raise HTTPException(409, "A connection with this name exists")
+    def create(body: dict):   # the package's job in real life; here only to seed the stub
         cid = str(uuid.uuid4()); secrets = {k: v for k, v in body["config"].items() if k in secret_names(body["type"])}
         c = {"id": cid, "name": body["name"], "type": body["type"], "description": body.get("description"), "config": {k: v for k, v in body["config"].items() if k not in secrets},
              "_secrets": secrets, "created_at": "2026-09-21T12:00:00Z", "updated_at": "2026-09-21T12:00:00Z", "last_test_ok": None, "last_tested_at": None}
@@ -95,25 +86,10 @@ def stub_hub() -> FastAPI:
             raise HTTPException(404, "Connection not found")
         return out(state["connections"][cid])
 
-    @app.patch("/connections/{cid}")
-    def update(cid: str, body: dict):
-        c = state["connections"][cid]
-        if body.get("name"): c["name"] = body["name"]
-        if body.get("config") is not None:
-            cfg = dict(body["config"])
-            for k in secret_names(c["type"]):
-                if cfg.get(k) and cfg[k] != MASK: c["_secrets"][k] = cfg[k]
-                cfg.pop(k, None)
-            c["config"] = cfg
-        c["updated_at"] = "2026-09-21T12:30:00Z"
-        return out(c)
-
-    @app.delete("/connections/{cid}", status_code=204)
-    def delete(cid: str):
-        state["connections"].pop(cid, None)
-
     @app.post("/connections/{cid}/test")
     def test_saved(cid: str):
+        if cid not in state["connections"]:
+            raise HTTPException(404, "Connection not found")
         c = state["connections"][cid]
         r = report(c["type"], {**c["config"], **c["_secrets"]})
         c["last_test_ok"] = r["ok"]; c["last_tested_at"] = "2026-09-21T12:45:00Z"
@@ -122,19 +98,23 @@ def stub_hub() -> FastAPI:
     return app
 
 
-HUB = Settings(auth_default_role="admin", secret_key="unit-test-key", connections_hub_url="http://hub.local")
+HUB = Settings(auth_default_role="admin", connections_hub_url="http://hub.local")
 
 
 @pytest.fixture
-def hub_client():
+def hub():
     # Starlette's TestClient is an httpx.Client with a synchronous ASGI transport.
     return TestClient(stub_hub(), base_url="http://hub.local")
 
 
 @pytest.fixture
-def client(db, hub_client):
-    with TestClient(create_app(db=db, source_db=db, settings=HUB, hub_client=hub_client), headers={"X-Actor": "alice"}) as c:
+def client(db, hub):
+    with TestClient(create_app(db=db, source_db=db, settings=HUB, hub_client=hub), headers={"X-Actor": "alice"}) as c:
         yield c
+
+
+def seed(hub, name, kind, config):
+    return hub.post("/connections", json={"name": name, "type": kind, "config": config}).json()
 
 
 def test_specs_are_derived_from_the_hub_json_schemas():
@@ -145,64 +125,76 @@ def test_specs_are_derived_from_the_hub_json_schemas():
     assert fields["auth_type"] == {"name": "auth_type", "label": "Authentication", "kind": "select", "required": False, "default": "pat", "options": ["pat", "service_principal"], "help": None, "option_titles": {"pat": "Personal access token", "service_principal": "Azure service principal"}, "show_when": None}
     assert fields["token"]["kind"] == "password" and fields["token"]["show_when"] == {"auth_type": "pat"}
     assert fields["connect_timeout"]["kind"] == "number" and fields["connect_timeout"]["default"] == 30
-    assert fields["host"]["help"] == "Workspace URL."
     ai = spec_from_schema("azureopenai", "ai", "Azure OpenAI", AI_SCHEMA)
     assert ai["category"] == "ai" and ai["secret_field"] == "api_key"
 
 
-def test_connectors_and_connections_are_proxied_to_the_hub(client):
+def test_step_reports_fold_into_one_result():
+    ok = result_from_report({"ok": True, "steps": [{"name": "authenticate", "status": "passed", "duration_ms": 12, "summary": "3 deployment(s)"}, {"name": "complete", "status": "passed", "duration_ms": 30}]})
+    assert ok == {"ok": True, "title": "Connected", "detail": "authenticate: passed · 3 deployment(s)\ncomplete: passed", "latency_ms": 42, "action": None, "facts": {"steps": ok["facts"]["steps"]}}
+    bad = result_from_report({"ok": False, "steps": [{"name": "authenticate", "status": "failed", "duration_ms": 5, "summary": "API key rejected", "error": "401", "remediation": "Copy Key 1."}, {"name": "complete", "status": "skipped", "duration_ms": 0}]})
+    assert bad["title"] == "API key rejected" and bad["action"] == "Copy Key 1." and "401" in bad["detail"]
+
+
+def test_datagraph_reads_types_and_connections_from_the_hub(client, hub):
     kinds = {s["kind"]: s for s in client.get("/connectors").json()}
     assert set(kinds) == {"databricks", "azureopenai"} and kinds["azureopenai"]["category"] == "ai" and kinds["databricks"]["source"] == "hub"
-    r = client.post("/connections", json={"name": "warehouse", "kind": "databricks", "config": {"host": "adb-1.azuredatabricks.net", "http_path": "/sql/1.0/warehouses/x", "catalog": "rgm"}, "secret": "dapi-secret"})
-    assert r.status_code == 201, r.text
-    c = r.json()
-    assert c["kind"] == "databricks" and c["has_secret"] is True and c["config"]["catalog"] == "rgm"
-    assert "dapi-secret" not in r.text and c["config"].get("token") in (None, MASK)
-    cid = c["id"]
+    c = seed(hub, "warehouse", "databricks", {"host": "adb-1.azuredatabricks.net", "http_path": "/sql/1.0/warehouses/x", "catalog": "rgm", "token": "dapi-secret"})
     listed = client.get("/connections").json()
-    assert [x["name"] for x in listed] == ["warehouse"] and listed[0]["source"] == "hub"
-    # test against the hub: the step report becomes datagraph's result shape
-    t = client.post(f"/connections/{cid}/test").json()
+    assert [x["name"] for x in listed] == ["warehouse"] and listed[0]["has_secret"] is True and listed[0]["source"] == "hub"
+    assert "dapi-secret" not in client.get("/connections").text and "token" not in listed[0]["config"]
+    one = client.get(f"/connections/{c['id']}").json()
+    assert one["kind"] == "databricks" and one["config"]["catalog"] == "rgm"
+    t = client.post(f"/connections/{c['id']}/test").json()
     assert t["ok"] is True and t["title"] == "Connected" and "3 deployment(s)" in t["detail"] and t["latency_ms"] == 42
-    assert t["facts"]["steps"][0]["name"] == "authenticate"
-    assert client.get(f"/connections/{cid}").json()["last_test"]["ok"] is True
-    # update keeps the secret and does not echo the mask back as a value
-    r = client.put(f"/connections/{cid}", json={"name": "warehouse", "config": {"host": "adb-1.azuredatabricks.net", "http_path": "/sql/1.0/warehouses/x", "catalog": "rgm", "token": MASK}})
-    assert r.status_code == 200 and r.json()["has_secret"] is True and r.json()["config"]["catalog"] == "rgm"
-    assert client.post("/connections", json={"name": "warehouse", "kind": "databricks", "config": {"host": "h", "http_path": "p"}}).status_code == 409
-    assert client.delete(f"/connections/{cid}").status_code == 204
-    assert client.get(f"/connections/{cid}").status_code == 404
+    assert client.get(f"/connections/{c['id']}").json()["last_test"]["ok"] is True
+    assert client.get(f"/connections/{uuid.uuid4()}").status_code == 404
+    # writes are the package's job: datagraph does not proxy them
+    assert client.post("/connections", json={"name": "x", "kind": "databricks", "config": {}}).status_code in (404, 405)
 
 
-def test_unsaved_config_test_and_failures_map_to_the_result_shape(client):
-    good = client.post("/connections/test", json={"kind": "azureopenai", "config": {"endpoint": "https://x.openai.azure.com", "deployment": "gpt-5.1"}, "secret": "k"}).json()
-    assert good["ok"] is True and good["title"] == "Connected"
-    bad = client.post("/connections/test", json={"kind": "azureopenai", "config": {"endpoint": "https://x.openai.azure.com", "deployment": "gpt-5.1"}, "secret": "bad"}).json()
-    assert bad["ok"] is False and bad["title"] == "API key rejected" and "401" in bad["detail"] and bad["action"].startswith("Copy Key 1")
-    invalid = client.post("/connections/test", json={"kind": "azureopenai", "config": {"endpoint": "https://x"}})
-    assert invalid.status_code == 400 and "deployment" in invalid.text
-
-
-def test_domain_settings_reference_hub_connections(client):
+def test_domain_settings_reference_hub_connections(client, hub):
     client.post("/domains", json={"name": "hr", "description": "People", "base_iri": BASE})
-    conn = client.post("/connections", json={"name": "warehouse", "kind": "databricks", "config": {"host": "adb-1.azuredatabricks.net", "http_path": "/p", "catalog": "rgm"}, "secret": "t"}).json()
-    ai = client.post("/connections", json={"name": "gpt", "kind": "azureopenai", "config": {"endpoint": "https://x.openai.azure.com", "deployment": "gpt-5.1"}, "secret": "k"}).json()
+    conn = seed(hub, "warehouse", "databricks", {"host": "adb-1.azuredatabricks.net", "http_path": "/p", "catalog": "rgm", "token": "t"})
+    ai = seed(hub, "gpt", "azureopenai", {"endpoint": "https://x.openai.azure.com", "deployment": "gpt-5.1", "api_key": "k"})
     r = client.put("/domains/hr", json={"connection_id": conn["id"], "ai_connection_id": ai["id"], "default_schema": "gold"})
     assert r.status_code == 200, r.text
     assert client.put("/domains/hr", json={"connection_id": str(uuid.uuid4())}).status_code == 404
     src = client.get("/domains/hr/source").json()
     assert src["kind"] == "databricks" and src["connection"] == "warehouse" and src["catalog"] == "rgm" and src["schema"] == "gold" and src["host"] == "adb-1.azuredatabricks.net"
-    assert src["ai"] == {"connection": "gpt", "kind": "azureopenai", "deployment": "gpt-5.1"}
+    assert src["ai"] == {"connection": "gpt", "kind": "azureopenai", "deployment": "gpt-5.1"} and src["connections_backend"] == "hub"
     card = client.get("/domains/cards").json()[0]
     assert card["source"] == {"kind": "databricks", "connection": "warehouse", "catalog": "rgm", "schema": "gold"}
-    # deleting the hub connection detaches it from the domain
-    assert client.delete(f"/connections/{conn['id']}").status_code == 204
+    # the package deleted it in the hub; the UI then asks datagraph to drop the references
+    assert client.delete(f"/connections/{conn['id']}/references").status_code == 204
     assert client.get("/domains/hr").json()["connection_id"] is None
+    assert client.delete("/connections/not-a-uuid/references").status_code == 404
 
 
-def test_hub_client_maps_reports_and_masks():
-    hub = HubConnections(TestClient(stub_hub(), base_url="http://hub.local"))
-    c = hub.create("w", "azureopenai", {"endpoint": "https://x.openai.azure.com", "deployment": "d"}, "key")
-    assert c["has_secret"] is True and c["config"] == {"endpoint": "https://x.openai.azure.com", "deployment": "d"}
-    res = hub.test(c["id"])
+def test_source_facts_survive_a_connection_the_hub_no_longer_knows(client, db):
+    """A stale id (deleted in the hub without the reference cleanup) must not break the screen."""
+    client.post("/domains", json={"name": "hr", "description": "People", "base_iri": BASE})
+    stale = str(uuid.uuid4())
+    with db.transaction() as cur:
+        cur.execute("UPDATE domains SET connection_id = %s, ai_connection_id = %s WHERE name = 'hr'", (stale, stale))
+    src = client.get("/domains/hr/source").json()
+    assert src["connection"] is None and src["kind"] == "postgres" and src["missing_connection_id"] == stale and src["ai"] is None
+    assert client.get("/domains/cards").json()[0]["source"]["connection"] is None
+
+
+def test_without_a_hub_the_api_says_what_to_configure(db):
+    with TestClient(create_app(db=db, settings=Settings(auth_default_role="admin")), headers={"X-Actor": "alice"}) as c:
+        r = c.get("/connectors")
+        assert r.status_code == 503 and "ONTOFORGE_CONNECTIONS_HUB_URL" in r.json()["detail"]
+        c.post("/domains", json={"name": "hr", "base_iri": BASE})
+        assert c.get("/domains/hr/source").json()["connection"] is None      # no hub, no connection: still renders
+        assert c.put("/domains/hr", json={"connection_id": str(uuid.uuid4())}).status_code == 503
+
+
+def test_hub_client_masks_and_maps(hub):
+    api = HubConnections(hub)
+    c = seed(hub, "w", "azureopenai", {"endpoint": "https://x.openai.azure.com", "deployment": "d", "api_key": "key"})
+    got = api.get(c["id"])
+    assert got["has_secret"] is True and got["config"] == {"endpoint": "https://x.openai.azure.com", "deployment": "d"}
+    res = api.test(c["id"])
     assert res["ok"] and res["title"] == "Connected" and res["detail"].splitlines()[0].startswith("authenticate: passed")

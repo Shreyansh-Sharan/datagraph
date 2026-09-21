@@ -67,23 +67,7 @@ class DomainUpdateIn(BaseModel):
     target_schema: str | None = None
 
 
-class ConnectionIn(BaseModel):
-    name: str = Field(min_length=1, max_length=120)
-    kind: str
-    config: dict = Field(default_factory=dict)
-    secret: str | None = None
 
-
-class ConnectionUpdateIn(BaseModel):
-    name: str | None = None
-    config: dict | None = None
-    secret: str | None = None      # omitted: keep the stored secret
-
-
-class ConnectionTestIn(BaseModel):
-    kind: str
-    config: dict = Field(default_factory=dict)
-    secret: str | None = None
 
 
 class OntologyIn(BaseModel):
@@ -1143,18 +1127,14 @@ def domain_source(name: str, request: Request):
 
 @router.get("/connectors")
 def list_connectors(request: Request):
-    """The adapters this deployment can configure, with the fields the Configure form renders."""
+    """Connector types the connection module offers, with the fields its JSON Schemas define."""
     return _st(request).connections.specs()
 
 
 @router.get("/connections")
 def list_connections(request: Request):
+    """Connections held by the connection module (secrets are masked there and never stored here)."""
     return _st(request).connections.list()
-
-
-@router.post("/connections", status_code=201)
-def create_connection(body: ConnectionIn, request: Request, me: Principal = Depends(admin)):
-    return _st(request).connections.create(body.name, body.kind, body.config, body.secret, actor=me.name)
 
 
 @router.get("/connections/{connection_id}")
@@ -1162,28 +1142,17 @@ def get_connection(connection_id: str, request: Request):
     return _st(request).connections.get(connection_id)
 
 
-@router.put("/connections/{connection_id}")
-def update_connection(connection_id: str, body: ConnectionUpdateIn, request: Request, me: Principal = Depends(admin)):
-    return _st(request).connections.update(connection_id, name=body.name, config=body.config, secret=body.secret, actor=me.name)
-
-
-@router.delete("/connections/{connection_id}", status_code=204)
-def delete_connection(connection_id: str, request: Request, me: Principal = Depends(admin)):
-    st = _st(request)
-    st.connections.delete(connection_id, actor=me.name)
-    try:
-        st.registry.detach_connection(UUID(connection_id))
-    except ValueError:
-        pass   # a non-uuid hub id cannot be referenced by a domain column
-    return Response(status_code=204)
-
-
-@router.post("/connections/test")
-def test_connection_draft(body: ConnectionTestIn, request: Request, me: Principal = Depends(builder)):
-    """Probe an unsaved configuration (the Configure form's Test button before saving)."""
-    return _st(request).connections.test_draft(body.kind, body.config, body.secret)
-
-
 @router.post("/connections/{connection_id}/test")
 def test_connection(connection_id: str, request: Request, me: Principal = Depends(builder)):
+    """Ask the connection module to test a saved connection; the step report is folded into one result."""
     return _st(request).connections.test(connection_id, actor=me.name)
+
+
+@router.delete("/connections/{connection_id}/references", status_code=204)
+def detach_connection(connection_id: str, request: Request, me: Principal = Depends(builder)):
+    """Clear a connection from every domain that references it (after it was deleted in the module)."""
+    try:
+        _st(request).registry.detach_connection(UUID(connection_id))
+    except ValueError:
+        raise NotFound(f"Connection {connection_id}") from None
+    return Response(status_code=204)

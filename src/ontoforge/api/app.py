@@ -38,9 +38,7 @@ from ontoforge.metadata import MetadataError, MetadataService
 from ontoforge.observability import RequestLoggingMiddleware, configure_logging
 from ontoforge.r2rml import MappingError
 from ontoforge.reasoning import Reasoner
-from ontoforge.connectors.hub import HubConnections, HubUnavailable
-from ontoforge.connectors.local import LocalConnections
-from ontoforge.connectors.secrets import SecretBox
+from ontoforge.connectors import HubConnections, HubUnavailable, NoConnectionModule
 from ontoforge.registry import LifecycleError, LockedError, NotFound, Registry
 from ontoforge.quality import QualityError
 from ontoforge.rules import RuleError
@@ -48,7 +46,7 @@ from ontoforge.store import TripleStore
 
 from .routes import open_router, router
 
-_STATUS = {HubUnavailable: 502, AuthError: 401, Forbidden: 403, NotFound: 404, LifecycleError: 409, LockedError: 423, LLMUnavailable: 503, LLMOutputError: 502,
+_STATUS = {HubUnavailable: 503, AuthError: 401, Forbidden: 403, NotFound: 404, LifecycleError: 409, LockedError: 423, LLMUnavailable: 503, LLMOutputError: 502,
            MetadataError: 409, RuleError: 400, QualityError: 400, AnalyticsError: 400, AttachmentError: 400, CohortError: 400, MappingSpecError: 400, MappingError: 400, CompileError: 400, IdentifierError: 400, ValueError: 400}
 
 
@@ -61,8 +59,7 @@ def create_app(db: Database, source_db: Database | None = None, settings: Settin
     app.state.settings = settings
     app.state.db = db
     app.state.registry = Registry(db)
-    app.state.secrets = SecretBox(settings.secret_key)
-    app.state.connections = _connections_backend(settings, app.state.registry, app.state.secrets, hub_client)
+    app.state.connections = _connections_backend(settings, hub_client)
     app.state.principals = Principals(db)
     app.state.store = TripleStore(db)
     app.state.source = _source_engine(settings, source_db or db)
@@ -137,11 +134,10 @@ def _llm_provider(settings: Settings) -> LLMProvider | None:
     return None
 
 
-def _connections_backend(settings: Settings, registry: Registry, secrets: SecretBox, hub_client=None):
-    """Local table by default; the Polestar connection module when ONTOFORGE_CONNECTIONS_HUB_URL is set."""
-    if not settings.connections_hub_url:
-        return LocalConnections(registry, secrets)
-    import httpx
+def _connections_backend(settings: Settings, hub_client=None):
+    """The Polestar connection module, a separate service; nothing local stands in for it."""
+    if not settings.connections_hub_url and hub_client is None:
+        return NoConnectionModule()
     if hub_client is None:
         headers = {"Authorization": f"Bearer {settings.connections_hub_token}"} if settings.connections_hub_token else {}
         hub_client = httpx.Client(base_url=settings.connections_hub_url.rstrip("/"), headers=headers, timeout=httpx.Timeout(180.0, connect=10.0))

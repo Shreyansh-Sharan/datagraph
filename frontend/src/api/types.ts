@@ -120,8 +120,7 @@ export type ConnectorKind = "postgres" | "databricks" | "sqlserver" | "azure_ope
 export interface ConnectorField { name: string; label: string; kind: "text" | "password" | "number" | "select"; required: boolean; default: string | number | null; options: string[]; help: string | null; option_titles?: Record<string, string> | null; show_when?: Record<string, string | number | boolean> | null }
 export interface ConnectorSpec { kind: ConnectorKind; label: string; category: "source" | "ai"; secret_field: string; docs: string | null; fields: ConnectorField[]; source?: "local" | "hub" }
 export interface ConnectionRec { id: string; name: string; kind: ConnectorKind; config: Record<string, string | number>; has_secret: boolean; last_test: ConnResult | null; created_by: string | null; created_at: string; updated_at: string; source?: "local" | "hub" }
-export interface ConnectionInput { name: string; kind: ConnectorKind; config: Record<string, string | number>; secret?: string | null }
-export interface SourceFacts { kind: string; connection: string | null; connection_id: string | null; catalog: string | null; schema: string | null; host: string | null; auth_mode: string; auth_header: string; materialization: string; target_schema: string | null; last_test: ConnResult | null; ai: { connection: string | null; kind: string; deployment: string | null } | null; connections_backend?: "local" | "hub" }
+export interface SourceFacts { kind: string; connection: string | null; connection_id: string | null; catalog: string | null; schema: string | null; host: string | null; auth_mode: string; auth_header: string; materialization: string; target_schema: string | null; last_test: ConnResult | null; ai: { connection: string | null; kind: string; deployment: string | null } | null; connections_backend?: "local" | "hub" | "none"; missing_connection_id?: string | null }
 export interface DomainSettingsPatch { description?: string; review_quorum?: number; base_iri?: string; connection_id?: string | null; ai_connection_id?: string | null; default_catalog?: string | null; default_schema?: string | null; materialization?: "none" | "view" | "table"; target_schema?: string | null }
 export interface Task { title: string; sub: string; when: string; icon: string; go: { screen: string; domain?: string; version?: number } }
 export interface Principal { name: string; role: Role; seen: string }
@@ -177,13 +176,10 @@ export interface DatagraphApi {
   analytics(domain: string): Promise<Analytics>;
 
   testConnection(): Promise<ConnResult>;               // the deployment's env source (no connection attached)
-  connectors(): Promise<ConnectorSpec[]>;
-  connections(): Promise<ConnectionRec[]>;
-  createConnection(input: ConnectionInput): Promise<ConnectionRec>;
-  updateConnection(id: string, input: Partial<ConnectionInput>): Promise<ConnectionRec>;
-  deleteConnection(id: string): Promise<void>;
-  testConnectionDraft(input: Omit<ConnectionInput, "name">): Promise<ConnResult>;
+  connectors(): Promise<ConnectorSpec[]>;             // read from the connection module (the hub)
+  connections(): Promise<ConnectionRec[]>;            // read from the hub; creating/editing is @polestar/connections' job
   testConnectionById(id: string): Promise<ConnResult>;
+  detachConnection(id: string): Promise<void>;         // clear domain references after the package deleted it in the hub
   updateDomain(domain: string, patch: DomainSettingsPatch): Promise<DomainSummary>;
   sourceFacts(domain: string): Promise<SourceFacts>;
   tasks(): Promise<Task[]>;
