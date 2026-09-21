@@ -57,20 +57,62 @@ describe("Stage", () => {
 });
 
 describe("Stage focus", () => {
-  it("shows everything when the selected class has no relationships", () => {
+  it("shows the whole graph first, even when the selected class has no relationships", () => {
     const many = Array.from({ length: 40 }, (_, i) => ({ id: `C${i}`, label: `Class${i}`, glyph: "C", x: 0, y: 0, fill: "#2249FF", selected: i === 7 }));
     render(<Stage nodes={many} edges={[{ from: "C0", to: "C1", label: "a" }]} height={400} />);
     expect(document.querySelectorAll(".react-flow__node").length).toBe(40);
-    expect(screen.getByText(/Class7 has no relationships · showing all 40/)).toBeInTheDocument();
+    expect(screen.getByText("40 nodes · 1 edge")).toBeInTheDocument();
   });
-  it("opens a big graph on the selected node's neighbourhood and can show everything", async () => {
+  it("isolates the selected node's neighbourhood on demand and comes back to everything", async () => {
     const many = Array.from({ length: 40 }, (_, i) => ({ id: `C${i}`, label: `Class${i}`, glyph: "C", x: 0, y: 0, fill: "#2249FF", selected: i === 0 }));
     const links = [{ from: "C0", to: "C1", label: "a" }, { from: "C2", to: "C0", label: "b" }, { from: "C5", to: "C6", label: "c" }];
     render(<Stage nodes={many} edges={links} height={400} />);
-    expect(document.querySelectorAll(".react-flow__node").length).toBe(3);          // C0 and its two neighbours
-    expect(screen.getByText(/3 of 40 shown/)).toBeInTheDocument();
-    const { default: userEvent } = await import("@testing-library/user-event");
-    await userEvent.setup().click(screen.getByRole("button", { name: "Show all" }));
     expect(document.querySelectorAll(".react-flow__node").length).toBe(40);
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Focus on selection" }));
+    expect(document.querySelectorAll(".react-flow__node").length).toBe(3);          // C0 and its two neighbours
+    expect(screen.getByText(/Class0 and its neighbours \(40 in all\)/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Show all" }));
+    expect(document.querySelectorAll(".react-flow__node").length).toBe(40);
+  });
+});
+
+describe("Stage overview and drill-down", () => {
+  const hubby = [
+    { id: "Hub", label: "Hub", glyph: "H", x: 0, y: 0, fill: "#111", group: "a" },
+    ...Array.from({ length: 6 }, (_, i) => ({ id: `L${i}`, label: `Leaf${i}`, glyph: "L", x: 0, y: 0, fill: "#222", group: i % 2 ? "a" : "b" })),
+    { id: "Lonely", label: "Lonely", glyph: "L", x: 0, y: 0, fill: "#333", group: "b" },
+  ];
+  const links = Array.from({ length: 6 }, (_, i) => ({ from: "Hub", to: `L${i}`, label: "has" }));
+  const groups = [{ id: "a", label: "Group A", color: "#111" }, { id: "b", label: "Group B", color: "#222" }];
+  it("sizes bubbles by how connected they are and shows the whole graph with counts", () => {
+    render(<Stage nodes={hubby} edges={links} height={400} groups={groups} />);
+    const size = (label: string) => parseFloat((screen.getAllByRole("button", { hidden: true }).find(b => b.getAttribute("aria-label") === label) as HTMLElement).style.width);
+    expect(size("Hub")).toBeGreaterThan(size("Leaf0"));
+    expect(size("Leaf0")).toBeGreaterThan(size("Lonely") - 1);
+    expect(document.querySelectorAll(".react-flow__node").length).toBe(8);
+    expect(screen.getByText("8 nodes · 6 edges")).toBeInTheDocument();
+  });
+  it("hides a group from the legend and spotlights the selected node's neighbourhood", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    render(<Stage nodes={hubby.map(n => ({ ...n, selected: n.id === "L0" }))} edges={links} height={400} groups={groups} />);
+    const dim = () => [...document.querySelectorAll(".bubble.dim")].map(b => b.getAttribute("aria-label"));
+    expect(dim()).toEqual(expect.arrayContaining(["Leaf1", "Lonely"]));   // not neighbours of Leaf0
+    expect(dim()).not.toContain("Hub");
+    await user.click(screen.getByLabelText("Show Group B"));
+    expect(document.querySelectorAll(".react-flow__node").length).toBe(4);   // Hub, Leaf1, Leaf3, Leaf5
+    expect(screen.getByText("4 nodes · 3 edges")).toBeInTheDocument();
+  });
+  it("finds a node by name and reports double-clicks as expansion", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    const onSelect = vi.fn(), onExpand = vi.fn();
+    render(<Stage nodes={hubby} edges={links} height={400} onSelect={onSelect} onExpand={onExpand} />);
+    await user.type(screen.getByLabelText("Find a node"), "lea{Enter}");
+    expect(onSelect).toHaveBeenCalledWith("L0");
+    fireEvent.doubleClick(screen.getAllByRole("button", { hidden: true }).find(b => b.getAttribute("aria-label") === "Hub")!);
+    expect(onExpand).toHaveBeenCalledWith("Hub");
   });
 });

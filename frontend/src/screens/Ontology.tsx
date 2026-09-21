@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button, Card, Dialog, Dot, ErrorNotice, Glyph, Label, Pill, Skeleton, Spinner, Tabs } from "@/components/ui";
 import type { AiProgress, SnapshotTable } from "@/api";
-import { Stage, colorFor, glyphOf, type StageEdge, type StageNode } from "@/components/Stage";
+import { Stage, colorFor, glyphOf, type StageEdge, type StageGroup, type StageNode } from "@/components/Stage";
 import { useApp, useLoad } from "@/state/app";
 import { useDomain, useGo, useParam } from "@/state/domain";
 
@@ -38,7 +38,12 @@ export function Ontology() {
     ...c.parents.map(p => ({ from: c.id, to: p, label: "is a", color: ORANGE, dashed: true, labelColor: "#B84F00" })),
     ...c.rels.map(r => { const hot = sel && (c.id === sel.id || r.target === sel.id); return { from: c.id, to: r.target, label: r.name, color: hot ? BLUE : "#B9C4FF", width: hot ? 2 : 1.5, labelColor: hot ? DARK : "#7A7A80" }; }),
   ]);
-  const nodes: StageNode[] = list.map(c => ({ id: c.id, label: c.id, glyph: glyphOf(c.id), x: c.x, y: c.y, fill: colorFor(c.id), border: c.id === sel?.id ? BLUE : undefined, selected: c.id === sel?.id, props: c.attrs.length + c.rels.length, title: c.iri }));
+  // Colour by hierarchy when there is one (the root class each class descends from), else by name.
+  const rootOf = (id: string, seen = new Set<string>()): string => { const c = list.find(x => x.id === id); const p = c?.parents.find(x => list.some(y => y.id === x)); return !p || seen.has(p) ? id : rootOf(p, seen.add(id)); };
+  const roots = Object.fromEntries(list.map(c => [c.id, rootOf(c.id)]));
+  const hierarchical = new Set(Object.values(roots)).size < list.length;
+  const groups: StageGroup[] | undefined = hierarchical ? [...new Set(Object.values(roots))].sort().map(r => ({ id: r, label: r, color: colorFor(r) })) : undefined;
+  const nodes: StageNode[] = list.map(c => ({ id: c.id, label: c.id, glyph: glyphOf(c.id), x: c.x, y: c.y, fill: colorFor(hierarchical ? roots[c.id] : c.id), border: c.id === sel?.id ? BLUE : undefined, selected: c.id === sel?.id, props: c.attrs.length + c.rels.length, title: c.iri, group: hierarchical ? roots[c.id] : undefined }));
 
   return (
     <>
@@ -60,7 +65,7 @@ export function Ontology() {
       <DraftDialog mode={draft} existing={list.length} onClose={() => setDraft(null)} onDraft={async (opts, onProgress) => drafted(await api.draftOntology(domain.name, version!.version, opts, onProgress))} tables={() => api.snapshot(domain.name, version!.version)} />
       {view === "map" && sel && (
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 340px", gap: 20, alignItems: "start" }}>
-          <Stage nodes={nodes} edges={edges} height={520} dotted onSelect={id => setCls(id)}
+          <Stage nodes={nodes} edges={edges} height={640} dotted groups={groups} onSelect={id => setCls(id)} onExpand={id => { setCls(id); setView("map"); }}
             legend={<><span><i style={{ width: 18, height: 2, background: "#8FA1FF" }} />relationship</span><span><i style={{ width: 18, height: 0, borderTop: "2px dashed #FF7000" }} />inheritance</span></>}
             status={`${list.length} nodes · ${edges.length} edges`} />
           <Card>

@@ -46,7 +46,8 @@ export function Mapping() {
   const m = sel ? M[sel.id] : undefined;
   const state = (id: string) => M[id]?.state ?? "unmapped";
   const edges: StageEdge[] = list.flatMap(c => c.rels.map(r => ({ from: c.id, to: r.target, label: r.name, color: "#B9C4FF" })));
-  const nodes: StageNode[] = list.map(c => ({ id: c.id, label: c.id, glyph: glyphOf(c.id), x: c.x, y: c.y, fill: STATE_COLOR[state(c.id)], border: STATE_COLOR[state(c.id)], selected: c.id === sel?.id, title: state(c.id) }));
+  const nodes: StageNode[] = list.map(c => ({ id: c.id, label: c.id, glyph: glyphOf(c.id), x: c.x, y: c.y, fill: STATE_COLOR[state(c.id)], border: c.id === sel?.id ? BLUE : undefined, selected: c.id === sel?.id, title: state(c.id), group: state(c.id), props: c.attrs.length + c.rels.length }));
+  const groups = [{ id: "complete", label: "complete", color: STATE_COLOR.complete }, { id: "partial", label: "partial", color: STATE_COLOR.partial }, { id: "unmapped", label: "unmapped", color: STATE_COLOR.unmapped }];
   const tableText = m ? (m.fullName ?? (m.table ? m.table.join(".") : "SQL query")) : "";
   const k = kpis.data;
   const excluded = new Set(m?.excluded ?? []);
@@ -103,8 +104,7 @@ export function Mapping() {
       <div className="bar" style={{ marginBottom: 20 }}><i style={{ width: `${k?.completion ?? 0}%` }} /></div>
       {classes.error && <ErrorNotice error={classes.error} action={<span className="small">Draft the ontology first: the mapping binds its classes to tables.</span>} />}
       {classes.loading ? <Skeleton h={400} /> : list.length > 0 && (
-        <Stage nodes={nodes} edges={edges} height={400} dotted onSelect={id => setCls(id)}
-          legend={<><span><Dot color={BLUE} size={9} />complete</span><span><Dot color={ORANGE} size={9} />partial</span><span><Dot color="#B3B3B7" size={9} />unmapped</span></>} />
+        <Stage nodes={nodes} edges={edges} height={520} dotted groups={groups} onSelect={id => setCls(id)} onExpand={id => { setCls(id); setPanel("status"); }} />
       )}
       {sel && (
         <Card flush style={{ marginTop: 16 }}>

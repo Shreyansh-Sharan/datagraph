@@ -224,3 +224,7 @@ h1, h2, h3, p { margin: 0; }
 .bubble .props { position: absolute; right: -4px; top: -4px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #fff; color: var(--ink-2); border: 1px solid var(--line); font-size: 10px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; text-shadow: none; }
 .stage-edge-label { position: absolute; font-size: 10.5px; font-weight: 600; padding: 1px 6px; border-radius: 4px; pointer-events: none; white-space: nowrap; background: #fff; }
 .react-flow__node .bubble { position: relative; transform: none; }
+.bubble.dim { opacity: .22; }
+.stage-legend label { font-size: 11px; color: var(--ink-2); }
+.stage-legend input { margin: 0; accent-color: var(--blue); }
+.stage-tools .input { font-size: 11.5px; }
