@@ -224,3 +224,11 @@ def test_catalog_tables_with_detail_carry_column_counts_and_comments(client):
     emp = next(r for r in rows if r["name"] == "employees")
     assert emp["columns"] >= 3 and set(emp) == {"name", "columns", "comment"}
     assert [r["name"] for r in rows] == client.get("/catalog/tables").json()
+
+
+def test_create_app_builds_the_llm_provider_from_settings(db):
+    from ontoforge.api.app import create_app
+    from ontoforge.llm import AzureOpenAIProvider
+    app = create_app(db=db, settings=Settings(auth_default_role="admin", llm_provider="azure_openai", azure_openai_api_key="k", azure_openai_endpoint="https://x.openai.azure.com/"))
+    assert isinstance(app.state.llm, AzureOpenAIProvider)
+    assert create_app(db=db, settings=Settings(auth_default_role="admin", llm_provider="none")).state.llm is None

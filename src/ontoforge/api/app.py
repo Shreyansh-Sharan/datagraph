@@ -73,7 +73,7 @@ def create_app(db: Database, source_db: Database | None = None, settings: Settin
     app.state.analytics = GraphAnalytics(app.state.registry, app.state.store)
     app.state.attachments = AttachmentService(app.state.registry, app.state.source, app.state.store)
     app.state.cohorts = CohortEngine(app.state.registry, app.state.store)
-    app.state.llm = llm
+    app.state.llm = llm if llm is not None else _llm_provider(settings)   # the CLI's serve path passes none: build it from settings
     mcp_app = _mcp_mount(app)
 
     @asynccontextmanager
