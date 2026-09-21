@@ -87,8 +87,12 @@ domain dialog asks for it and the Configure screen refuses to save without it.
 
 The Configure screen's Source card edits the list (`sources` on `PUT /domains/{name}`); the older
 single-source keys (`connection_id`, `default_catalog`, `schemas`, `default_schema`) still work and
-act on the primary source. `GET /catalog/schemas` lists what the source offers so the schema input
-suggests real names. The Metadata picker lists every source's schemas, labelled
+act on the primary source. Picking a connection fixes the catalog (the one stored on the connection
+in the module) and the schema picker is filled from the module's browse API with that connection's
+own credentials (`client.browse(id)` from `@polestar/connections`, cached per connection for the
+session). When the module is not configured or cannot browse, a typed schema name is accepted and
+`GET /catalog/schemas` (the deployment's source) suggests names. Leaving a source's schemas empty
+means every schema it offers. The Metadata picker lists every source's schemas, labelled
 `connection · catalog.schema`.
 
 ### The version mechanism

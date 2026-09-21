@@ -25,7 +25,6 @@ export function Settings() {
   const [baseIri, setBaseIri] = useState(domain.base_iri);
   const [aiId, setAiId] = useState(domain.aiConnectionId ?? "");
   const [sources, setSources] = useState<DomainSource[]>(domain.sources ?? []);
-  const [newSchema, setNewSchema] = useState<Record<number, string>>({});
   const available = useLoad(() => api.catalogSchemas(domain.name).catch(() => [] as string[]), [domain.name]);
   const [mat, setMat] = useState<"none" | "view" | "table">("none");
   const [target, setTarget] = useState("");
@@ -42,7 +41,6 @@ export function Settings() {
   const factSources = f ? (f.sources?.length ? f.sources : [{ connection: f.connection, catalog: f.catalog, schemas: f.schemas ?? (f.schema ? [f.schema] : []) }]) : [];
   const sourceRows: [string, string][] = f ? [["Kind", f.kind], ...factSources.map((x, i) => [i === 0 ? "Primary source" : `Source ${i + 1}`, describe(x)] as [string, string]), ...(f.host ? [["Host", f.host] as [string, string]] : []), ["Auth mode", `${f.auth_mode} · ${f.auth_header}`], ["Materialization", f.materialization + (f.target_schema ? ` → ${f.target_schema}` : "")], ["AI", f.ai ? `${f.ai.connection ?? f.ai.kind} · ${f.ai.deployment ?? "—"}` : "none"]] : [];
   const editSource = (i: number, patch: Partial<DomainSource>) => setSources(sources.map((x, j) => (j === i ? { ...x, ...patch } : x)));
-  const addSchemaTo = (i: number) => { const x = (newSchema[i] ?? "").trim(); if (!x || sources[i].schemas.includes(x)) return; editSource(i, { schemas: [...sources[i].schemas, x] }); setNewSchema({ ...newSchema, [i]: "" }); };
 
   const test = async () => {
     if (testing) return; setTesting(true); setConn(null);
@@ -82,24 +80,8 @@ export function Settings() {
                 <div className="row between" style={{ marginBottom: 6 }}><Label block={false}>Sources</Label><Button size="xs" onClick={() => setSources([...sources, { connectionId: sourceConns.find(c => !sources.some(x => x.connectionId === c.id))?.id ?? null, catalog: null, schemas: [] }])}>Add source</Button></div>
                 {sources.length === 0 && <p className="muted small" style={{ margin: "0 0 6px" }}>No source yet: the deployment's default source is used. Add one to read from a connection.</p>}
                 {sources.map((src, i) => (
-                  <div key={i} className="source-row">
-                    <div className="row" style={{ gap: 8 }}>
-                      <span className="pill" style={{ flex: "none" }}>{i === 0 ? "primary" : `source ${i + 1}`}</span>
-                      <select aria-label={`Source connection ${i + 1}`} className="select sm" style={{ flex: 2, minWidth: 0 }} value={src.connectionId ?? ""} onChange={e => editSource(i, { connectionId: e.target.value || null })}>
-                        <option value="">Deployment default ({KIND_LABEL[config.sourceKind]})</option>
-                        {sourceConns.map(c => <option key={c.id} value={c.id} disabled={sources.some((o, j) => j !== i && o.connectionId === c.id)}>{c.name} · {kindLabel(c.kind)}</option>)}
-                      </select>
-                      <input aria-label={`Catalog of source ${i + 1}`} className="input mono sm" style={{ flex: 1, minWidth: 0 }} placeholder="catalog" value={src.catalog ?? ""} onChange={e => editSource(i, { catalog: e.target.value || null })} />
-                      {i > 0 && <button type="button" className="chip-act" aria-label={`Make source ${i + 1} primary`} title="Make primary" onClick={() => setSources([src, ...sources.filter((_, j) => j !== i)])}><Icon name="check" size={10} /></button>}
-                      <button type="button" className="chip-act" aria-label={`Remove source ${i + 1}`} title="Remove source" onClick={() => setSources(sources.filter((_, j) => j !== i))}>×</button>
-                    </div>
-                    <div style={{ marginTop: 8 }}><SchemaList schemas={src.schemas} onChange={schemas => editSource(i, { schemas })} /></div>
-                    <div className="row" style={{ gap: 6, marginTop: 6 }}>
-                      <input className="input mono sm" list={`schema-options-${i}`} aria-label={`Schema name for source ${i + 1}`} placeholder="schema name" value={newSchema[i] ?? ""} onChange={e => setNewSchema({ ...newSchema, [i]: e.target.value })} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addSchemaTo(i); } }} style={{ flex: 1, minWidth: 0 }} />
-                      <datalist id={`schema-options-${i}`}>{(available.data ?? []).filter(x => !src.schemas.includes(x)).map(x => <option key={x} value={x} />)}</datalist>
-                      <Button size="sm" aria-label={`Add schema to source ${i + 1}`} onClick={() => addSchemaTo(i)} disabled={!(newSchema[i] ?? "").trim() || src.schemas.includes((newSchema[i] ?? "").trim())}>Add</Button>
-                    </div>
-                  </div>
+                  <SourceRow key={i} index={i} source={src} used={sources.filter((_, j) => j !== i).map(x => x.connectionId)} connections={sourceConns} kindLabel={kindLabel} envKind={KIND_LABEL[config.sourceKind]} envSchemas={available.data ?? []}
+                    onChange={patch => editSource(i, patch)} onRemove={() => setSources(sources.filter((_, j) => j !== i))} onPrimary={i > 0 ? () => setSources([src, ...sources.filter((_, j) => j !== i)]) : undefined} />
                 ))}
                 <div className="muted-2 xs" style={{ marginTop: 4 }}>The primary source is listed first: the catalog browser opens there and short table names resolve against its first schema. Each source has its own schemas; leave them empty to browse all of them.</div>
               </div>
@@ -132,6 +114,71 @@ export function Settings() {
         </div>
       </div>
     </>
+  );
+}
+
+/** The catalog a connection is bound to, as the connection module stores it (catalog on Databricks, database elsewhere). */
+const connectionCatalog = (c: { config: Record<string, string | number> } | undefined) => (c ? String(c.config.catalog ?? c.config.database ?? "") : "");
+
+/** Schemas of a connection, browsed once through the connection module and cached for the session. */
+const browseCache = new Map<string, Promise<string[]>>();
+function useHubSchemas(connectionId: string | null): { schemas: string[] | null; loading: boolean; error: string | null } {
+  const client = useConnectionsClient();
+  const [state, setState] = useState<{ id: string | null; schemas: string[] | null; loading: boolean; error: string | null }>({ id: null, schemas: null, loading: false, error: null });
+  useEffect(() => {
+    if (!CONNECTIONS_URL || !connectionId) { setState({ id: connectionId, schemas: null, loading: false, error: null }); return; }
+    let alive = true;
+    setState({ id: connectionId, schemas: null, loading: true, error: null });
+    let p = browseCache.get(connectionId);
+    if (!p) { p = client.browse(connectionId).then(nodes => nodes.filter(n => n.kind === "schema" || n.kind === "database").map(n => n.name)); browseCache.set(connectionId, p); }
+    p.then(schemas => { if (alive) setState({ id: connectionId, schemas, loading: false, error: null }); })
+      .catch(e => { browseCache.delete(connectionId); if (alive) setState({ id: connectionId, schemas: null, loading: false, error: e instanceof Error ? e.message : String(e) }); });
+    return () => { alive = false; };
+  }, [client, connectionId]);
+  return state.id === connectionId ? state : { schemas: null, loading: !!connectionId && !!CONNECTIONS_URL, error: null };
+}
+
+/** One source of the domain: its connection (which fixes the catalog) and the schemas read from it. */
+function SourceRow({ index, source, used, connections, kindLabel, envKind, envSchemas, onChange, onRemove, onPrimary }: {
+  index: number; source: DomainSource; used: (string | null)[]; connections: { id: string; name: string; kind: string; config: Record<string, string | number> }[]; kindLabel: (k: string) => string; envKind: string; envSchemas: string[];
+  onChange: (patch: Partial<DomainSource>) => void; onRemove: () => void; onPrimary?: () => void;
+}) {
+  const n = index + 1;
+  const conn = connections.find(c => c.id === source.connectionId);
+  const hub = useHubSchemas(source.connectionId);
+  const [typed, setTyped] = useState("");
+  const offered = (hub.schemas ?? (source.connectionId ? [] : envSchemas)).filter(x => !source.schemas.includes(x));
+  const addTyped = () => { const x = typed.trim(); if (!x || source.schemas.includes(x)) return; onChange({ schemas: [...source.schemas, x] }); setTyped(""); };
+  const pickConnection = (id: string) => { const c = connections.find(x => x.id === id); onChange({ connectionId: id || null, catalog: c ? connectionCatalog(c) || null : source.catalog, schemas: [] }); };
+  return (
+    <div className="source-row">
+      <div className="row" style={{ gap: 8 }}>
+        <span className="pill" style={{ flex: "none" }}>{index === 0 ? "primary" : `source ${n}`}</span>
+        <select aria-label={`Source connection ${n}`} className="select sm" style={{ flex: 2, minWidth: 0 }} value={source.connectionId ?? ""} onChange={e => pickConnection(e.target.value)}>
+          <option value="">Deployment default ({envKind})</option>
+          {connections.map(c => <option key={c.id} value={c.id} disabled={used.includes(c.id)}>{c.name} · {kindLabel(c.kind)}</option>)}
+        </select>
+        {conn
+          ? <span className="row" style={{ flex: 1, minWidth: 0, gap: 6, fontSize: 12.5 }} title="The catalog is part of the connection; change it in the connection module"><span className="muted-2 xs">catalog</span><span className="mono" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{connectionCatalog(conn) || "default"}</span></span>
+          : <input aria-label={`Catalog of source ${n}`} className="input mono sm" style={{ flex: 1, minWidth: 0 }} placeholder="catalog" value={source.catalog ?? ""} onChange={e => onChange({ catalog: e.target.value || null })} />}
+        {onPrimary && <button type="button" className="chip-act" aria-label={`Make source ${n} primary`} title="Make primary" onClick={onPrimary}><Icon name="check" size={10} /></button>}
+        <button type="button" className="chip-act" aria-label={`Remove source ${n}`} title="Remove source" onClick={onRemove}>×</button>
+      </div>
+      <div style={{ marginTop: 8 }}><SchemaList schemas={source.schemas} onChange={schemas => onChange({ schemas })} /></div>
+      <div className="row" style={{ gap: 6, marginTop: 6 }}>
+        {hub.loading && <span className="row muted small"><Spinner blue />Loading schemas from the connection module…</span>}
+        {hub.schemas && <select aria-label={`Schema for source ${n}`} className="select sm" style={{ flex: 1, minWidth: 0 }} value="" onChange={e => { if (e.target.value) onChange({ schemas: [...source.schemas, e.target.value] }); }}>
+          <option value="">Add a schema…</option>
+          {offered.map(x => <option key={x} value={x}>{x}</option>)}
+        </select>}
+        {!hub.loading && !hub.schemas && <>
+          <input className="input mono sm" list={`schema-options-${index}`} aria-label={`Schema name for source ${n}`} placeholder="schema name" value={typed} onChange={e => setTyped(e.target.value)} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addTyped(); } }} style={{ flex: 1, minWidth: 0 }} />
+          <datalist id={`schema-options-${index}`}>{offered.map(x => <option key={x} value={x} />)}</datalist>
+          <Button size="sm" aria-label={`Add schema to source ${n}`} onClick={addTyped} disabled={!typed.trim() || source.schemas.includes(typed.trim())}>Add</Button>
+        </>}
+      </div>
+      {hub.error && <div className="xs" style={{ marginTop: 4, color: "var(--orange-text)" }}>Could not browse this connection: {hub.error}. Type the schema names instead.</div>}
+    </div>
   );
 }
 

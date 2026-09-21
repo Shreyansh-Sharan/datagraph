@@ -126,7 +126,7 @@ describe("Configure screen · sources", () => {
     await user.click(screen.getByRole("button", { name: "Add schema to source 2" }));
     await user.click(screen.getByRole("button", { name: "Save source settings" }));
     expect(await screen.findByText("Source settings saved")).toBeInTheDocument();
-    expect((await api.domain("rgm")).sources).toEqual([{ connectionId: "c-warehouse", catalog: "rgm", schemas: ["gold", "silver"] }, { connectionId: "c-lake", catalog: null, schemas: ["raw"] }]);
+    expect((await api.domain("rgm")).sources).toEqual([{ connectionId: "c-warehouse", catalog: "rgm", schemas: ["gold", "silver"] }, { connectionId: "c-lake", catalog: "lake", schemas: ["raw"] }]);
     await user.selectOptions(screen.getByLabelText("AI connection"), "");
     expect(screen.getByText(/AI connection is required/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save source settings" })).toBeDisabled();
