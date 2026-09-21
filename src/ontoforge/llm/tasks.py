@@ -34,14 +34,19 @@ def guarded_sampler(fetch: Callable[[str], list[tuple]]) -> Callable[[str], list
 
 
 def describe_tables(catalog: CatalogAdapter, tables: list[str] | None = None, schema: str | None = None,
-                    sample_rows: Callable[[str], list[tuple]] | None = None, snapshots: dict | None = None) -> list[TableMeta]:
+                    sample_rows: Callable[[str], list[tuple]] | None = None, snapshots: dict | None = None,
+                    on_progress: Callable[[int, int, str], None] | None = None) -> list[TableMeta]:
     """Catalog metadata in the shape the prompts expect. A version's snapshots win over the live
-    catalog when present: they carry the comments users wrote."""
+    catalog when present: they carry the comments users wrote. ``on_progress(i, n, table)`` is
+    called before each table so a long run can say where it is."""
     out = []
     snapshots = snapshots or {}
     if tables is not None and schema:   # bare names belong to the given schema, dotted ones are already placed
         tables = [t if "." in t else f"{schema}.{t}" for t in tables]
-    for t in (tables if tables is not None else (list(snapshots) or catalog.list_tables(schema))):
+    names = tables if tables is not None else (list(snapshots) or catalog.list_tables(schema))
+    for i, t in enumerate(names):
+        if on_progress:
+            on_progress(i + 1, len(names), t)
         snap = snapshots.get(t)
         if snap is not None:
             out.append({"table": t, "comment": snap.comment, "columns": snap.columns, "primary_key": snap.primary_key,

@@ -455,7 +455,7 @@ describe("mapping editor (rest)", () => {
       if (key === `GET /api/versions/${vid}/mapping`) return new Response(JSON.stringify(spec));
       if (key === `PUT /api/versions/${vid}/mapping`) { spec = JSON.parse(String(init?.body)); puts.push(spec); return new Response(JSON.stringify({ id: vid })); }
       if (key === `GET /api/versions/${vid}/mapping/r2rml`) return new Response("@prefix rr: <http://www.w3.org/ns/r2rml#> .", { headers: { "content-type": "text/turtle" } });
-      if (key === `POST /api/versions/${vid}/llm/suggest-mapping`) { return new Response(JSON.stringify({ classes: 2, relations: 1, mapping: spec })); }
+      if (key === `POST /api/versions/${vid}/llm/suggest-mapping?background=true`) { return new Response(JSON.stringify({ id: "j1", kind: "suggest-mapping", version_id: vid, status: "succeeded", progress: "Done", result: { classes: 2, relations: 1, mapping: spec }, error: null }), { status: 202 }); }
       if (key.startsWith(`DELETE /api/versions/${vid}/mapping/classes`)) { spec.classes = []; return new Response(JSON.stringify(spec)); }
       if (key === `POST /api/versions/${vid}/mapping/exclude-unmapped`) return new Response(JSON.stringify(spec));
       return new Response(JSON.stringify(routes[key] ?? { detail: `no route ${key}` }), { status: key in routes ? 200 : 404 });
@@ -574,14 +574,14 @@ describe("ontology drafting", () => {
         "GET /api/domains/aw/versions/summary": [{ id: vid, version: 1, status: "draft", has_ontology: false, has_mapping: false, rule_count: 0, constraint_count: 0, created_at: "2026-09-21T10:00:00Z", created_by: "alice", is_active: false, stats: { classes: 0, attributes: 0, relationships: 0, bindings: 0, rules: 0, constraints: 0, triples: 0 }, mapping: null, last_build: null, review: null, lease: null }],
         "GET /api/domains/cards": [{ name: "aw", version_count: 1, active_version: null, latest_version: { version: 1, status: "draft" }, triples: 0, last_build: null, source: { kind: "databricks", connection: null, catalog: null, schema: null, schemas: [] }, source_count: 0, mcp: { exposed: true, disabled_tools: [] } }],
         [`GET /api/versions/${vid}/metadata`]: [{ table: "adventurework2022.sales.customer", comment: null, columns: [{ name: "customerid", type: "int", comment: null }], primary_key: ["customerid"], foreign_keys: [] }, { table: "adventurework2022.sales.salesorderheader", comment: null, columns: [], primary_key: [], foreign_keys: [] }],
-        [`POST /api/versions/${vid}/llm/draft-ontology`]: { classes: 2, properties: 34, issues: [{ severity: "warning" }], ontology: {} },
+        [`POST /api/versions/${vid}/llm/draft-ontology?background=true`]: { id: "j2", kind: "draft-ontology", version_id: vid, status: "succeeded", progress: "Done", result: { classes: 2, properties: 34, issues: [{ severity: "warning" }], ontology: {} }, error: null },
         [`POST /api/versions/${vid}/autodraft`]: { classes: 2, properties: 12, mapping: { classes: 2 } },
       };
       return new Response(JSON.stringify(routes[key] ?? { detail: `no route ${key}` }), { status: key in routes ? 200 : 404 });
     }) as typeof fetch;
     const a = new RestApi({ base: "/api" }); await a.domain("aw");
     expect(await a.draftOntology("aw", 1, { ai: true, description: "Sales" })).toEqual({ classes: 2, properties: 34, warnings: 1 });
-    expect(calls).toContain(`POST /api/versions/${vid}/llm/draft-ontology {"ontology_iri":"http://p/aw/ontology","description":"Sales","tables":["adventurework2022.sales.customer","adventurework2022.sales.salesorderheader"]}`);
+    expect(calls).toContain(`POST /api/versions/${vid}/llm/draft-ontology?background=true {"ontology_iri":"http://p/aw/ontology","description":"Sales","tables":["adventurework2022.sales.customer","adventurework2022.sales.salesorderheader"]}`);
     expect(await a.draftOntology("aw", 1, { ai: false, tables: ["adventurework2022.sales.customer"] })).toEqual({ classes: 2, properties: 12, warnings: 0 });
     expect(calls).toContain(`POST /api/versions/${vid}/autodraft {"ontology_iri":"http://p/aw/ontology","tables":["adventurework2022.sales.customer"],"infer_keys":true}`);
   });
@@ -593,5 +593,39 @@ describe("ontology drafting", () => {
     const r = await api.draftOntology("aw", 1, { ai: true });
     expect(r.classes).toBeGreaterThan(0);
     expect((await api.ontology("aw", 1)).length).toBe(r.classes);
+  });
+});
+
+
+describe("AI tasks report progress", () => {
+  it("rest: starts a background job, polls it and relays each status until it settles", async () => {
+    const vid = "eeeeeeee-0000-0000-0000-000000000001"; let polls = 0;
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      const key = `${init?.method ?? "GET"} ${url}`;
+      const routes: Record<string, unknown> = {
+        "GET /api/auth/config": { mode: "header", header: "X-Actor", source: { kind: "databricks", catalog: "finops_metadata" } },
+        "GET /api/domains/aw": { name: "aw", description: "", base_iri: "http://p/aw/", review_quorum: 1, materialization: "none", sources: [] },
+        "GET /api/domains/aw/versions/summary": [{ id: vid, version: 1, status: "draft", has_ontology: true, has_mapping: false, rule_count: 0, constraint_count: 0, created_at: "2026-09-21T10:00:00Z", created_by: "alice", is_active: false, stats: { classes: 2, attributes: 2, relationships: 1, bindings: 0, rules: 0, constraints: 0, triples: 0 }, mapping: null, last_build: null, review: null, lease: null }],
+        "GET /api/domains/cards": [{ name: "aw", version_count: 1, active_version: null, latest_version: { version: 1, status: "draft" }, triples: 0, last_build: null, source: { kind: "databricks", connection: null, catalog: null, schema: null, schemas: [] }, source_count: 0, mcp: { exposed: true, disabled_tools: [] } }],
+        [`GET /api/versions/${vid}/metadata`]: [],
+      };
+      if (key === `POST /api/versions/${vid}/llm/suggest-mapping?background=true`) return new Response(JSON.stringify({ id: "job-1", kind: "suggest-mapping", version_id: vid, status: "running", progress: "Queued", started_at: "2026-09-21T10:00:00Z", progress_at: "2026-09-21T10:00:00Z", finished_at: null, result: null, error: null }), { status: 202 });
+      if (key === "GET /api/jobs/job-1") { polls++; const stages = [{ status: "running", progress: "Describing table 3 of 68: customer" }, { status: "running", progress: "Asking the AI provider to map 66 classes onto 68 table(s)" }, { status: "succeeded", progress: "Done", result: { classes: 66, relations: 40 } }]; return new Response(JSON.stringify({ id: "job-1", kind: "suggest-mapping", version_id: vid, ...stages[Math.min(polls - 1, 2)], started_at: "2026-09-21T10:00:00Z", progress_at: "2026-09-21T10:00:05Z", finished_at: polls >= 3 ? "2026-09-21T10:02:00Z" : null, error: null })); }
+      if (key === "GET /api/jobs/job-2") return new Response(JSON.stringify({ id: "job-2", kind: "draft-ontology", version_id: vid, status: "failed", progress: "Asking the AI provider", started_at: "2026-09-21T10:00:00Z", progress_at: "2026-09-21T10:00:05Z", finished_at: "2026-09-21T10:01:00Z", result: null, error: "LLMOutputError: the model returned no JSON" }));
+      if (key === `POST /api/versions/${vid}/llm/draft-ontology?background=true`) return new Response(JSON.stringify({ id: "job-2", kind: "draft-ontology", version_id: vid, status: "running", progress: "Queued" }), { status: 202 });
+      return new Response(JSON.stringify(routes[key] ?? { detail: `no route ${key}` }), { status: key in routes ? 200 : 404 });
+    }) as typeof fetch;
+    const a = new RestApi({ base: "/api", pollMs: 1 }); await a.domain("aw");
+    const seen: string[] = [];
+    const r = await a.suggestMapping("aw", 1, p => seen.push(p.progress));
+    expect(r).toEqual({ classes: 66, relations: 40 });
+    expect(seen).toEqual(["Describing table 3 of 68: customer", "Asking the AI provider to map 66 classes onto 68 table(s)"]);
+    await expect(a.draftOntology("aw", 1, { ai: true }, () => {})).rejects.toThrow(/returned no JSON/);
+  });
+  it("mock: reports a couple of stages too", async () => {
+    const api = new MockApi({ latency: 0 });
+    const seen: string[] = [];
+    await api.suggestMapping("rgm", 3, p => seen.push(p.progress));
+    expect(seen.length).toBeGreaterThan(0);
   });
 });

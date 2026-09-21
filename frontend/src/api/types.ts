@@ -86,6 +86,7 @@ export interface OntoCheck { severity: "error" | "warning" | "info"; code: strin
 
 // -- mapping --------------------------------------------------------------------------
 export interface ClassMapping { table?: [string, string]; fullName?: string; sql?: string; key: string; state: MappingState; cols: Record<string, string>; rels?: Record<string, string>; excluded?: string[] }
+export interface AiProgress { progress: string; startedAt: string | null; progressAt: string | null; status: "running" | "succeeded" | "failed" }   // what a long AI task is doing right now
 export interface DriftIssue { kind: string; table: string; column: string | null; detail: string; mapping_ref: string; severity: string }
 export interface MappingKpis { completion: number; classesMapped: [number, number]; attributes: [number, number]; relationships: [number, number]; excluded: number }
 export interface TablePreview { columns: string[]; rows: (string | null)[][] }
@@ -173,7 +174,7 @@ export interface DatagraphApi {
   tableClass(domain: string, table: string, version?: number): Promise<string | null>;
 
   ontology(domain: string, version: number): Promise<OntoClass[]>;
-  draftOntology(domain: string, version: number, opts: { ai: boolean; description?: string; tables?: string[] }): Promise<{ classes: number; properties: number; warnings: number }>;   // replaces the draft's ontology: with the AI provider from the snapshot, or heuristically from the tables
+  draftOntology(domain: string, version: number, opts: { ai: boolean; description?: string; tables?: string[] }, onProgress?: (p: AiProgress) => void): Promise<{ classes: number; properties: number; warnings: number }>;   // replaces the draft's ontology: with the AI provider from the snapshot, or heuristically from the tables
   ontologyChecks(domain: string, version: number): Promise<OntoCheck[]>;
 
   mapping(domain: string, version: number): Promise<Record<string, ClassMapping>>;
@@ -189,7 +190,7 @@ export interface DatagraphApi {
   excludeUnmapped(domain: string, version: number): Promise<void>;
   drift(domain: string, version: number): Promise<DriftIssue[]>;
   r2rml(domain: string, version: number): Promise<string>;
-  suggestMapping(domain: string, version: number): Promise<{ classes: number; relations: number }>;
+  suggestMapping(domain: string, version: number, onProgress?: (p: AiProgress) => void): Promise<{ classes: number; relations: number }>;
 
   rules(domain: string, version: number): Promise<Rule[]>;
   constraints(domain: string, version: number): Promise<Constraint[]>;

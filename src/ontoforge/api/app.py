@@ -39,6 +39,7 @@ from ontoforge.observability import RequestLoggingMiddleware, configure_logging
 from ontoforge.r2rml import MappingError
 from ontoforge.reasoning import Reasoner
 from ontoforge.connectors import HubConnections, HubUnavailable, NoConnectionModule
+from ontoforge.jobs import JobRunner
 from ontoforge.sources import SourceResolver
 from ontoforge.registry import LifecycleError, LockedError, NotFound, Registry
 from ontoforge.quality import QualityError
@@ -74,6 +75,7 @@ def create_app(db: Database, source_db: Database | None = None, settings: Settin
     app.state.analytics = GraphAnalytics(app.state.registry, app.state.store)
     app.state.attachments = AttachmentService(app.state.registry, app.state.sources.for_version, app.state.store)
     app.state.cohorts = CohortEngine(app.state.registry, app.state.store)
+    app.state.jobs = JobRunner(workers=settings.build_workers)
     app.state.llm = llm if llm is not None else _llm_provider(settings)   # the CLI's serve path passes none: build it from settings
     mcp_app = _mcp_mount(app)
 
@@ -83,6 +85,7 @@ def create_app(db: Database, source_db: Database | None = None, settings: Settin
         async with mcp_app.router.lifespan_context(mcp_app):   # mounted apps don't get their lifespan run for them
             yield
         app.state.scheduler.shutdown(wait=False)
+        app.state.jobs.shutdown(wait=False)
 
     app.router.lifespan_context = lifespan
     app.include_router(open_router)

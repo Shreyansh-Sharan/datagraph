@@ -2,7 +2,7 @@
 // UI behaves like the real thing (lifecycle transitions, builds with live steps, comments).
 import * as D from "./mockData";
 import { compileClassSql, tableName } from "./types";
-import type { DomainSource, DriftIssue, RefreshChange, SnapshotTable, SourceFactsEntry, SourceInput,
+import type { AiProgress, DomainSource, DriftIssue, RefreshChange, SnapshotTable, SourceFactsEntry, SourceInput,
   Analytics, ApiKey, AuditEntry, BuildRun, BuildStep, CatalogTable, ChecklistItem, ClassMapping, Comment, Config, ConnResult, Constraint,
   DatagraphApi, DomainSummary, DqColumnIssue, EntityDetail, GlossaryTerm, GraphStatus, Lock, MappingKpis, Me, NewDomainInput, OntoCheck,
   OntoClass, OntoDiff, Principal, Role, Rule, SearchHit, SourceKind, TableDetail, TablePreview, TableProfile, Task, TriplePage, TripleQuery,
@@ -258,8 +258,13 @@ export class MockApi implements DatagraphApi {
   async tableClass(_domain: string, table: string, _version?: number) { return D.TABLE_CLASS[table] || null; }
 
   async ontology(domain: string, _version: number): Promise<OntoClass[]> { return clone(this.ontos[domain] ?? (D.DOMAINS.some(d => d.name === domain) ? D.CLASSES : [])); }
-  async draftOntology(domain: string, _version: number, opts: { ai: boolean; description?: string; tables?: string[] }) {
-    await this.wait(null, this.mockOpts.latency ?? (opts.ai ? 800 : 200));
+  private async stages(onProgress: ((p: AiProgress) => void) | undefined, lines: string[], ms: number) {
+    const startedAt = new Date().toISOString();
+    for (const progress of lines) { onProgress?.({ progress, startedAt, progressAt: new Date().toISOString(), status: "running" }); await this.wait(null, ms); }
+  }
+  async draftOntology(domain: string, _version: number, opts: { ai: boolean; description?: string; tables?: string[] }, onProgress?: (p: AiProgress) => void) {
+    const n = opts.tables?.length ?? 3;
+    await this.stages(onProgress, opts.ai ? [`Describing table 1 of ${n}: dim_customer`, `Asking the AI provider to draft the ontology from ${n} table(s)`] : [`Deriving classes from ${n} table(s)`], this.mockOpts.latency ?? (opts.ai ? 400 : 100));
     this.ontos[domain] = clone(D.CLASSES);
     return { classes: D.CLASSES.length, properties: D.CLASSES.reduce((a, c) => a + c.attrs.length + c.rels.length, 0), warnings: opts.ai ? 1 : 0 };
   }
@@ -314,8 +319,8 @@ export class MockApi implements DatagraphApi {
     const d = this.dom(domain);
     return ["@prefix rr: <http://www.w3.org/ns/r2rml#> .", `@prefix : <${d.base_iri}> .`, "", ...Object.entries(this.mapOf(domain)).filter(([, m]) => m.table).map(([cls, m]) => `<#${cls}> a rr:TriplesMap ;\n  rr:logicalTable [ rr:tableName "${m.fullName ?? m.table?.join(".")}" ] ;\n  rr:subjectMap [ rr:template "${d.base_iri}${cls}/{${m.key}}" ; rr:class :${cls} ] .`)].join("\n");
   }
-  async suggestMapping(domain: string, version: number): Promise<{ classes: number; relations: number }> {
-    await this.wait(null, this.mockOpts.latency ?? 600);
+  async suggestMapping(domain: string, version: number, onProgress?: (p: AiProgress) => void): Promise<{ classes: number; relations: number }> {
+    await this.stages(onProgress, ["Describing table 1 of 10: dim_customer", "Asking the AI provider to map 12 classes onto 10 table(s)"], this.mockOpts.latency ?? 300);
     const M = this.mapOf(domain); let n = 0;
     for (const [table, cls] of Object.entries(D.TABLE_CLASS)) if (!M[cls] && D.CLASSES.some(c => c.id === cls)) { await this.mapClass(domain, version, cls, `${this.dom(domain).catalog}.gold.${table}`, ["id"]); n++; }
     return { classes: n, relations: 0 };

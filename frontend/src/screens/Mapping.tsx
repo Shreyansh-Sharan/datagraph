@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Card, Dialog, Dot, ErrorNotice, Glyph, Label, Pill, Skeleton, Spinner, Tabs } from "@/components/ui";
 import { Icon } from "@/components/icons";
 import { Stage, glyphOf, type StageEdge, type StageNode } from "@/components/Stage";
@@ -28,6 +28,9 @@ export function Mapping() {
   const [relEdit, setRelEdit] = useState<string | null>(null);
   const [drift, setDrift] = useState<DriftIssue[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [aiStatus, setAiStatus] = useState<{ progress: string; since: number } | null>(null);
+  const [tick, setTick] = useState(0);
+  useEffect(() => { if (!aiStatus) return; const t = setInterval(() => setTick(x => x + 1), 1000); return () => clearInterval(t); }, [aiStatus]);
 
   const list = classes.data ?? []; const M = mapping.data ?? {};
   const sel = list.find(c => c.id === clsId) ?? list[0];
@@ -53,7 +56,13 @@ export function Mapping() {
   const exclude = (prop: string, on: boolean) => sel && edit("exclude", () => api.excludeProperty(domain.name, v, sel.id, prop, on), on ? `${prop} excluded from the mapping` : `${prop} back in the mapping`);
   const showDrift = async () => { if (busy) return; setBusy("drift"); try { const d = await api.drift(domain.name, v); setDrift(d); say(d.length ? `${d.length} drift issue${d.length === 1 ? "" : "s"}` : "No drift: the source still matches the mapping"); } catch (e) { say(e instanceof Error ? e.message : String(e)); } finally { setBusy(null); } };
   const exportR2rml = async () => { try { const ttl = await api.r2rml(domain.name, v); const blob = new Blob([ttl], { type: "text/turtle" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `${domain.name}-v${v}.r2rml.ttl`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); say("R2RML exported"); } catch (e) { say(e instanceof Error ? e.message : String(e)); } };
-  const suggest = () => edit("suggest", () => api.suggestMapping(domain.name, v), r => { const x = r as { classes: number; relations: number }; return `AI suggested bindings for ${x.classes} class${x.classes === 1 ? "" : "es"} and ${x.relations} relationship${x.relations === 1 ? "" : "s"}`; });
+  const suggest = async () => {
+    setAiStatus({ progress: "Starting", since: Date.now() });
+    try { await edit("suggest", () => api.suggestMapping(domain.name, v, p => setAiStatus({ progress: p.progress, since: p.startedAt ? new Date(p.startedAt).getTime() : Date.now() })), r => { const x = r as { classes: number; relations: number }; return `AI suggested bindings for ${x.classes} class${x.classes === 1 ? "" : "es"} and ${x.relations} relationship${x.relations === 1 ? "" : "s"}`; }); }
+    finally { setAiStatus(null); }
+  };
+  const elapsed = aiStatus ? Math.max(0, Math.round((Date.now() - aiStatus.since) / 1000)) : 0;
+  void tick;
 
   return (
     <>
@@ -66,6 +75,12 @@ export function Mapping() {
           {editable && <Button variant="primary" disabled={!!busy} onClick={suggest}>{busy === "suggest" && <Spinner />}Suggest with AI</Button>}
         </div>
       </div>
+      {aiStatus && (
+        <div className="notice" role="status" aria-live="polite" style={{ marginBottom: 16 }}>
+          <div className="row" style={{ gap: 8, fontWeight: 600 }}><Spinner blue />Suggesting with AI · {aiStatus.progress} · {elapsed >= 60 ? `${Math.floor(elapsed / 60)} min ${elapsed % 60} s` : `${elapsed} s`}</div>
+          <div className="muted xs" style={{ marginTop: 4 }}>The source is read table by table, then the whole ontology goes to the AI provider in one request; with dozens of tables that step alone takes minutes. The job runs on the server, so you can leave this screen and come back.</div>
+        </div>
+      )}
       {drift && (
         <Card style={{ marginBottom: 16, borderColor: drift.length ? "var(--orange)" : "var(--blue-border)" }}>
           <div className="row between"><h2 className="h2">Schema drift</h2><Button size="xs" variant="ghost" onClick={() => setDrift(null)}>Close</Button></div>

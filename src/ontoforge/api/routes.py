@@ -1185,32 +1185,75 @@ def _llm(request: Request):
     return llm
 
 
-def _tables(request: Request, tables: list[str] | None, schema: str | None, version_id: UUID | None = None) -> list[dict]:
+def _tables(request: Request, tables: list[str] | None, schema: str | None, version_id: UUID | None = None, on_progress=None) -> list[dict]:
     st = _st(request)
     snapshots = {s.table: s for s in st.metadata.list(version_id)} if version_id else {}
     src = st.sources.for_version(version_id) if version_id else st.sources.env
-    return describe_tables(src.catalog, tables, schema, sample_rows=guarded_sampler(lambda t: _samples(src, t)), snapshots=snapshots)
+    return describe_tables(src.catalog, tables, schema, sample_rows=guarded_sampler(lambda t: _samples(src, t)), snapshots=snapshots, on_progress=on_progress)
 
 
 def _samples(src, table: str, n: int = 3) -> list[tuple]:
     return list(src.stream(f"SELECT * FROM {src.dialect.quote_table(table)} LIMIT {n}", batch=n))[:n]
 
 
+def _describe_progress(report):
+    """Turns describe_tables' per-table callback into a status line."""
+    return (lambda i, n, t: report(f"Describing table {i} of {n}: {t.split('.')[-1]}")) if report else None
+
+
+def _run_ai(request: Request, version_id: UUID, kind: str, background: bool, response: Response, actor: str, work):
+    """Run an AI task now (the result) or in the background (202 + a job to poll)."""
+    llm = _llm(request)   # 503 before anything is queued
+    if not background:
+        return work(llm, lambda _msg: None)
+    job = _st(request).jobs.submit(kind, version_id, lambda report: work(llm, report), actor=actor)
+    response.status_code = 202
+    return job.to_dict()
+
+
 @router.post("/versions/{version_id}/llm/draft-ontology")
-def llm_draft_ontology(version_id: UUID, body: DraftOntologyIn, request: Request, me: Principal = Depends(builder)):
-    onto = OntologyDrafter(_llm(request)).draft(body.ontology_iri, _tables(request, body.tables, body.schema_name, version_id), body.description)
-    _st(request).registry.update_content(version_id, actor=me.name, ontology_ttl=onto.to_turtle())
-    return _ontology_summary_json(onto)
+def llm_draft_ontology(version_id: UUID, body: DraftOntologyIn, request: Request, response: Response, me: Principal = Depends(builder),
+                       background: bool = Query(default=False, description="return a job to poll instead of waiting")):
+    st = _st(request)
+    st.registry.assert_editable(version_id, me.name)
+
+    def work(llm, report):
+        tables = _tables(request, body.tables, body.schema_name, version_id, on_progress=_describe_progress(report))
+        report(f"Asking the AI provider to draft the ontology from {len(tables)} table(s)")
+        onto = OntologyDrafter(llm).draft(body.ontology_iri, tables, body.description)
+        st.registry.update_content(version_id, actor=me.name, ontology_ttl=onto.to_turtle())
+        return _ontology_summary_json(onto)
+    return _run_ai(request, version_id, "draft-ontology", background, response, me.name, work)
 
 
 @router.post("/versions/{version_id}/llm/suggest-mapping")
-def llm_suggest_mapping(version_id: UUID, body: SuggestMappingIn, request: Request, me: Principal = Depends(builder)):
+def llm_suggest_mapping(version_id: UUID, body: SuggestMappingIn, request: Request, response: Response, me: Principal = Depends(builder),
+                        background: bool = Query(default=False, description="return a job to poll instead of waiting")):
     st = _st(request)
     version = st.registry.get_version(version_id)
+    st.registry.assert_editable(version_id, me.name)
     domain = st.registry.get_domain_by_id(version.domain_id)
-    spec = MappingSuggester(_llm(request)).suggest(_ontology(request, version_id), _tables(request, body.tables, body.schema_name, version_id), domain.base_iri)
-    st.registry.update_content(version_id, actor=me.name, mapping=spec.to_dict())
-    return {"classes": len(spec.classes), "relations": len(spec.relations), "mapping": spec.to_dict()}
+    onto = _ontology(request, version_id)   # 404 "no ontology" before anything is queued
+
+    def work(llm, report):
+        tables = _tables(request, body.tables, body.schema_name, version_id, on_progress=_describe_progress(report))
+        report(f"Asking the AI provider to map {len(onto.classes)} classes onto {len(tables)} table(s)")
+        spec = MappingSuggester(llm).suggest(onto, tables, domain.base_iri)
+        st.registry.update_content(version_id, actor=me.name, mapping=spec.to_dict())
+        return {"classes": len(spec.classes), "relations": len(spec.relations), "mapping": spec.to_dict()}
+    return _run_ai(request, version_id, "suggest-mapping", background, response, me.name, work)
+
+
+@router.get("/jobs/{job_id}")
+def get_job(job_id: UUID, request: Request):
+    return _st(request).jobs.get(job_id).to_dict()
+
+
+@router.get("/versions/{version_id}/jobs")
+def latest_job(version_id: UUID, request: Request, kind: str | None = None):
+    """The most recent background job of a version (optionally of one kind), or null."""
+    job = _st(request).jobs.latest(version_id, kind)
+    return job.to_dict() if job else None
 
 
 @router.post("/versions/{version_id}/llm/assist")

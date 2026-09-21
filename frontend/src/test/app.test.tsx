@@ -234,7 +234,7 @@ describe("Ontology screen · drafting", () => {
     expect(within(dlg).getAllByRole("checkbox").length).toBeGreaterThan(0);
     await user.type(within(dlg).getByLabelText("What this domain is about"), "Revenue and customers");
     await user.click(within(dlg).getByRole("button", { name: "Draft ontology" }));
-    expect(await within(dlg).findByText(/Reading \d+ tables? from the source, then asking the AI/)).toBeInTheDocument();   // progress while it runs
+    expect(await within(dlg).findByText(/Describing table|Asking the AI|Reading \d+ tables? from the source/)).toBeInTheDocument();   // progress while it runs
     expect(await screen.findByText(/Drafted \d+ classes/)).toBeInTheDocument();
     expect((await api.ontology("aw", 1)).length).toBeGreaterThan(0);
   });
@@ -250,5 +250,16 @@ describe("Metadata screen · schema picker", () => {
     expect(await screen.findByText("promo_calendar")).toBeInTheDocument();
     expect(screen.queryByText("dim_customer")).toBeNull();
     expect(window.location.hash).toContain("schema=rgm.silver");
+  });
+});
+
+
+describe("Mapping screen · AI status", () => {
+  it("shows what the suggestion is doing while it runs", async () => {
+    renderAt("#/d/rgm/mapping?v=3", new MockApi({ latency: 40 }));
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Suggest with AI" }));
+    expect(await screen.findByText(/Describing table|Asking the AI/)).toBeInTheDocument();
+    expect(await screen.findByText(/AI suggested bindings/)).toBeInTheDocument();
   });
 });

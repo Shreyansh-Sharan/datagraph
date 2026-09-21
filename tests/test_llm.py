@@ -195,3 +195,52 @@ def test_guarded_sampler_stops_after_the_first_failure():
 
     ok = guarded_sampler(lambda t: [(1,)])
     assert ok("a") == [(1,)] and ok("b") == [(1,)]
+
+
+def test_ai_tasks_can_run_in_the_background_with_progress(db):
+    """A long AI task returns a job at once; polling shows what it is doing and finally the result."""
+    import time
+    seed_tables(db)
+    app = create_app(db=db, settings=ADMIN, llm=FakeProvider([DRAFT, MAPPING]))
+    with TestClient(app, headers={"X-Actor": "alice"}) as c:
+        c.post("/domains", json={"name": "hr", "base_iri": BASE})
+        v = c.post("/domains/hr/versions").json()
+        r = c.post(f"/versions/{v['id']}/llm/draft-ontology", params={"background": "true"}, json={"ontology_iri": ONTO_IRI, "description": "HR"})
+        assert r.status_code == 202, r.text
+        job = r.json()
+        assert job["kind"] == "draft-ontology" and job["status"] in ("running", "succeeded") and job["version_id"] == v["id"]
+        for _ in range(100):
+            job = c.get(f"/jobs/{job['id']}").json()
+            if job["status"] != "running":
+                break
+            time.sleep(0.05)
+        assert job["status"] == "succeeded", job
+        assert job["result"]["classes"] == 2 and job["finished_at"] and "table" in (job["progress"] or "").lower() or job["progress"]
+        r = c.post(f"/versions/{v['id']}/llm/suggest-mapping", params={"background": "true"}, json={})
+        assert r.status_code == 202
+        latest = c.get(f"/versions/{v['id']}/jobs", params={"kind": "suggest-mapping"}).json()
+        assert latest and latest["id"] == r.json()["id"]
+        for _ in range(100):
+            job = c.get(f"/jobs/{r.json()['id']}").json()
+            if job["status"] != "running":
+                break
+            time.sleep(0.05)
+        assert job["status"] == "succeeded" and job["result"]["relations"] == 1
+        assert c.get("/jobs/00000000-0000-0000-0000-000000000000").status_code == 404
+        assert c.get(f"/versions/{v['id']}/jobs", params={"kind": "nothing"}).json() is None
+
+
+def test_a_failing_background_task_reports_its_error(db):
+    seed_tables(db)
+    app = create_app(db=db, settings=ADMIN, llm=FakeProvider([]))     # nothing to answer with: the provider raises
+    with TestClient(app, headers={"X-Actor": "alice"}) as c:
+        c.post("/domains", json={"name": "hr", "base_iri": BASE})
+        v = c.post("/domains/hr/versions").json()
+        job = c.post(f"/versions/{v['id']}/llm/draft-ontology", params={"background": "true"}, json={"ontology_iri": ONTO_IRI}).json()
+        import time
+        for _ in range(100):
+            job = c.get(f"/jobs/{job['id']}").json()
+            if job["status"] != "running":
+                break
+            time.sleep(0.05)
+        assert job["status"] == "failed" and job["error"]

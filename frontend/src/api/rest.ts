@@ -2,7 +2,7 @@
 // Methods with a settled contract call the API; the rest fall through to the mock so the
 // app stays usable while integration proceeds. Replace fallbacks method by method.
 import { MockApi } from "./mock";
-import type { AuditEntry, BuildRun, BuildStep, CatalogTable, ChecklistItem, DqColumnIssue, DriftIssue, GlossaryTerm, MappingKpis, OntoDiff, TableProfile, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, RefreshChange, SnapshotTable, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus } from "./types";
+import type { AiProgress, AuditEntry, BuildRun, BuildStep, CatalogTable, ChecklistItem, DqColumnIssue, DriftIssue, GlossaryTerm, MappingKpis, OntoDiff, TableProfile, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, RefreshChange, SnapshotTable, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus } from "./types";
 import { tableName } from "./types";
 import { humanAction, relTime } from "./format";
 
@@ -10,7 +10,7 @@ export class ApiError extends Error {
   constructor(public status: number, public detail: string) { super(detail); }
 }
 
-export interface RestOptions { base?: string; actor?: string; token?: string }
+export interface RestOptions { base?: string; actor?: string; token?: string; pollMs?: number }
 
 interface BackendVersion { id: string; version: number; status: VersionStatus; has_ontology: boolean; has_mapping: boolean; rule_count: number; constraint_count: number; created_at?: string; updated_at?: string; editor?: string | null; lease_expires_at?: string | null }
 interface BackendStats { classes: number; attributes: number; relationships: number; bindings: number; rules: number; constraints: number; triples: number }
@@ -258,12 +258,26 @@ export class RestApi extends MockApi {
     const entry = spec.classes.find(c => c.class_iri === iri); if (!entry) throw new Error(`${cls} is not mapped to a table yet`);
     return { spec, entry, names };
   }
-  override async draftOntology(domain: string, version: number, opts: { ai: boolean; description?: string; tables?: string[] }): Promise<{ classes: number; properties: number; warnings: number }> {
+  /** Starts a long AI task in the background and polls its job, relaying each status, until it settles. */
+  private async aiJob<T>(path: string, body: unknown, onProgress?: (p: AiProgress) => void): Promise<T> {
+    type Job = { id: string; status: "running" | "succeeded" | "failed"; progress: string | null; started_at: string | null; progress_at: string | null; result: T | null; error: string | null };
+    let job = await this.req<Job>("POST", `${path}?background=true`, body);
+    let last = "";
+    const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
+    while (job.status === "running") {
+      await wait(this.ropts.pollMs ?? 2000);
+      job = await this.req<Job>("GET", `/jobs/${job.id}`);
+      if (job.status === "running" && job.progress && job.progress !== last) { last = job.progress; onProgress?.({ progress: job.progress, startedAt: job.started_at, progressAt: job.progress_at, status: "running" }); }
+    }
+    if (job.status === "failed") throw new Error(job.error ?? "The AI task failed");
+    return job.result as T;
+  }
+  override async draftOntology(domain: string, version: number, opts: { ai: boolean; description?: string; tables?: string[] }, onProgress?: (p: AiProgress) => void): Promise<{ classes: number; properties: number; warnings: number }> {
     const d = await this.domain(domain); const vid = this.vid(domain, version);
     const ontology_iri = `${d.base_iri.replace(/\/$/, "")}/ontology`;
     const tables = opts.tables ?? (await this.snapshot(domain, version)).map(t => t.table);
     if (opts.ai) {
-      const r = await this.req<{ classes: number; properties: number; issues: { severity: string }[] }>("POST", `/versions/${vid}/llm/draft-ontology`, { ontology_iri, description: opts.description ?? "", tables });
+      const r = await this.aiJob<{ classes: number; properties: number; issues: { severity: string }[] }>(`/versions/${vid}/llm/draft-ontology`, { ontology_iri, description: opts.description ?? "", tables }, onProgress);
       return { classes: r.classes, properties: r.properties, warnings: (r.issues ?? []).filter(i => i.severity === "warning").length };
     }
     const r = await this.req<{ classes: number; properties: number }>("POST", `/versions/${vid}/autodraft`, { ontology_iri, tables, infer_keys: true });
@@ -315,8 +329,8 @@ export class RestApi extends MockApi {
   override async excludeUnmapped(domain: string, version: number): Promise<void> { await this.req("POST", `/versions/${this.vid(domain, version)}/mapping/exclude-unmapped`); }
   override async drift(domain: string, version: number): Promise<DriftIssue[]> { return this.req<DriftIssue[]>("GET", `/versions/${this.vid(domain, version)}/mapping/drift`); }
   override async r2rml(domain: string, version: number): Promise<string> { return this.req<string>("GET", `/versions/${this.vid(domain, version)}/mapping/r2rml`, undefined, true); }
-  override async suggestMapping(domain: string, version: number): Promise<{ classes: number; relations: number }> {
-    const r = await this.req<{ classes: number; relations: number }>("POST", `/versions/${this.vid(domain, version)}/llm/suggest-mapping`, {});
+  override async suggestMapping(domain: string, version: number, onProgress?: (p: AiProgress) => void): Promise<{ classes: number; relations: number }> {
+    const r = await this.aiJob<{ classes: number; relations: number }>(`/versions/${this.vid(domain, version)}/llm/suggest-mapping`, {}, onProgress);
     return { classes: r.classes, relations: r.relations };
   }
   override async tablePreview(domain: string, cls: string, version?: number): Promise<TablePreview> {
