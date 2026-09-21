@@ -281,8 +281,18 @@ def create_domain(body: DomainIn, request: Request, me: Principal = Depends(buil
 def _source_facts(st, d: Domain) -> dict:
     """Where a domain's tables come from: its own connection, else the deployment's env source."""
     settings = st.settings
-    if d.connection_id:
-        c = st.connections.get(str(d.connection_id))
+
+    def lookup(connection_id) -> dict | None:
+        """A referenced connection, or None when the current backend does not know it (e.g. after switching backends)."""
+        if not connection_id:
+            return None
+        try:
+            return st.connections.get(str(connection_id))
+        except NotFound:
+            return None
+
+    c = lookup(d.connection_id)
+    if c:
         cfg = c["config"]
         facts = {"kind": c["kind"], "connection": c["name"], "connection_id": c["id"], "catalog": d.default_catalog or cfg.get("catalog"),
                  "schema": d.default_schema or cfg.get("schema"), "host": cfg.get("host") or cfg.get("endpoint"), "last_test": c.get("last_test")}
@@ -290,11 +300,15 @@ def _source_facts(st, d: Domain) -> dict:
         facts = {"kind": settings.source_kind, "connection": None, "connection_id": None,
                  "catalog": d.default_catalog or (settings.databricks_catalog if settings.source_kind == "databricks" else None),
                  "schema": d.default_schema or (settings.databricks_schema if settings.source_kind == "databricks" else None), "host": None, "last_test": None}
+        if d.connection_id:
+            facts["missing_connection_id"] = str(d.connection_id)
     facts.update({"auth_mode": settings.auth_mode, "auth_header": settings.auth_header, "materialization": d.materialization, "target_schema": d.target_schema,
                   "connections_backend": st.connections.source})
-    if d.ai_connection_id:
-        a = st.connections.get(str(d.ai_connection_id))
+    a = lookup(d.ai_connection_id)
+    if a:
         facts["ai"] = {"connection": a["name"], "kind": a["kind"], "deployment": a["config"].get("deployment")}
+    elif d.ai_connection_id:
+        facts["ai"] = None
     else:
         facts["ai"] = {"connection": None, "kind": settings.llm_provider, "deployment": settings.azure_openai_deployment if settings.llm_provider == "azure_openai" else settings.llm_model} if settings.llm_provider != "none" else None
     return facts

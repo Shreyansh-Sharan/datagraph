@@ -115,3 +115,16 @@ def test_domain_settings_and_cards(client):
     assert client.get("/domains/hr").json()["connection_id"] is None
     assert client.get("/domains/hr/source").json()["connection"] is None
     assert v["version"] == 1
+
+
+def test_source_facts_survive_a_connection_the_backend_no_longer_knows(client, db):
+    """Switching backends (local table -> hub) leaves old ids on domains; the screen must still render."""
+    client.post("/domains", json={"name": "hr", "description": "People", "base_iri": BASE})
+    conn = client.post("/connections", json={"name": "warehouse", "kind": "postgres", **pg_config()}).json()
+    client.put("/domains/hr", json={"connection_id": conn["id"], "ai_connection_id": conn["id"]})
+    with db.transaction() as cur:
+        cur.execute("DELETE FROM connections")          # gone without the API's detach, as after a backend switch
+    src = client.get("/domains/hr/source").json()
+    assert src["connection"] is None and src["kind"] == "postgres" and src["missing_connection_id"] == conn["id"]
+    assert src["ai"] is None or src["ai"]["connection"] is None
+    assert client.get("/domains/cards").json()[0]["source"]["connection"] is None
