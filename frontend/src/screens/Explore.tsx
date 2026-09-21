@@ -1,7 +1,7 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Button, Card, Dot, Glyph, Pill, Skeleton } from "@/components/ui";
 import { Icon } from "@/components/icons";
-import { Stage, StageTools, type StageEdge, type StageNode } from "@/components/Stage";
+import { Stage, type StageEdge, type StageNode } from "@/components/Stage";
 import { useApp, useLoad } from "@/state/app";
 import { useDomain, useParam } from "@/state/domain";
 
@@ -12,19 +12,18 @@ export function Explore() {
   const { api, say } = useApp();
   const { domain } = useDomain();
   const [q, setQ] = useParam("q", "");
-  const [entityId, setEntity] = useParam("entity", "C-10482");
+  const [entityParam, setEntity] = useParam("entity", "");
   const [depth, setDepth] = useState(1);
   const status = useLoad(() => api.graphStatus(domain.name), [domain.name]);
   const results = useLoad(() => api.search(domain.name, q), [domain.name, q]);
-  const ent = useLoad(() => api.entity(domain.name, entityId), [domain.name, entityId]);
+  const entityId = entityParam || results.data?.[0]?.id || "";   // nothing chosen yet: start from the first match
+  const ent = useLoad(() => entityId ? api.entity(domain.name, entityId) : Promise.resolve(null), [domain.name, entityId]);
 
-  // Deterministic backdrop sample (the real stage samples server-side via /graph/overview).
-  const backdrop = useMemo(() => { let seed = 7; const rnd = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; }; const pts = Array.from({ length: 130 }, () => ({ x: 4 + rnd() * 92, y: 5 + rnd() * 90, r: 1.5 + rnd() * 2.5 })); const es = Array.from({ length: 45 }, () => { const a = pts[Math.floor(rnd() * 130)], b = pts[Math.floor(rnd() * 130)]; return { a, b }; }); return { pts, es }; }, []);
 
   const e = ent.data;
   const neigh = e ? [...e.out.flatMap(o => o.targets.map(t => ({ p: o.pred, t, far: false }))), ...e.inc.flatMap(o => o.targets.map(t => ({ p: o.pred, t, far: false }))), ...(depth > 1 ? e.far.map(f => ({ p: f.pred, t: f.target, far: true })) : [])] : [];
   const placed = neigh.map((n, i) => { const ang = (i / Math.max(1, neigh.length)) * Math.PI * 2 - Math.PI / 2; const r = n.far ? 42 : 28; return { ...n, x: 50 + r * Math.cos(ang) * 1.15, y: 50 + r * Math.sin(ang) }; });
-  const nodes: StageNode[] = e ? [{ id: "__center", label: e.label, glyph: e.type[0], x: 50, y: 50, fill: BLUE, border: BLUE, selected: true, size: "lg" }, ...placed.map(n => ({ id: n.t.id, label: n.t.label.length > 26 ? n.t.label.slice(0, 24) + "…" : n.t.label, glyph: n.t.type[0] ?? "?", x: n.x, y: n.y, fill: TYPE_COLOR[n.t.type] ?? "#8FA1FF", border: "#D4DCFF", size: "sm" as const }))] : [];
+  const nodes: StageNode[] = e ? [{ id: "__center", label: e.label, glyph: e.type[0], x: 50, y: 50, fill: BLUE, border: BLUE, selected: true, size: "lg" }, ...placed.map(n => ({ id: n.t.id, label: n.t.label.length > 26 ? n.t.label.slice(0, 24) + "…" : n.t.label, glyph: (n.t.type || n.t.label || "?")[0].toUpperCase() ?? "?", x: n.x, y: n.y, fill: TYPE_COLOR[n.t.type] ?? "#8FA1FF", border: "#D4DCFF", size: "sm" as const }))] : [];
   const edges: StageEdge[] = placed.map(n => ({ from: "__center", to: n.t.id, label: n.p, color: "#8FA1FF", labelColor: "#5F5F60" }));
   const legend = [["Customer", BLUE], ["Sale", "#4D68FF"], ["Product", "#0F27A8"], ["Store", "#8FA1FF"], ["Brand", "#0A1C78"]];
 
@@ -44,14 +43,10 @@ export function Explore() {
         {results.data?.length === 0 && <span className="muted small">No entity matches “{q}”.</span>}
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 360px", gap: 20, alignItems: "start" }}>
-        <Stage nodes={nodes} edges={edges} height={560} onSelect={id => { if (id !== "__center") { setEntity(id); setDepth(1); } }}
-          tools={<><StageTools onAction={t => say(t)} /><select aria-label="Colour by" className="select" style={{ height: 28, fontSize: 11.5, color: "var(--muted)", borderColor: "var(--line)" }}><option>Colour by class</option><option>Colour by community</option></select></>}
+        <Stage nodes={nodes} edges={edges} height={560} layout="given" onSelect={id => { if (id !== "__center") { setEntity(id); setDepth(1); } }}
+          tools={<><select aria-label="Colour by" className="select" style={{ height: 28, fontSize: 11.5, color: "var(--muted)", borderColor: "var(--line)" }}><option>Colour by class</option><option>Colour by community</option></select></>}
           legend={legend.map(([l, c]) => <span key={l}><Dot color={c} size={9} />{l}</span>)}
-          status={`1,500 sampled nodes · ${nodes.length} lit`}>
-          <svg className="wires" aria-hidden="true">
-            {backdrop.es.map((be, i) => <line key={i} x1={`${be.a.x}%`} y1={`${be.a.y}%`} x2={`${be.b.x}%`} y2={`${be.b.y}%`} style={{ stroke: "#E8E8EA", strokeWidth: 1 }} />)}
-            {backdrop.pts.map((p, i) => <circle key={`c${i}`} cx={`${p.x}%`} cy={`${p.y}%`} r={p.r} style={{ fill: "#CFCFD2" }} />)}
-          </svg>
+          status={e ? `${nodes.length - 1} neighbour${nodes.length === 2 ? "" : "s"} of ${e.label}` : "Pick an entity to see its neighbourhood"}>
         </Stage>
         <Card style={{ maxHeight: 560, overflow: "auto" }}>
           {ent.loading && !e && <><Skeleton h={30} w={200} /><Skeleton h={14} style={{ marginTop: 10 }} /><Skeleton h={14} /></>}

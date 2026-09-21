@@ -11,7 +11,9 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@dagrejs/dagre": "^1.1.8",
     "@polestar/connections": "^0.2.0-main.24654",
+    "@xyflow/react": "^12.11.6",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.28.0"

@@ -419,8 +419,9 @@ export class RestApi extends MockApi {
       inc: group(e.incoming, x => x.source).map(([pred, ts]) => ({ pred: local(pred), count: `${ts.length}`, targets: ts.slice(0, 20).map(t => ({ id: t, label: local(t), type: "" })) })), far: [] };
   }
   override async graphStatus(domain: string): Promise<GraphStatus> {
-    const s = await this.req<{ triples: number; inferred: number; entities?: number }>("GET", `/versions/${await this.activeVid(domain)}/graph/status`);
-    return { triples: s.triples.toLocaleString(), inferred: s.inferred.toLocaleString(), entities: (s.entities ?? 0).toLocaleString() };
+    const s = await this.req<{ triples: number; inferred: number; types?: Record<string, number> }>("GET", `/versions/${await this.activeVid(domain)}/graph/status`);
+    const entities = Object.values(s.types ?? {}).reduce((a, b) => a + b, 0);   // one typed subject per entity
+    return { triples: s.triples.toLocaleString(), inferred: s.inferred.toLocaleString(), entities: entities.toLocaleString() };
   }
   override async triples(domain: string, q: TripleQuery): Promise<TriplePage> {
     const inferred = q.filter === "all" ? "" : `&inferred=${q.filter === "inferred"}`;

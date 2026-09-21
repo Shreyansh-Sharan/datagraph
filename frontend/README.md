@@ -65,7 +65,7 @@ src/
   api/        types.ts (the port + shared model), mock.ts (design data, live builds), rest.ts (backend mapping, falls back to mock per method), index.ts (adapter selection)
   state/      app.tsx (config, identity, toast, useLoad), domain.tsx (domain/version context, useGo/useParam navigation)
   layout/     Shell.tsx (top bar with pipeline crumbs + source chip, side nav with version picker)
-  components/ ui.tsx (buttons, cards, pills, tabs, dialog, toast, skeletons), icons.tsx, Stage.tsx (node-link map)
+  components/ ui.tsx (buttons, cards, pills, tabs, dialog, toast, skeletons), icons.tsx, Stage.tsx (node-link map on React Flow + dagre), lifecycle.tsx (version actions)
   screens/    Home (Ask + domain cards), Overview, Versions, Metadata, Ontology, Mapping, Rules, Quality, Build, Explore, Triples, Analytics, Settings, Tasks, Admin
   theme.css   design tokens and primitives
 ```
@@ -126,6 +126,16 @@ target column, unmap, exclude everything unmapped, check drift (re-reads every m
 the source, so it can take a while), export R2RML and ask the AI connection for suggestions. Local
 names are resolved to IRIs through the version's ontology; every change is one `PUT
 /versions/{id}/mapping`.
+
+### The graph views
+
+`Stage` draws every node-link map (Ontology, Mapping, Explore) with React Flow (`@xyflow/react`):
+pan, zoom, fit, a minimap past 15 nodes, and edges routed with labels. Positions come from dagre
+(`@dagrejs/dagre`): linked classes ranked top-to-bottom (left-to-right past 24 nodes, switchable),
+classes with no relationship packed in a grid underneath. Past 30 nodes the map opens in focus mode,
+showing the selected class and its neighbours (the ◎ tool shows everything); edge labels are shown
+for the selected class's edges when there are more than 40. Explore keeps its own star layout
+(`layout="given"`) around the chosen entity.
 
 ### The version mechanism
 

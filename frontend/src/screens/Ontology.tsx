@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button, Card, Dialog, Dot, ErrorNotice, Glyph, Label, Pill, Skeleton, Spinner, Tabs } from "@/components/ui";
 import type { AiProgress, SnapshotTable } from "@/api";
-import { Stage, StageTools, glyphOf, type StageEdge, type StageNode } from "@/components/Stage";
+import { Stage, glyphOf, type StageEdge, type StageNode } from "@/components/Stage";
 import { useApp, useLoad } from "@/state/app";
 import { useDomain, useGo, useParam } from "@/state/domain";
 
@@ -46,7 +46,6 @@ export function Ontology() {
       {view === "map" && sel && (
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 340px", gap: 20, alignItems: "start" }}>
           <Stage nodes={nodes} edges={edges} height={520} dotted onSelect={id => setCls(id)}
-            tools={<StageTools onAction={t => say(t)} />}
             legend={<><span><i style={{ width: 18, height: 2, background: "#8FA1FF" }} />relationship</span><span><i style={{ width: 18, height: 0, borderTop: "2px dashed #FF7000" }} />inheritance</span></>}
             status={`${list.length} nodes · ${edges.length} edges`} />
           <Card>

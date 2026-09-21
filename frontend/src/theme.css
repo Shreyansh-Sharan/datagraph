@@ -175,7 +175,8 @@ h1, h2, h3, p { margin: 0; }
 .stage-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .stage-tools { position: absolute; right: 12px; top: 12px; display: flex; gap: 4px; }
 .stage-tools button { width: 28px; height: 28px; border-radius: 6px; border: 1px solid var(--line); background: #fff; color: var(--muted); font: 600 13px var(--font); cursor: pointer; }
-.stage-tools button:hover { color: var(--blue); border-color: var(--blue); }
+.stage-tools button:hover, .stage-tools button.active { color: var(--blue); border-color: var(--blue); }
+.stage-tools button.active { background: var(--blue-soft); }
 .stage-status { position: absolute; right: 12px; bottom: 12px; font-size: 11px; color: var(--muted-2); background: #fff; padding: 4px 8px; border-radius: 5px; border: 1px solid var(--line); }
 
 /* Dialog and toast */
@@ -201,3 +202,15 @@ h1, h2, h3, p { margin: 0; }
 .chip-act { border: 0; background: transparent; color: var(--muted-2); width: 20px; height: 20px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; font-size: 14px; line-height: 1; }
 .chip-act:hover { background: var(--surface-3); color: var(--ink); }
 .source-row { padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; background: var(--surface-2); }
+
+/* Stage on React Flow */
+.stage .react-flow { height: 100%; }
+.stage .react-flow__node { cursor: pointer; }
+.react-flow__node .node { position: static; transform: none; }
+.stage-handle { opacity: 0; width: 1px; height: 1px; min-width: 0; min-height: 0; border: 0; pointer-events: none; }
+.stage-backdrop { position: absolute; inset: 0; pointer-events: none; }
+.stage-backdrop svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; }
+.stage-tools, .stage-legend, .stage-status { z-index: 5; }
+.stage .react-flow__minimap { border: 1px solid var(--line); border-radius: 6px; bottom: 44px; }
+.stage .react-flow__edge-textbg { fill: #fff; }
+.stage .react-flow__attribution { display: none; }
