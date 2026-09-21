@@ -285,6 +285,32 @@ class Registry:
             self._audit(cur, version_id, reviewer, "review.added", {"approved": approved})
             return Review(**rev)
 
+    def review_state(self, version_id: UUID) -> tuple[int, list[Review]]:
+        """The current review round and the reviews cast in it (earlier rounds no longer count)."""
+        with self._cur() as cur:
+            rnd = self._review_round(cur, version_id)
+            rows = cur.execute("SELECT * FROM reviews WHERE domain_version_id = %s AND review_round = %s ORDER BY id",
+                               (version_id, rnd))
+            return rnd, [Review(**r) for r in rows]
+
+    def version_creators(self, domain_id: UUID) -> dict[UUID, str | None]:
+        """version id -> who created (or imported) it, from the audit log."""
+        with self._cur() as cur:
+            rows = cur.execute(
+                "SELECT a.domain_version_id, a.actor FROM audit_log a JOIN domain_versions v ON v.id = a.domain_version_id "
+                "WHERE v.domain_id = %s AND a.action IN ('version.created', 'version.imported')", (domain_id,))
+            return {r["domain_version_id"]: r["actor"] for r in rows}
+
+    def delete_version(self, version_id: UUID, *, actor: str) -> None:
+        """Drop a draft that never went anywhere; respects another editor's live lease. Everything hanging off it cascades."""
+        with self._cur() as cur:
+            row = self._lock_version(cur, version_id)
+            if row["status"] != Status.DRAFT.value:
+                raise LifecycleError("Only draft versions can be deleted")
+            self._check_lease(row, actor)
+            cur.execute("DELETE FROM domain_versions WHERE id = %s", (version_id,))
+            self._audit(cur, None, actor, "version.deleted", {"domain": str(row["domain_id"]), "version": row["version"]})
+
     def list_reviews(self, version_id: UUID) -> list[Review]:
         with self._cur() as cur:
             return [Review(**r) for r in cur.execute(

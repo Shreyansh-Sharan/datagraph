@@ -139,3 +139,54 @@ def test_ontology_json_roundtrip_endpoint(client):
     again = client.get(f"/versions/{v['id']}/ontology").json()
     assert any(c["iri"] == EX + "Contractor" for c in again["classes"])
     assert client.put(f"/versions/{v['id']}/ontology/json", json={"iri": "x", "classes": [{"iri": EX + "A", "restrictions": [{"property": EX + "p", "kind": "weird", "value": 1}]}]}).status_code == 400
+
+
+# -- version summary + draft deletion (what the Versions screen renders) --------------
+
+def test_versions_summary_folds_stats_review_lease_and_build(client):
+    d = make_domain(client)
+    v = make_draft(client, d)
+    client.post(f"/versions/{v['id']}/lease", json={"ttl_seconds": 600})
+    rows = client.get("/domains/hr/versions/summary").json()
+    assert len(rows) == 1 and rows[0]["id"] == v["id"] and rows[0]["version"] == 1
+    s = rows[0]
+    assert s["stats"]["classes"] == 3 and s["stats"]["attributes"] >= 3 and s["stats"]["relationships"] >= 1
+    assert 0 < s["mapping"]["completion"] <= 1 and s["mapping"]["classes_mapped"] >= 2 and s["stats"]["bindings"] > s["mapping"]["classes_mapped"]
+    assert s["lease"] == {"holder": "alice", "expires_at": s["lease"]["expires_at"], "expired": False}
+    assert s["last_build"] is None and s["stats"]["triples"] == 0 and s["is_active"] is False
+    assert s["review"] is None
+    client.post(f"/versions/{v['id']}/builds", params={"wait": "true"})
+    client.post(f"/versions/{v['id']}/transition", json={"to": "in_review"})
+    client.post(f"/versions/{v['id']}/reviews", json={"approved": False, "comment": "rename"}, headers={"X-Actor": "bob"})
+    s = client.get("/domains/hr/versions/summary").json()[0]
+    assert s["last_build"]["status"] == "succeeded" and s["stats"]["triples"] == s["last_build"]["triple_count"] > 0
+    assert s["review"] == {"quorum": 1, "round": 1, "approved": 0, "rejected": 1,
+                           "rows": [{"reviewer": "bob", "approved": False, "comment": "rename", "at": s["review"]["rows"][0]["at"]}]}
+    assert s["lease"] is None      # entering review drops the edit lease
+    # a second round starts from zero
+    client.post(f"/versions/{v['id']}/transition", json={"to": "draft"})
+    client.post(f"/versions/{v['id']}/transition", json={"to": "in_review"})
+    s = client.get("/domains/hr/versions/summary").json()[0]
+    assert s["review"]["round"] == 2 and s["review"]["rows"] == [] and s["review"]["rejected"] == 0
+
+
+def test_versions_summary_without_content(client):
+    make_domain(client)
+    v = client.post("/domains/hr/versions").json()
+    s = client.get("/domains/hr/versions/summary").json()[0]
+    assert s["id"] == v["id"] and s["stats"] == {"classes": 0, "attributes": 0, "relationships": 0, "bindings": 0, "rules": 0, "constraints": 0, "triples": 0}
+    assert s["mapping"] is None and s["has_ontology"] is False
+
+
+def test_delete_draft_version(client):
+    d = make_domain(client)
+    v = make_draft(client, d)
+    client.post(f"/versions/{v['id']}/transition", json={"to": "in_review"})
+    assert client.delete(f"/versions/{v['id']}").status_code == 409          # only drafts
+    client.post(f"/versions/{v['id']}/transition", json={"to": "draft"})
+    client.post(f"/versions/{v['id']}/lease", json={"ttl_seconds": 600})
+    assert client.delete(f"/versions/{v['id']}", headers={"X-Actor": "bob"}).status_code == 423   # lease respected
+    assert client.delete(f"/versions/{v['id']}").status_code == 204
+    assert client.get(f"/versions/{v['id']}").status_code == 404
+    assert client.get("/domains/hr/versions/summary").json() == []
+    assert client.delete(f"/versions/{v['id']}").status_code == 404

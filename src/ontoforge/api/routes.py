@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import re
 from uuid import UUID
 
@@ -34,6 +34,10 @@ open_router = APIRouter()                                # /health only
 
 def _st(request: Request):
     return request.app.state
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _version_json(v: DomainVersion) -> dict:
@@ -385,6 +389,46 @@ def list_versions(name: str, request: Request):
     return [_version_json(v) for v in reg.list_versions(reg.get_domain(name).id)]
 
 
+@router.get("/domains/{name}/versions/summary")
+def versions_summary(name: str, request: Request):
+    """Everything the Versions screen shows per version, in one call: content stats, mapping completion,
+    the last build and served triples, the current review round and the edit lease."""
+    st = _st(request)
+    reg = st.registry
+    d = reg.get_domain(name)
+    creators = reg.version_creators(d.id)
+    out = []
+    for v in reg.list_versions(d.id):
+        j = _version_json(v)
+        onto = Ontology.from_turtle(v.ontology_ttl) if v.ontology_ttl else None
+        status = mapping_status(onto, MappingSpec.from_dict(v.mapping) if v.mapping else MappingSpec(base_iri="")) if onto else None
+        sm = status.summary if status else {}
+        build = reg.latest_build(v.id)
+        rnd, reviews = reg.review_state(v.id) if v.status in (Status.IN_REVIEW, Status.PUBLISHED) else (0, [])
+        lease = None
+        if v.status is Status.DRAFT and v.editor:
+            lease = {"holder": v.editor, "expires_at": v.lease_expires_at,
+                     "expired": bool(v.lease_expires_at and v.lease_expires_at <= _now())}
+        j.update({
+            "created_by": creators.get(v.id), "is_active": d.active_version_id == v.id,
+            "stats": {"classes": len(onto.classes) if onto else 0, "attributes": len(onto.datatype_properties) if onto else 0,
+                      "relationships": len(onto.object_properties) if onto else 0,
+                      "bindings": sm.get("mapped_classes", 0) + sm.get("mapped_attributes", 0) + sm.get("mapped_relations", 0),
+                      "rules": j["rule_count"], "constraints": j["constraint_count"], "triples": st.store.count(v.id)},
+            "mapping": {"completion": status.completion, "classes_mapped": sm["mapped_classes"], "classes": sm["classes"],
+                        "complete_classes": sm["complete_classes"]} if status else None,
+            "last_build": {"id": build.id, "status": build.status, "started_at": build.started_at, "finished_at": build.finished_at,
+                           "triple_count": build.triple_count, "error": build.error} if build else None,
+            "review": {"quorum": d.review_quorum, "round": rnd,
+                       "approved": len({r.reviewer for r in reviews if r.approved}),
+                       "rejected": len({r.reviewer for r in reviews if not r.approved}),
+                       "rows": [{"reviewer": r.reviewer, "approved": r.approved, "comment": r.comment, "at": r.created_at} for r in reviews]} if rnd else None,
+            "lease": lease,
+        })
+        out.append(j)
+    return out
+
+
 @router.post("/domains/{name}/versions", status_code=201)
 def create_version(name: str, request: Request, me: Principal = Depends(builder)):
     reg = _st(request).registry
@@ -396,6 +440,12 @@ def create_version(name: str, request: Request, me: Principal = Depends(builder)
 @router.get("/versions/{version_id}")
 def get_version(version_id: UUID, request: Request):
     return _version_json(_st(request).registry.get_version(version_id))
+
+
+@router.delete("/versions/{version_id}", status_code=204)
+def delete_version(version_id: UUID, request: Request, me: Principal = Depends(builder)):
+    _st(request).registry.delete_version(version_id, actor=me.name)
+    return Response(status_code=204)
 
 
 @router.put("/versions/{version_id}/ontology")
