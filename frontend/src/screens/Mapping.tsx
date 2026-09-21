@@ -104,7 +104,7 @@ export function Mapping() {
       <div className="bar" style={{ marginBottom: 20 }}><i style={{ width: `${k?.completion ?? 0}%` }} /></div>
       {classes.error && <ErrorNotice error={classes.error} action={<span className="small">Draft the ontology first: the mapping binds its classes to tables.</span>} />}
       {classes.loading ? <Skeleton h={400} /> : list.length > 0 && (
-        <Stage nodes={nodes} edges={edges} height={520} dotted groups={groups} onSelect={id => setCls(id)} onExpand={id => { setCls(id); setPanel("status"); }} />
+        <Stage nodes={nodes} edges={edges} height={520} dotted groups={groups} spotlight={!!clsId} onSelect={id => setCls(id)} onExpand={id => { setCls(id); setPanel("status"); }} />
       )}
       {sel && (
         <Card flush style={{ marginTop: 16 }}>

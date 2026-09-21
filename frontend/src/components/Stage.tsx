@@ -142,7 +142,7 @@ function Tools({ extra, onRelayout, layoutName, focus, nodes, onFind }: { extra?
 
 const LAYOUTS: { layout: StageLayout; direction: Direction; name: string }[] = [{ layout: "force", direction: "TB", name: "force" }, { layout: "dagre", direction: "TB", name: "ranked, top to bottom" }, { layout: "dagre", direction: "LR", name: "ranked, left to right" }];
 
-function StageInner({ nodes: givenNodes, edges: givenEdges, height, dotted, onSelect, onExpand, legend, groups, tools, status, children, layout: fixedLayout }: StageProps) {
+function StageInner({ nodes: givenNodes, edges: givenEdges, height, dotted, onSelect, onExpand, legend, groups, tools, status, children, layout: fixedLayout, spotlight = true }: StageProps) {
   const [step, setStep] = useState(0);
   const chosen = fixedLayout === "given" ? { layout: "given" as const, direction: "TB" as const, name: "given" } : LAYOUTS[step % LAYOUTS.length];
   const [focused, setFocused] = useState(false);
@@ -153,6 +153,7 @@ function StageInner({ nodes: givenNodes, edges: givenEdges, height, dotted, onSe
   const allIds = useMemo(() => new Set(allNodes.map(n => n.id)), [allNodes]);
   const allEdges = useMemo(() => givenEdges.filter(e => allIds.has(e.from) && allIds.has(e.to)), [givenEdges, allIds]);
   const selectedId = allNodes.find(n => n.selected)?.id;
+  const spotId = spotlight ? selectedId : undefined;   // a preselected node does not dim the overview; a clicked one does
   const neighbours = useMemo(() => { const s = new Set<string>(); if (selectedId === undefined) return s; s.add(selectedId); for (const e of allEdges) { if (e.from === selectedId) s.add(e.to); if (e.to === selectedId) s.add(e.from); } return s; }, [allEdges, selectedId]);
   const hasNeighbours = neighbours.size > 1;
   const focusOn = focused && chosen.layout !== "given" && selectedId !== undefined && hasNeighbours;
@@ -163,19 +164,20 @@ function StageInner({ nodes: givenNodes, edges: givenEdges, height, dotted, onSe
   const positions = useMemo(() => layoutNodes(nodes, edges, chosen.layout, chosen.direction, height), [nodes, edges, chosen.layout, chosen.direction, height]);
   const nameCut = useMemo(() => { const rs = nodes.map(n => radiusFor(n, deg[n.id] ?? 0)).sort((a, b) => b - a); return nodes.length > 40 ? (rs[Math.floor(rs.length * 0.4)] ?? 0) : 0; }, [nodes, deg]);   // busy maps: names on the more connected 40 %
   const showAllLabels = edges.length <= 60;
-  const wanted = useMemo<Node<BubbleData>[]>(() => nodes.map(n => { const r = radiusFor(n, deg[n.id] ?? 0); const p = positions[n.id] ?? { x: 0, y: 0 }; const inSpot = selectedId === undefined || neighbours.has(n.id);
-    return { id: n.id, type: "bubble", position: { x: p.x - r, y: p.y - r }, data: { node: n, r, dim: !inSpot, showName: inSpot && (r >= nameCut || n.selected === true), onSelect, onExpand }, draggable: true, selectable: false }; }), [nodes, positions, onSelect, onExpand, deg, selectedId, neighbours, nameCut]);
+  const wanted = useMemo<Node<BubbleData>[]>(() => nodes.map(n => { const r = radiusFor(n, deg[n.id] ?? 0); const p = positions[n.id] ?? { x: 0, y: 0 }; const inSpot = spotId === undefined || neighbours.has(n.id);
+    return { id: n.id, type: "bubble", position: { x: p.x - r, y: p.y - r }, data: { node: n, r, dim: !inSpot, showName: inSpot && (r >= nameCut || n.selected === true), onSelect, onExpand }, draggable: true, selectable: false }; }), [nodes, positions, onSelect, onExpand, deg, spotId, neighbours, nameCut]);
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState<Node<BubbleData>>(wanted);
   useEffect(() => { setRfNodes(prev => { const m = new Map(prev.map(n => [n.id, n])); return wanted.map(n => ({ ...n, measured: m.get(n.id)?.measured })); }); }, [wanted, setRfNodes]);
   const ids = useMemo(() => new Set(nodes.map(n => n.id)), [nodes]);
   const wantedEdges = useMemo<Edge[]>(() => edges.filter(e => ids.has(e.from) && ids.has(e.to)).map((e, i) => {
     const hot = selectedId !== undefined && (e.from === selectedId || e.to === selectedId);
+    const dimmed = spotId !== undefined && !hot;
     const color = e.color ?? "#A5ABB6";
     return { id: `e${i}-${e.from}-${e.to}`, source: e.from, target: e.to, type: "floating", label: showAllLabels || hot ? e.label : undefined,
       markerEnd: { type: MarkerType.ArrowClosed, color, width: 14, height: 14 },
-      style: { stroke: color, strokeWidth: hot ? Math.max(2, e.width ?? 1.5) : e.width ?? 1.5, strokeDasharray: e.dashed ? "5 4" : undefined, opacity: selectedId && !hot ? 0.25 : 1 },
+      style: { stroke: color, strokeWidth: hot ? Math.max(2, e.width ?? 1.5) : e.width ?? 1.5, strokeDasharray: e.dashed ? "5 4" : undefined, opacity: dimmed ? 0.3 : 1 },
       labelStyle: { fontSize: 10.5, fontWeight: 600, fill: e.labelColor ?? "#5F5F60" }, labelBgStyle: { fill: "#fff" } };
-  }), [edges, ids, selectedId, showAllLabels]);
+  }), [edges, ids, selectedId, spotId, showAllLabels]);
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<Edge>(wantedEdges);
   useEffect(() => { setRfEdges(wantedEdges); }, [wantedEdges, setRfEdges]);
   const relayout = useCallback(() => setStep(s => s + 1), []);
@@ -203,7 +205,7 @@ function StageInner({ nodes: givenNodes, edges: givenEdges, height, dotted, onSe
   );
 }
 
-export interface StageProps { nodes: StageNode[]; edges: StageEdge[]; height: number; dotted?: boolean; onSelect?: (id: string) => void; onExpand?: (id: string) => void; legend?: ReactNode; groups?: StageGroup[]; tools?: ReactNode; status?: ReactNode; children?: ReactNode; layout?: StageLayout }
+export interface StageProps { nodes: StageNode[]; edges: StageEdge[]; height: number; dotted?: boolean; onSelect?: (id: string) => void; onExpand?: (id: string) => void; legend?: ReactNode; groups?: StageGroup[]; tools?: ReactNode; status?: ReactNode; children?: ReactNode; layout?: StageLayout; spotlight?: boolean }
 
 export function Stage(props: StageProps) {
   return <ReactFlowProvider><StageInner {...props} /></ReactFlowProvider>;

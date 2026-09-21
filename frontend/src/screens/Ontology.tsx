@@ -66,7 +66,7 @@ export function Ontology() {
       <DraftDialog mode={draft} existing={list.length} onClose={() => setDraft(null)} onDraft={async (opts, onProgress) => drafted(await api.draftOntology(domain.name, version!.version, opts, onProgress))} tables={() => api.snapshot(domain.name, version!.version)} />
       {view === "map" && sel && (
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 340px", gap: 20, alignItems: "start" }}>
-          <Stage nodes={nodes} edges={edges} height={640} dotted groups={groups} onSelect={id => setCls(id)} onExpand={id => { setCls(id); setView("map"); }}
+          <Stage nodes={nodes} edges={edges} height={640} dotted groups={groups} spotlight={!!clsId} onSelect={id => setCls(id)} onExpand={id => { setCls(id); setView("map"); }}
             legend={<><span><i style={{ width: 18, height: 2, background: "#8FA1FF" }} />relationship</span><span><i style={{ width: 18, height: 0, borderTop: "2px dashed #FF7000" }} />inheritance</span></>}
             />
           <Card>
