@@ -88,9 +88,10 @@ class MappingSuggester:
         self.provider = provider
 
     def suggest(self, ontology: Ontology, tables: list[TableMeta], base_iri: str) -> MappingSpec:
+        self.skipped: list[str] = []
         user = (f"Ontology:\n{_ontology_summary(ontology)}\n\nTables:\n{json.dumps(tables, indent=1, default=str)}")
         data = self.provider.complete_json(prompts.SUGGEST_MAPPING, user, MAPPING_SCHEMA)
-        return mapping_from_json(ontology, tables, base_iri, data)
+        return mapping_from_json(ontology, tables, base_iri, data, skipped=self.skipped)
 
 
 # -- JSON -> domain objects, with validation ---------------------------------------
@@ -118,10 +119,15 @@ def ontology_from_json(ontology_iri: str, data: dict) -> Ontology:
     return o
 
 
-def mapping_from_json(ontology: Ontology, tables: list[TableMeta], base_iri: str, data: dict) -> MappingSpec:
+def mapping_from_json(ontology: Ontology, tables: list[TableMeta], base_iri: str, data: dict, skipped: list[str] | None = None) -> MappingSpec:
+    """The model's answer as a spec. Entries naming a class, property, table or column that does not
+    exist are skipped and listed in ``skipped`` (one slip must not void sixty good bindings); only an
+    answer with nothing usable is an error."""
+    skipped = skipped if skipped is not None else []
     columns = {t["table"].lower(): {c["name"].lower(): c["name"] for c in t["columns"]} for t in tables}
-    table_names = {t["table"].lower(): t["table"] for t in tables}
-    classes_by_name = {ontology.local_name(iri).lower(): iri for iri in ontology.classes} | {iri.lower(): iri for iri in ontology.classes}
+    table_names = {t["table"].lower(): t["table"] for t in tables} | {t["table"].split(".")[-1].lower(): t["table"] for t in tables}
+    classes_by_name = {ontology.local_name(iri).lower(): iri for iri in ontology.classes} | {iri.lower(): iri for iri in ontology.classes} \
+        | {(c.label or "").lower(): iri for iri, c in ontology.classes.items() if c.label}
     props_by_name = {ontology.local_name(p.iri).lower(): p.iri for p in ontology.all_properties()} | \
                     {p.iri.lower(): p.iri for p in ontology.all_properties()}
 
@@ -150,21 +156,36 @@ def mapping_from_json(ontology: Ontology, tables: list[TableMeta], base_iri: str
 
     class_mappings = []
     for c in data.get("classes", []):
-        t = table(c["table"])
-        class_mappings.append(ClassMapping(
-            cls(c["class"]), table=t, key_columns=cols(t, c.get("key_columns"), "key"), iri_template=c.get("iri_template"),
-            attributes=tuple(AttributeBinding(prop(a["property"]), cols(t, [a["column"]], "attribute")[0]) for a in c.get("attributes", []))))
+        try:
+            t = table(c["table"])
+            class_iri = cls(c["class"])
+            keys = cols(t, c.get("key_columns"), "key")
+        except (LLMOutputError, KeyError) as exc:
+            skipped.append(f"class {c.get('class', '?')}: {exc}")
+            continue
+        attributes = []
+        for a in c.get("attributes", []):
+            try:
+                attributes.append(AttributeBinding(prop(a["property"]), cols(t, [a["column"]], "attribute")[0]))
+            except (LLMOutputError, KeyError) as exc:
+                skipped.append(f"{c['class']}.{a.get('property', '?')}: {exc}")
+        class_mappings.append(ClassMapping(class_iri, table=t, key_columns=keys, iri_template=c.get("iri_template"), attributes=tuple(attributes)))
+    if not class_mappings:
+        raise LLMOutputError("The suggestion contained nothing usable: " + ("; ".join(skipped[:3]) if skipped else "no classes"))
     by_class = {m.class_iri: m for m in class_mappings}
     relations = []
     for r in data.get("relations", []):
-        src, tgt = cls(r["source_class"]), cls(r["target_class"])
-        if src not in by_class or tgt not in by_class:
-            raise LLMOutputError(f"Relation {r['property']} references an unmapped class")
-        link = table(r["table"]) if r.get("table") else None
-        rel_table = link or by_class[src].table
-        relations.append(RelationMapping(prop(r["property"]), src, tgt,
-                                         source_key=cols(rel_table, r.get("source_key"), "source_key") or None,
-                                         target_key=cols(rel_table, r.get("target_key"), "target_key") or None, table=link))
+        try:
+            src, tgt = cls(r["source_class"]), cls(r["target_class"])
+            if src not in by_class or tgt not in by_class:
+                raise LLMOutputError("references an unmapped class")
+            link = table(r["table"]) if r.get("table") else None
+            rel_table = link or by_class[src].table
+            relations.append(RelationMapping(prop(r["property"]), src, tgt,
+                                             source_key=cols(rel_table, r.get("source_key"), "source_key") or None,
+                                             target_key=cols(rel_table, r.get("target_key"), "target_key") or None, table=link))
+        except (LLMOutputError, KeyError) as exc:
+            skipped.append(f"relation {r.get('property', '?')}: {exc}")
     spec = MappingSpec(base_iri=base_iri, classes=tuple(class_mappings), relations=tuple(relations))
     try:
         spec.to_r2rml()

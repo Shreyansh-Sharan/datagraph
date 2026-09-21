@@ -244,3 +244,25 @@ def test_a_failing_background_task_reports_its_error(db):
                 break
             time.sleep(0.05)
         assert job["status"] == "failed" and job["error"]
+
+
+def test_suggested_mapping_skips_unknown_names_instead_of_failing(db):
+    """A big ontology makes the model slip on a name now and then: keep what is valid, report the rest."""
+    from ontoforge.llm import mapping_from_json
+    onto = ontology()
+    tables = [{"table": "employees", "comment": None, "columns": [{"name": "empno", "type": "int"}, {"name": "ename", "type": "text"}], "primary_key": ["empno"], "foreign_keys": [], "samples": []},
+              {"table": "departments", "comment": None, "columns": [{"name": "deptno", "type": "int"}], "primary_key": ["deptno"], "foreign_keys": [], "samples": []}]
+    data = {"classes": [
+        {"class": "Employee", "table": "employees", "key_columns": ["empno"], "attributes": [{"property": "name", "column": "ename"}, {"property": "name", "column": "nope"}, {"property": "ghost", "column": "ename"}]},
+        {"class": "Unicorn", "table": "employees", "key_columns": ["empno"], "attributes": []},
+        {"class": "Department", "table": "no_such_table", "key_columns": ["deptno"], "attributes": []},
+    ], "relations": [{"property": "worksIn", "source_class": "Employee", "target_class": "Department", "source_key": ["deptno"], "target_key": ["deptno"]}]}
+    skipped: list[str] = []
+    spec = mapping_from_json(onto, tables, BASE, data, skipped=skipped)
+    assert [c.class_iri for c in spec.classes] == [EX + "Employee"]
+    assert [a.column for a in spec.classes[0].attributes] == ["ename"]
+    assert spec.relations == ()
+    assert len(skipped) == 5 and any("Unicorn" in s for s in skipped) and any("no_such_table" in s for s in skipped)
+    import pytest
+    with pytest.raises(LLMOutputError, match="nothing usable"):
+        mapping_from_json(onto, tables, BASE, {"classes": [{"class": "Unicorn", "table": "employees", "key_columns": ["empno"]}]})

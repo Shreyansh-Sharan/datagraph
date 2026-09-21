@@ -1238,9 +1238,12 @@ def llm_suggest_mapping(version_id: UUID, body: SuggestMappingIn, request: Reque
     def work(llm, report):
         tables = _tables(request, body.tables, body.schema_name, version_id, on_progress=_describe_progress(report))
         report(f"Asking the AI provider to map {len(onto.classes)} classes onto {len(tables)} table(s)")
-        spec = MappingSuggester(llm).suggest(onto, tables, domain.base_iri)
+        suggester = MappingSuggester(llm)
+        spec = suggester.suggest(onto, tables, domain.base_iri)
         st.registry.update_content(version_id, actor=me.name, mapping=spec.to_dict())
-        return {"classes": len(spec.classes), "relations": len(spec.relations), "mapping": spec.to_dict()}
+        if suggester.skipped:
+            report(f"Done · {len(suggester.skipped)} suggestion(s) named things the ontology or tables do not have and were skipped")
+        return {"classes": len(spec.classes), "relations": len(spec.relations), "skipped": suggester.skipped, "mapping": spec.to_dict()}
     return _run_ai(request, version_id, "suggest-mapping", background, response, me.name, work)
 
 
