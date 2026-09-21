@@ -1,4 +1,6 @@
-import { Button, Card, Dot, Glyph, Label, Pill, Skeleton, Tabs } from "@/components/ui";
+import { useState } from "react";
+import { Button, Card, Dialog, Dot, ErrorNotice, Glyph, Label, Pill, Skeleton, Spinner, Tabs } from "@/components/ui";
+import type { SnapshotTable } from "@/api";
 import { Stage, StageTools, glyphOf, type StageEdge, type StageNode } from "@/components/Stage";
 import { useApp, useLoad } from "@/state/app";
 import { useDomain, useGo, useParam } from "@/state/domain";
@@ -11,10 +13,12 @@ export function Ontology() {
   const { domain, version, editable } = useDomain();
   const go = useGo();
   const [view, setView] = useParam("view", "map");
-  const [clsId, setCls] = useParam("cls", "Customer");
-  const classes = useLoad(() => api.ontology(domain.name, version!.version), [domain.name, version?.version]);
-  const checks = useLoad(() => api.ontologyChecks(domain.name, version!.version), [domain.name, version?.version]);
+  const [clsId, setCls] = useParam("cls", "");
+  const classes = useLoad(() => api.ontology(domain.name, version!.version).catch(e => { if (/no ontology/i.test(String(e))) return []; throw e; }), [domain.name, version?.version]);
+  const checks = useLoad(() => api.ontologyChecks(domain.name, version!.version).catch(() => []), [domain.name, version?.version]);
+  const [draft, setDraft] = useState<"ai" | "tables" | null>(null);
   const list = classes.data ?? [];
+  const drafted = (r: { classes: number; properties: number; warnings: number }) => { classes.reload(); checks.reload(); setDraft(null); say(`Drafted ${r.classes} classes and ${r.properties} properties${r.warnings ? ` · ${r.warnings} warning${r.warnings === 1 ? "" : "s"} to review` : ""}`); };
   const sel = list.find(c => c.id === clsId) ?? list[0];
   const edges: StageEdge[] = list.flatMap(c => [
     ...c.parents.map(p => ({ from: c.id, to: p, label: "is a", color: ORANGE, dashed: true, labelColor: "#B84F00" })),
@@ -26,10 +30,19 @@ export function Ontology() {
     <>
       <div className="page-head">
         <div><h1>Ontology</h1><p>{list.length} classes, {edges.length} relationships. Click a class to edit it.</p></div>
-        <div className="actions"><Button onClick={() => say("Import an ontology file (Turtle, JSON-LD, RDF/XML)")}>Import</Button><Button onClick={() => say("Drafting with AI from the metadata snapshot…")}>Draft with AI</Button><Button variant="primary" onClick={() => say("Drafted from tables: keys inferred, icons assigned")}>Draft from tables</Button></div>
+        <div className="actions"><Button onClick={() => say("Import an ontology file (Turtle, JSON-LD, RDF/XML)")}>Import</Button><Button disabled={!editable} title={editable ? undefined : "Take the lease on a draft to change the ontology"} onClick={() => setDraft("ai")}>Draft with AI</Button><Button variant="primary" disabled={!editable} title={editable ? undefined : "Take the lease on a draft to change the ontology"} onClick={() => setDraft("tables")}>Draft from tables</Button></div>
       </div>
       <div style={{ marginBottom: 14 }}><Tabs<View> value={(view as View) || "map"} onChange={v => setView(v)} items={[{ id: "map", label: "Map" }, { id: "list", label: "Classes" }, { id: "checks", label: `Checks · ${checks.data?.length ?? 0}` }]} /></div>
       {classes.loading && <Skeleton h={520} />}
+      {classes.error && <ErrorNotice error={classes.error} />}
+      {!classes.loading && !classes.error && list.length === 0 && (
+        <Card className="dashed" style={{ textAlign: "center", padding: 32 }}>
+          <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 6 }}>No ontology yet</div>
+          <p className="muted" style={{ marginBottom: 14 }}>Draft it with the AI connection from the tables in the snapshot, or derive classes from the tables directly and refine them here.</p>
+          {editable && <div className="row" style={{ justifyContent: "center" }}><Button variant="primary" onClick={() => setDraft("ai")}>Draft with AI</Button><Button onClick={() => setDraft("tables")}>Draft from tables</Button></div>}
+        </Card>
+      )}
+      <DraftDialog mode={draft} existing={list.length} onClose={() => setDraft(null)} onDraft={async (opts) => drafted(await api.draftOntology(domain.name, version!.version, opts))} tables={() => api.snapshot(domain.name, version!.version)} />
       {view === "map" && sel && (
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 340px", gap: 20, alignItems: "start" }}>
           <Stage nodes={nodes} edges={edges} height={520} dotted onSelect={id => setCls(id)}
@@ -75,5 +88,32 @@ export function Ontology() {
         </Card>
       )}
     </>
+  );
+}
+
+
+/** Pick the snapshot tables (and, for AI, describe the domain) before replacing the draft's ontology. */
+function DraftDialog({ mode, existing, onClose, onDraft, tables }: { mode: "ai" | "tables" | null; existing: number; onClose: () => void; onDraft: (opts: { ai: boolean; description?: string; tables: string[] }) => Promise<void>; tables: () => Promise<SnapshotTable[]> }) {
+  const { say } = useApp();
+  const snap = useLoad(() => mode ? tables().catch(() => [] as SnapshotTable[]) : Promise.resolve(null), [mode]);
+  const [off, setOff] = useState<string[]>([]);
+  const [description, setDescription] = useState("");
+  const [busy, setBusy] = useState(false);
+  const all = snap.data ?? [];
+  const chosen = all.map(t => t.table).filter(t => !off.includes(t));
+  const run = async () => { setBusy(true); try { await onDraft({ ai: mode === "ai", description, tables: chosen }); setOff([]); } catch (e) { say(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); } };
+  return (
+    <Dialog title={mode === "ai" ? "Draft the ontology with AI" : "Draft the ontology from tables"} open={mode !== null} onClose={onClose} width={520}
+      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" disabled={busy || chosen.length === 0} onClick={run}>{busy && <Spinner />}Draft ontology</Button></>}>
+      {existing > 0 && <div className="notice" style={{ marginBottom: 12 }}><strong style={{ fontWeight: 700 }}>This replaces the current {existing} classes.</strong> The mapping keeps bindings whose classes still exist.</div>}
+      {mode === "ai" && <><Label>What this domain is about</Label><textarea className="textarea full" rows={2} aria-label="What this domain is about" placeholder="e.g. Customers, their orders and the products they buy" value={description} onChange={e => setDescription(e.target.value)} style={{ width: "100%", marginBottom: 12 }} /></>}
+      <Label>Tables from the snapshot</Label>
+      {snap.loading && <Skeleton h={60} />}
+      {snap.data && all.length === 0 && <p className="muted small">The snapshot is empty. Import tables on the Metadata screen first.</p>}
+      <div style={{ maxHeight: 220, overflowY: "auto" }}>
+        {all.map(t => <label key={t.table} className="row" style={{ gap: 8, padding: "5px 0", fontSize: 12.5 }}><input type="checkbox" checked={!off.includes(t.table)} onChange={e => setOff(o => (e.target.checked ? o.filter(x => x !== t.table) : [...o, t.table]))} /><span className="mono" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{t.table}</span><span className="muted-2 xs" style={{ marginLeft: "auto" }}>{t.columns} cols</span></label>)}
+      </div>
+      <div className="muted-2 xs" style={{ marginTop: 8 }}>{mode === "ai" ? "The AI connection reads the columns, keys and comments of these tables and proposes classes, attributes and relationships." : "One class per table, attributes from columns, relationships from foreign keys; keys are inferred where the catalog has none."}</div>
+    </Dialog>
   );
 }

@@ -177,7 +177,7 @@ export function Metadata() {
                 {cls && diffsLeft.length === 0 && <p className="muted row" style={{ fontSize: 12.5, marginTop: 10 }}><Dot color={BLUE} size={8} />Ontology is in sync with this table.</p>}
                 <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
                   <Button variant="primary" size="sm" style={{ height: 32 }} disabled={!!cls && diffsLeft.length === 0} onClick={() => { setApplied(a => [...a, ...diffsLeft.map(d => `${table}:${d.column}`)]); say(`Ontology updated from ${table} · ${diffsLeft.length} changes`); }}>Apply all to ontology</Button>
-                  <Button size="sm" style={{ height: 32 }} onClick={() => say(`Drafting ${cls ?? "a class"} from ${table} with AI…`)}>Draft with AI from this table</Button>
+                  <Button size="sm" style={{ height: 32 }} disabled={!editable} onClick={async () => { try { const r = await api.draftOntology(domain.name, version!.version, { ai: true, tables: [full] }); say(`Drafted ${r.classes} classes from ${table}`); go("ontology"); } catch (e) { say(e instanceof Error ? e.message : String(e)); } }}>Draft with AI from this table</Button>
                   <Button size="sm" style={{ height: 32 }} onClick={() => go("ontology", { cls: cls ?? "Customer", view: "map" })}>Open in Ontology</Button>
                 </div>
               </div>

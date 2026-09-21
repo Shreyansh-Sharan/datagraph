@@ -21,7 +21,8 @@ export class MockApi implements DatagraphApi {
   private nextRun = 0xb105;
   private conns: ConnectionRec[] = [];
   private snapshots: Record<string, Set<string>> = {};
-  private maps: Record<string, Record<string, ClassMapping>> = {};   // domain -> editable copy of the design mapping   // "domain:version" -> qualified table names imported on top of the design data
+  private maps: Record<string, Record<string, ClassMapping>> = {};
+  private ontos: Record<string, OntoClass[]> = {};   // domains created in this session start without an ontology   // domain -> editable copy of the design mapping   // "domain:version" -> qualified table names imported on top of the design data
   readonly kind: SourceKind;
   readonly role: Role;
   protected mockOpts: MockOptions;
@@ -256,7 +257,12 @@ export class MockApi implements DatagraphApi {
   async ontoDiffs(_domain: string, table: string): Promise<OntoDiff[]> { return clone(D.ONTO_DIFFS[table] || []); }
   async tableClass(_domain: string, table: string, _version?: number) { return D.TABLE_CLASS[table] || null; }
 
-  async ontology(_domain: string, _version: number): Promise<OntoClass[]> { return clone(D.CLASSES); }
+  async ontology(domain: string, _version: number): Promise<OntoClass[]> { return clone(this.ontos[domain] ?? (D.DOMAINS.some(d => d.name === domain) ? D.CLASSES : [])); }
+  async draftOntology(domain: string, _version: number, opts: { ai: boolean; description?: string; tables?: string[] }) {
+    await this.wait(null, this.mockOpts.latency ?? (opts.ai ? 800 : 200));
+    this.ontos[domain] = clone(D.CLASSES);
+    return { classes: D.CLASSES.length, properties: D.CLASSES.reduce((a, c) => a + c.attrs.length + c.rels.length, 0), warnings: opts.ai ? 1 : 0 };
+  }
   async ontologyChecks(_domain: string, _version: number): Promise<OntoCheck[]> { return clone(D.CHECKS); }
 
   private mapOf(domain: string): Record<string, ClassMapping> { return (this.maps[domain] ||= clone(D.MAP)); }

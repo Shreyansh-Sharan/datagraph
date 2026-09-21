@@ -173,6 +173,7 @@ export interface DatagraphApi {
   tableClass(domain: string, table: string, version?: number): Promise<string | null>;
 
   ontology(domain: string, version: number): Promise<OntoClass[]>;
+  draftOntology(domain: string, version: number, opts: { ai: boolean; description?: string; tables?: string[] }): Promise<{ classes: number; properties: number; warnings: number }>;   // replaces the draft's ontology: with the AI provider from the snapshot, or heuristically from the tables
   ontologyChecks(domain: string, version: number): Promise<OntoCheck[]>;
 
   mapping(domain: string, version: number): Promise<Record<string, ClassMapping>>;

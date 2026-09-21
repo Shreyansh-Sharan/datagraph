@@ -258,6 +258,17 @@ export class RestApi extends MockApi {
     const entry = spec.classes.find(c => c.class_iri === iri); if (!entry) throw new Error(`${cls} is not mapped to a table yet`);
     return { spec, entry, names };
   }
+  override async draftOntology(domain: string, version: number, opts: { ai: boolean; description?: string; tables?: string[] }): Promise<{ classes: number; properties: number; warnings: number }> {
+    const d = await this.domain(domain); const vid = this.vid(domain, version);
+    const ontology_iri = `${d.base_iri.replace(/\/$/, "")}/ontology`;
+    const tables = opts.tables ?? (await this.snapshot(domain, version)).map(t => t.table);
+    if (opts.ai) {
+      const r = await this.req<{ classes: number; properties: number; issues: { severity: string }[] }>("POST", `/versions/${vid}/llm/draft-ontology`, { ontology_iri, description: opts.description ?? "", tables });
+      return { classes: r.classes, properties: r.properties, warnings: (r.issues ?? []).filter(i => i.severity === "warning").length };
+    }
+    const r = await this.req<{ classes: number; properties: number }>("POST", `/versions/${vid}/autodraft`, { ontology_iri, tables, infer_keys: true });
+    return { classes: r.classes, properties: r.properties, warnings: 0 };
+  }
   override async mapping(domain: string, version: number): Promise<Record<string, ClassMapping>> {
     const [st, spec] = await Promise.all([this.req<{ classes: { class_iri: string; state: "complete" | "partial" | "unmapped" }[] }>("GET", `/versions/${this.vid(domain, version)}/mapping/status`).catch(() => ({ classes: [] })), this.spec(domain, version)]);
     const out: Record<string, ClassMapping> = {};
