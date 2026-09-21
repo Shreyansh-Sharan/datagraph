@@ -214,3 +214,12 @@ h1, h2, h3, p { margin: 0; }
 .stage .react-flow__minimap { border: 1px solid var(--line); border-radius: 6px; bottom: 44px; }
 .stage .react-flow__edge-textbg { fill: #fff; }
 .stage .react-flow__attribution { display: none; }
+
+/* Graph-browser style bubbles */
+.bubble { display: flex; align-items: center; justify-content: center; border-radius: 50%; border: 3px solid rgba(0,0,0,.12); color: #fff; font: 600 11px var(--font); text-shadow: 0 1px 1px rgba(0,0,0,.25); cursor: pointer; padding: 0 4px; position: relative; box-shadow: 0 1px 2px rgba(0,0,0,.12); transition: box-shadow .12s ease-out, border-color .12s ease-out; }
+.bubble:hover { box-shadow: 0 0 0 4px rgba(34,73,255,.18); }
+.bubble.selected { border-color: var(--blue); box-shadow: 0 0 0 5px rgba(34,73,255,.22); }
+.bubble .cap { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; line-height: 1.1; text-align: center; }
+.bubble .props { position: absolute; right: -4px; top: -4px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #fff; color: var(--ink-2); border: 1px solid var(--line); font-size: 10px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; text-shadow: none; }
+.stage-edge-label { position: absolute; font-size: 10.5px; font-weight: 600; padding: 1px 6px; border-radius: 4px; pointer-events: none; white-space: nowrap; background: #fff; }
+.react-flow__node .bubble { position: relative; transform: none; }

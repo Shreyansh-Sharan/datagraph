@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button, Card, Dialog, Dot, ErrorNotice, Glyph, Label, Pill, Skeleton, Spinner, Tabs } from "@/components/ui";
 import type { AiProgress, SnapshotTable } from "@/api";
-import { Stage, glyphOf, type StageEdge, type StageNode } from "@/components/Stage";
+import { Stage, colorFor, glyphOf, type StageEdge, type StageNode } from "@/components/Stage";
 import { useApp, useLoad } from "@/state/app";
 import { useDomain, useGo, useParam } from "@/state/domain";
 
@@ -38,7 +38,7 @@ export function Ontology() {
     ...c.parents.map(p => ({ from: c.id, to: p, label: "is a", color: ORANGE, dashed: true, labelColor: "#B84F00" })),
     ...c.rels.map(r => { const hot = sel && (c.id === sel.id || r.target === sel.id); return { from: c.id, to: r.target, label: r.name, color: hot ? BLUE : "#B9C4FF", width: hot ? 2 : 1.5, labelColor: hot ? DARK : "#7A7A80" }; }),
   ]);
-  const nodes: StageNode[] = list.map(c => ({ id: c.id, label: c.id, glyph: glyphOf(c.id), x: c.x, y: c.y, fill: c.id === sel?.id ? BLUE : "#8FA1FF", border: "#D4DCFF", selected: c.id === sel?.id, props: c.attrs.length + c.rels.length, title: c.iri }));
+  const nodes: StageNode[] = list.map(c => ({ id: c.id, label: c.id, glyph: glyphOf(c.id), x: c.x, y: c.y, fill: colorFor(c.id), border: c.id === sel?.id ? BLUE : undefined, selected: c.id === sel?.id, props: c.attrs.length + c.rels.length, title: c.iri }));
 
   return (
     <>
