@@ -142,7 +142,7 @@ export function Mapping() {
               </div>
               <div>
                 <h3 className="label-caps" style={{ margin: "12px 0 6px", fontSize: 12 }}>Relationships</h3>
-                {sel.rels.map(r => { const val = m.rels?.[r.name]; const ex = excluded.has(r.name); const targetTable = snapOf(M[r.target]?.fullName); return (
+                {sel.rels.map(r => { const val = m.rels?.[r.name]; const ex = excluded.has(r.name); return (
                   <div key={r.name} style={{ padding: "8px 0", borderTop: "1px solid var(--line-2)", fontSize: 12.5 }}>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr auto", alignItems: "center", gap: 12 }}>
                       <span style={{ color: ex ? "var(--muted-2)" : undefined }}>{r.name} <span className="muted">→ {r.target}</span>{ex && <span className="muted-2 xs"> · excluded</span>}</span>
@@ -151,8 +151,8 @@ export function Mapping() {
                     </div>
                     {relEdit === r.name && (
                       M[r.target]?.fullName
-                        ? <RelationForm rel={r.name} target={r.target} sourceColumns={columns} targetColumns={targetTable?.columnNames ?? []} onCancel={() => setRelEdit(null)}
-                            onSave={async (sk, tk) => { const ok = await edit("relation", () => api.mapRelation(domain.name, v, sel.id, r.name, [sk], [tk]), `${r.name}: ${sk} → ${r.target}.${tk}`); if (ok) setRelEdit(null); }} />
+                        ? <RelationForm rel={r.name} target={r.target} sourceKey={m.key} sourceColumns={columns} targetKey={M[r.target]?.key ?? ""} onCancel={() => setRelEdit(null)}
+                            onSave={async fk => { const ok = await edit("relation", () => api.mapRelation(domain.name, v, sel.id, r.name, [m.key], [fk]), `${r.name}: ${sel.id}.${fk} → ${r.target}`); if (ok) setRelEdit(null); }} />
                         : <p className="muted-2 xs" style={{ margin: "6px 0 0" }}>Map {r.target} to a table first; the relationship joins the two tables.</p>
                     )}
                   </div>); })}
@@ -222,15 +222,15 @@ function MapTableDialog({ open, cls, current, tables, onClose, onMap }: { open: 
   );
 }
 
-/** Join a relationship on a source column and a target column. */
-function RelationForm({ rel, target, sourceColumns, targetColumns, onCancel, onSave }: { rel: string; target: string; sourceColumns: string[]; targetColumns: string[]; onCancel: () => void; onSave: (sourceKey: string, targetKey: string) => Promise<void> }) {
-  const [sk, setSk] = useState(sourceColumns[0] ?? ""); const [tk, setTk] = useState(targetColumns[0] ?? "");
+/** A relationship reads a foreign key on the source class's table: pick the column that holds the target's key. */
+function RelationForm({ rel, target, sourceKey, sourceColumns, targetKey, onCancel, onSave }: { rel: string; target: string; sourceKey: string; sourceColumns: string[]; targetKey: string; onCancel: () => void; onSave: (fkColumn: string) => Promise<void> }) {
+  const guess = sourceColumns.find(c => c.toLowerCase() === targetKey.toLowerCase()) ?? sourceColumns.find(c => c.toLowerCase().includes(target.toLowerCase())) ?? sourceColumns[0] ?? "";
+  const [fk, setFk] = useState(guess);
   return (
-    <div className="row" style={{ gap: 6, marginTop: 6, flexWrap: "wrap" }}>
-      <select aria-label={`Source column for ${rel}`} className="select mono sm" value={sk} onChange={e => setSk(e.target.value)}>{sourceColumns.map(c => <option key={c} value={c}>{c}</option>)}</select>
-      <span className="muted xs">= {target}.</span>
-      <select aria-label={`Target column for ${rel}`} className="select mono sm" value={tk} onChange={e => setTk(e.target.value)}>{targetColumns.map(c => <option key={c} value={c}>{c}</option>)}</select>
-      <Button size="xs" variant="primary" disabled={!sk || !tk} onClick={() => onSave(sk, tk)}>Save</Button><Button size="xs" variant="ghost" onClick={onCancel}>Cancel</Button>
+    <div className="row" style={{ gap: 6, marginTop: 6, flexWrap: "wrap", fontSize: 12 }}>
+      <span className="muted xs">{rel}: row <span className="mono">{sourceKey}</span> → {target} whose <span className="mono">{targetKey || "key"}</span> is in column</span>
+      <select aria-label={`Column holding the ${target} key for ${rel}`} className="select mono sm" value={fk} onChange={e => setFk(e.target.value)}>{sourceColumns.map(c => <option key={c} value={c}>{c}</option>)}</select>
+      <Button size="xs" variant="primary" disabled={!fk} onClick={() => onSave(fk)}>Save</Button><Button size="xs" variant="ghost" onClick={onCancel}>Cancel</Button>
     </div>
   );
 }

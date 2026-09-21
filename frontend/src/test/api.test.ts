@@ -482,8 +482,8 @@ describe("mapping editor (rest)", () => {
     expect((puts.at(-1) as typeof spec).classes[1]).toMatchObject({ attributes: [] });
     await a.excludeProperty("aw", 1, "Order", "orderDate", true);
     expect((puts.at(-1) as typeof spec).classes[1]).toMatchObject({ excluded: [EX + "orderDate"] });
-    await a.mapRelation("aw", 1, "Order", "placedBy", ["customerid"], ["customerid"]);
-    expect((puts.at(-1) as typeof spec).relations).toEqual([{ property_iri: EX + "placedBy", source_class: EX + "Order", target_class: EX + "Customer", source_key: ["customerid"], target_key: ["customerid"], table: null, sql_query: null, direction: "forward" }]);
+    await a.mapRelation("aw", 1, "Order", "placedBy", ["salesorderid"], ["customerid"]);   // the order row, and the column holding the customer's key
+    expect((puts.at(-1) as typeof spec).relations).toEqual([{ property_iri: EX + "placedBy", source_class: EX + "Order", target_class: EX + "Customer", source_key: ["salesorderid"], target_key: ["customerid"], table: null, sql_query: null, direction: "forward" }]);
     await a.unmapClass("aw", 1, "Order");
     expect(calls).toContain(`DELETE /api/versions/${vid}/mapping/classes?class_iri=${encodeURIComponent(EX + "Order")}`);
     await a.excludeUnmapped("aw", 1);

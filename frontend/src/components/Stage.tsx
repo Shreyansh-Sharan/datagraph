@@ -163,7 +163,7 @@ function StageInner({ nodes: givenNodes, edges: givenEdges, height, dotted, onSe
     : { nodes: allNodes, edges: allEdges }, [allNodes, allEdges, focusOn, neighbours]);
   const deg = useMemo(() => degrees(nodes, edges), [nodes, edges]);
   const positions = useMemo(() => layoutNodes(nodes, edges, chosen.layout, chosen.direction, height), [nodes, edges, chosen.layout, chosen.direction, height]);
-  const nameCut = useMemo(() => { const rs = nodes.map(n => radiusFor(n, deg[n.id] ?? 0)).sort((a, b) => b - a); return nodes.length > 40 ? (rs[Math.floor(rs.length * 0.4)] ?? 0) : 0; }, [nodes, deg]);   // busy maps: names on the more connected 40 %
+  const nameCut = useMemo(() => { const rs = nodes.map(n => radiusFor(n, deg[n.id] ?? 0)).sort((a, b) => b - a); return nodes.length > 100 ? Math.max(26, rs[Math.floor(rs.length * 0.15)] ?? 0) : nodes.length > 40 ? (rs[Math.floor(rs.length * 0.4)] ?? 0) : 0; }, [nodes, deg]);   // busy maps: names only on the hubs
   const showAllLabels = edges.length <= 60;
   const wanted = useMemo<Node<BubbleData>[]>(() => nodes.map(n => { const r = radiusFor(n, deg[n.id] ?? 0); const p = positions[n.id] ?? { x: 0, y: 0 }; const inSpot = spotId === undefined || neighbours.has(n.id);
     return { id: n.id, type: "bubble", position: { x: p.x - r, y: p.y - r }, data: { node: n, r, dim: !inSpot, showName: inSpot && (r >= nameCut || n.selected === true), onSelect, onExpand }, draggable: true, selectable: false }; }), [nodes, positions, onSelect, onExpand, deg, spotId, neighbours, nameCut]);
