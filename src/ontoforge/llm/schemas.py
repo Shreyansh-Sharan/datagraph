@@ -63,3 +63,11 @@ INSIGHT_SCHEMA = {
     "required": ["key_findings", "notable_entities", "recommendations"],
     "additionalProperties": False,
 }
+
+RELATIONS_SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["relations"],
+    "properties": {"relations": {"type": "array", "items": {
+        "type": "object", "additionalProperties": False,
+        "required": ["property", "source_class", "column", "link_table", "link_source_column", "link_target_column"],
+        "properties": {"property": _S, "source_class": _S, "column": _NS, "link_table": _NS, "link_source_column": _NS, "link_target_column": _NS}}}},
+}

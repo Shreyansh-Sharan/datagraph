@@ -73,6 +73,11 @@ export function Mapping() {
     try { await edit("suggest", () => api.suggestMapping(domain.name, v, p => setAiStatus({ progress: p.progress, since: p.startedAt ? new Date(p.startedAt).getTime() : Date.now() })), r => { const x = r as { classes: number; relations: number; skipped: string[] }; setSkipped(x.skipped ?? []); return `AI suggested bindings for ${x.classes} class${x.classes === 1 ? "" : "es"} and ${x.relations} relationship${x.relations === 1 ? "" : "s"}${x.skipped?.length ? ` · ${x.skipped.length} skipped` : ""}`; }); }
     finally { setAiStatus(null); }
   };
+  const suggestRelations = async () => {
+    setAiStatus({ progress: "Starting", since: Date.now() }); setSkipped([]);
+    try { await edit("relations", () => api.suggestRelations(domain.name, v, p => setAiStatus({ progress: p.progress, since: p.startedAt ? new Date(p.startedAt).getTime() : Date.now() })), r => { const x = r as { added: number; declared: number; byName: number; ai: number; skipped: string[]; unmappable: string[] }; setSkipped([...x.skipped, ...x.unmappable.map(u => `not mappable yet: ${u}`)]); return `${x.added} relationship${x.added === 1 ? "" : "s"} mapped · ${x.declared} from declared keys, ${x.byName} by matching names, ${x.ai} by the AI`; }); }
+    finally { setAiStatus(null); }
+  };
   const elapsed = aiStatus ? Math.max(0, Math.round((Date.now() - aiStatus.since) / 1000)) : 0;
   void tick;
 
@@ -84,12 +89,13 @@ export function Mapping() {
           <Button onClick={showDrift} disabled={!!busy} title="Re-reads every mapped table from the source; can take a while on a large mapping">{busy === "drift" && <Spinner blue />}Drift</Button>
           <Button onClick={exportR2rml}>R2RML</Button>
           {editable && <Button disabled={!!busy} onClick={() => edit("exclude-unmapped", () => api.excludeUnmapped(domain.name, v), "Unmapped attributes and relationships excluded")}>Exclude unmapped</Button>}
+          {editable && <Button disabled={!!busy} title="Map the relationships still open: declared foreign keys, then columns named like the target's key, then the AI for the rest, one pair of tables at a time" onClick={suggestRelations}>{busy === "relations" && <Spinner blue />}Fill relationships</Button>}
           {editable && <Button variant="primary" disabled={!!busy} onClick={suggest}>{busy === "suggest" && <Spinner />}Suggest with AI</Button>}
         </div>
       </div>
       {aiStatus && (
         <div className="notice" role="status" aria-live="polite" style={{ marginBottom: 16 }}>
-          <div className="row" style={{ gap: 8, fontWeight: 600 }}><Spinner blue />Suggesting with AI · {aiStatus.progress} · {elapsed >= 60 ? `${Math.floor(elapsed / 60)} min ${elapsed % 60} s` : `${elapsed} s`}</div>
+          <div className="row" style={{ gap: 8, fontWeight: 600 }}><Spinner blue />{busy === "relations" ? "Filling relationships" : "Suggesting with AI"} · {aiStatus.progress} · {elapsed >= 60 ? `${Math.floor(elapsed / 60)} min ${elapsed % 60} s` : `${elapsed} s`}</div>
           <div className="muted xs" style={{ marginTop: 4 }}>The source is read table by table, then the whole ontology goes to the AI provider in one request; with dozens of tables that step alone takes minutes. The job runs on the server, so you can leave this screen and come back.</div>
         </div>
       )}

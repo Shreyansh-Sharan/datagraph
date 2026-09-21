@@ -12,7 +12,7 @@ from ontoforge.ontology import DatatypeProperty, ObjectProperty, OntoClass, Onto
 
 from . import prompts
 from .provider import LLMOutputError, LLMProvider
-from .schemas import MAPPING_SCHEMA, ONTOLOGY_SCHEMA
+from .schemas import RELATIONS_SCHEMA, MAPPING_SCHEMA, ONTOLOGY_SCHEMA
 
 TableMeta = dict
 
@@ -224,3 +224,115 @@ def _ontology_summary(o: Ontology) -> str:
             kind = "attribute" if isinstance(p, DatatypeProperty) else "relationship"
             lines.append(f"  {kind} {o.local_name(p.iri)} -> {o.local_name(p.range) if p.range else '?'}")
     return "\n".join(lines)
+
+
+class RelationSuggester:
+    """Fills the relationships a class mapping leaves open, cheapest evidence first: a foreign key the
+    catalog declares, then a source column named like the target's key, then the model, a dozen
+    relationships per call with only the two tables involved (never the whole catalog)."""
+
+    def __init__(self, provider: LLMProvider | None, batch: int = 12) -> None:
+        self.provider, self.batch = provider, batch
+        self.report: dict[str, list[str]] = {"declared": [], "by_name": [], "ai": [], "skipped": [], "unmappable": []}
+
+    def suggest(self, ontology: Ontology, spec: MappingSpec, tables: list[TableMeta], on_progress=None) -> MappingSpec:
+        self.report = {"declared": [], "by_name": [], "ai": [], "skipped": [], "unmappable": []}
+        local = ontology.local_name
+        by_class = {c.class_iri: c for c in spec.classes if c.table}
+        metas = {t["table"].lower(): t for t in tables} | {t["table"].split(".")[-1].lower(): t for t in tables}
+        meta_of = lambda table: metas.get(table.lower()) or metas.get(table.split(".")[-1].lower())
+        cols_of = lambda meta: {c["name"].lower(): c["name"] for c in meta["columns"]} if meta else {}
+        existing = {(r.property_iri, r.source_class) for r in spec.relations}
+        relations = list(spec.relations)
+
+        def compiles(rel: RelationMapping) -> str | None:
+            try:
+                MappingSpec(spec.base_iri, spec.classes, tuple(relations) + (rel,)).to_r2rml()
+                return None
+            except MappingSpecError as exc:
+                return str(exc)
+
+        def accept(rel: RelationMapping, bucket: str) -> bool:
+            err = compiles(rel)
+            if err:
+                self.report["skipped"].append(f"{local(rel.property_iri)}: {err}")
+                return False
+            relations.append(rel)
+            existing.add((rel.property_iri, rel.source_class))
+            self.report[bucket].append(local(rel.property_iri))
+            return True
+
+        # what is still open, and mappable in principle (both ends have a table)
+        open_rels: list[tuple[ObjectProperty, str, str]] = []
+        for p in ontology.object_properties.values():
+            for d in (p.domains or ((p.domain,) if p.domain else ())):
+                if not p.range or (p.iri, d) in existing:
+                    continue
+                if d in by_class and p.range in by_class:
+                    open_rels.append((p, d, p.range))
+                else:
+                    self.report["unmappable"].append(f"{local(p.iri)} ({'source' if d not in by_class else 'target'} class has no table)")
+        # 1. declared foreign keys, 2. a column named like the target's key
+        ask: list[tuple[ObjectProperty, str, str]] = []
+        for p, d, t in open_rels:
+            src, tgt = by_class[d], by_class[t]
+            src_meta, tgt_meta = meta_of(src.table), meta_of(tgt.table)
+            src_cols = cols_of(src_meta)
+            done = False
+            for fk in (src_meta or {}).get("foreign_keys") or []:
+                ref = str(fk.get("references") or "").split(".")[-1].lower()
+                if ref == tgt.table.split(".")[-1].lower() and len(fk.get("columns") or []) == len(tgt.key_columns):
+                    done = accept(RelationMapping(p.iri, d, t, source_key=src.key_columns, target_key=tuple(fk["columns"])), "declared")
+                    break
+            if not done and len(tgt.key_columns) == 1:
+                name = tgt.key_columns[0].lower()
+                if name in src_cols and not (d == t and src_cols[name] in src.key_columns):
+                    done = accept(RelationMapping(p.iri, d, t, source_key=src.key_columns, target_key=(src_cols[name],)), "by_name")
+            if not done:
+                ask.append((p, d, t))
+        # 3. the model, a few relationships at a time with only the tables they involve
+        if ask and self.provider is None:
+            self.report["unmappable"] += [f"{local(p.iri)} (needs the AI provider)" for p, _, _ in ask]
+            return MappingSpec(spec.base_iri, spec.classes, tuple(relations))
+        for i in range(0, len(ask), self.batch):
+            chunk = ask[i:i + self.batch]
+            if on_progress:
+                on_progress(f"Asking the AI provider about relationships {i + 1}-{min(i + self.batch, len(ask))} of {len(ask)}")
+            items, involved = [], {}
+            for p, d, t in chunk:
+                src, tgt = by_class[d], by_class[t]
+                for m in (meta_of(src.table), meta_of(tgt.table)):
+                    if m:
+                        involved[m["table"]] = {"table": m["table"], "columns": [c["name"] for c in m["columns"]], "primary_key": m.get("primary_key") or []}
+                items.append({"property": local(p.iri), "source_class": local(d), "source_table": src.table, "source_key": list(src.key_columns),
+                              "target_class": local(t), "target_table": tgt.table, "target_key": list(tgt.key_columns)})
+            link_candidates = [{"table": m["table"], "columns": [c["name"] for c in m["columns"]]} for m in tables if m["table"] not in involved][:40]
+            user = f"Relationships:\n{json.dumps(items, indent=1)}\n\nTables involved:\n{json.dumps(list(involved.values()), indent=1)}\n\nOther tables that could be link tables:\n{json.dumps(link_candidates, indent=1)}"
+            try:
+                data = self.provider.complete_json(prompts.SUGGEST_RELATIONS, user, RELATIONS_SCHEMA)
+            except LLMOutputError as exc:
+                self.report["skipped"] += [f"{local(p.iri)}: the AI provider gave no usable answer ({exc})" for p, _, _ in chunk]
+                continue
+            answers = {(a.get("property", ""), a.get("source_class", "")): a for a in data.get("relations", [])}
+            for p, d, t in chunk:
+                a = answers.get((local(p.iri), local(d)))
+                src, tgt = by_class[d], by_class[t]
+                if not a or not (a.get("column") or a.get("link_table")):
+                    self.report["unmappable"].append(f"{local(p.iri)} (no foreign key or link table found)")
+                    continue
+                if a.get("column"):
+                    src_cols = cols_of(meta_of(src.table))
+                    col = src_cols.get(str(a["column"]).lower())
+                    if not col:
+                        self.report["skipped"].append(f"{local(p.iri)}: unknown column {a['column']} in table {src.table}")
+                        continue
+                    accept(RelationMapping(p.iri, d, t, source_key=src.key_columns, target_key=(col,)), "ai")
+                    continue
+                link = meta_of(str(a["link_table"]))
+                lcols = cols_of(link)
+                sc, tc = lcols.get(str(a.get("link_source_column") or "").lower()), lcols.get(str(a.get("link_target_column") or "").lower())
+                if not link or not sc or not tc:
+                    self.report["skipped"].append(f"{local(p.iri)}: link table {a.get('link_table')} or its columns {a.get('link_source_column')}/{a.get('link_target_column')} do not exist")
+                    continue
+                accept(RelationMapping(p.iri, d, t, source_key=(sc,), target_key=(tc,), table=link["table"]), "ai")
+        return MappingSpec(spec.base_iri, spec.classes, tuple(relations))

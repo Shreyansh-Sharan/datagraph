@@ -194,7 +194,8 @@ export interface DatagraphApi {
   drift(domain: string, version: number): Promise<DriftIssue[]>;
   r2rml(domain: string, version: number): Promise<string>;
   suggestMapping(domain: string, version: number, onProgress?: (p: AiProgress) => void): Promise<{ classes: number; relations: number; skipped: string[] }>;   // skipped: suggestions naming things the ontology or tables do not have
-  runningAiJob(domain: string, version: number, kind: "suggest-mapping" | "draft-ontology", onProgress?: (p: AiProgress) => void): Promise<AiProgress | null>;   // a job started earlier (or from another tab): followed to its end, null when none is running
+  suggestRelations(domain: string, version: number, onProgress?: (p: AiProgress) => void): Promise<{ added: number; declared: number; byName: number; ai: number; skipped: string[]; unmappable: string[] }>;   // fills unmapped relationships: declared keys, matching names, then the AI per pair of tables
+  runningAiJob(domain: string, version: number, kind: "suggest-mapping" | "draft-ontology" | "suggest-relations", onProgress?: (p: AiProgress) => void): Promise<AiProgress | null>;   // a job started earlier (or from another tab): followed to its end, null when none is running
 
   rules(domain: string, version: number): Promise<Rule[]>;
   constraints(domain: string, version: number): Promise<Constraint[]>;

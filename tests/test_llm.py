@@ -292,3 +292,69 @@ def test_suggested_mapping_drops_only_the_uncompilable_parts(db):
     assert [c.class_iri for c in spec.classes] == [EX + "Employee", EX + "Department"]
     assert spec.relations == () and len(skipped) == 1 and "worksIn" in skipped[0] and "key" in skipped[0]
     spec.to_r2rml()   # what is left compiles
+
+
+def _rel_fixture():
+    from ontoforge.mapping import ClassMapping, MappingSpec
+    onto = ontology()
+    spec = MappingSpec(base_iri=BASE, classes=(
+        ClassMapping(EX + "Employee", table="employees", key_columns=("empno",)),
+        ClassMapping(EX + "Department", table="departments", key_columns=("deptno",))), relations=())
+    tables = [
+        {"table": "employees", "comment": None, "columns": [{"name": "empno", "type": "int"}, {"name": "ename", "type": "text"}, {"name": "deptno", "type": "int"}, {"name": "mgr", "type": "int"}],
+         "primary_key": ["empno"], "foreign_keys": [{"columns": ["deptno"], "references": "departments", "referenced_columns": ["deptno"]}], "samples": []},
+        {"table": "departments", "comment": None, "columns": [{"name": "deptno", "type": "int"}, {"name": "dname", "type": "text"}], "primary_key": ["deptno"], "foreign_keys": [], "samples": []},
+        {"table": "collaborations", "comment": None, "columns": [{"name": "emp_a", "type": "int"}, {"name": "emp_b", "type": "int"}], "primary_key": ["emp_a", "emp_b"], "foreign_keys": [], "samples": []},
+    ]
+    return onto, spec, tables
+
+
+def test_relations_are_filled_from_declared_keys_then_the_model_one_pair_of_tables_at_a_time():
+    from ontoforge.llm import RelationSuggester
+    onto, spec, tables = _rel_fixture()
+    answer = {"relations": [
+        {"property": "reportsTo", "source_class": "Employee", "column": "mgr", "link_table": None, "link_source_column": None, "link_target_column": None},
+        {"property": "manages", "source_class": "Employee", "column": "nope", "link_table": None, "link_source_column": None, "link_target_column": None},
+        {"property": "collaboratesWith", "source_class": "Employee", "column": None, "link_table": "collaborations", "link_source_column": "emp_a", "link_target_column": "emp_b"},
+    ]}
+    provider = FakeProvider([answer])
+    s = RelationSuggester(provider)
+    out = s.suggest(onto, spec, tables)
+    rels = {r.property_iri.split("#")[-1]: r for r in out.relations}
+    assert rels["worksIn"].target_key == ("deptno",) and rels["worksIn"].source_key == ("empno",)          # declared foreign key, no model needed
+    assert rels["reportsTo"].target_key == ("mgr",)                                                          # the model, from the two tables only
+    assert rels["collaboratesWith"].table == "collaborations" and rels["collaboratesWith"].source_key == ("emp_a",) and rels["collaboratesWith"].target_key == ("emp_b",)
+    assert "manages" not in rels and any("manages" in x and "nope" in x for x in s.report["skipped"])
+    assert s.report["declared"] == ["worksIn"] and set(s.report["ai"]) == {"reportsTo", "collaboratesWith"}
+    assert len(provider.calls) == 1 and "employees" in provider.calls[0][1] and "salespersonquota" not in provider.calls[0][1]
+    out.to_r2rml()
+    # a second run has nothing left to ask
+    s2 = RelationSuggester(FakeProvider([]))
+    again = s2.suggest(onto, out, tables)
+    assert len(again.relations) == len(out.relations) and s2.report["ai"] == []
+
+
+def test_relations_without_a_provider_use_declared_keys_and_names_only():
+    from ontoforge.llm import RelationSuggester
+    onto, spec, tables = _rel_fixture()
+    s = RelationSuggester(None)
+    out = s.suggest(onto, spec, tables)
+    assert [r.property_iri.split("#")[-1] for r in out.relations] == ["worksIn"]
+    assert {u.split(" ")[0] for u in s.report["unmappable"]} == {"reportsTo", "manages", "collaboratesWith"}   # need the model
+    # a self-relationship never uses the class's own key column as the foreign key
+    assert all(r.target_key != ("empno",) for r in out.relations)
+
+
+def test_api_fill_relations(db):
+    seed_tables(db)
+    app = create_app(db=db, settings=ADMIN, llm=FakeProvider([{"relations": []}]))
+    with TestClient(app, headers={"X-Actor": "alice"}) as c:
+        c.post("/domains", json={"name": "hr", "base_iri": BASE})
+        v = c.post("/domains/hr/versions").json()
+        from tests.hr_fixture import ontology as onto_fx, mapping as map_fx
+        c.put(f"/versions/{v['id']}/ontology", json={"turtle": onto_fx().to_turtle()})
+        c.put(f"/versions/{v['id']}/mapping", json=map_fx().to_dict())
+        r = c.post(f"/versions/{v['id']}/llm/suggest-relations", json={})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert set(body) >= {"added", "declared", "by_name", "ai", "skipped", "unmappable"}

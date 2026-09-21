@@ -19,7 +19,7 @@ from ontoforge.cohorts import Cohort, CohortError
 from ontoforge.compiler import compile_mapping
 from ontoforge.dialects import DIALECTS
 from ontoforge.graphql import build_schema
-from ontoforge.llm import LLMUnavailable, MappingSuggester, OntologyAssistant, OntologyDrafter, describe_tables, guarded_sampler
+from ontoforge.llm import LLMUnavailable, MappingSuggester, OntologyAssistant, OntologyDrafter, RelationSuggester, describe_tables, guarded_sampler
 from ontoforge.mapping import ClassMapping, MappingSpec, mapping_status
 from ontoforge.ontology import INDUSTRY_ONTOLOGIES, Ontology, merge_ontologies
 from ontoforge.r2rml import serialize_r2rml
@@ -1203,9 +1203,9 @@ def _describe_progress(report):
     return (lambda i, n, t: report(f"Describing table {i} of {n}: {t.split('.')[-1]}")) if report else None
 
 
-def _run_ai(request: Request, version_id: UUID, kind: str, background: bool, response: Response, actor: str, work):
+def _run_ai(request: Request, version_id: UUID, kind: str, background: bool, response: Response, actor: str, work, need_llm: bool = True):
     """Run an AI task now (the result) or in the background (202 + a job to poll)."""
-    llm = _llm(request)   # 503 before anything is queued
+    llm = _llm(request) if need_llm else _st(request).llm   # 503 before anything is queued, when the task cannot do without
     if not background:
         return work(llm, lambda _msg: None)
     job = _st(request).jobs.submit(kind, version_id, lambda report: work(llm, report), actor=actor)
@@ -1247,6 +1247,30 @@ def llm_suggest_mapping(version_id: UUID, body: SuggestMappingIn, request: Reque
             report(f"Done · {len(suggester.skipped)} suggestion(s) named things the ontology or tables do not have and were skipped")
         return {"classes": len(spec.classes), "relations": len(spec.relations), "skipped": suggester.skipped, "mapping": spec.to_dict()}
     return _run_ai(request, version_id, "suggest-mapping", background, response, me.name, work)
+
+
+@router.post("/versions/{version_id}/llm/suggest-relations")
+def llm_suggest_relations(version_id: UUID, request: Request, response: Response, me: Principal = Depends(builder),
+                          background: bool = Query(default=False, description="return a job to poll instead of waiting")):
+    """Map the relationships still open: declared foreign keys, then columns named like the target's key,
+    then the AI provider (when configured) a few relationships at a time with only the tables involved."""
+    st = _st(request)
+    st.registry.assert_editable(version_id, me.name)
+    onto = _ontology(request, version_id)
+    spec = _spec(request, version_id)
+
+    def work(llm, report):
+        report("Reading the snapshot")
+        snapshots = {s.table: s for s in st.metadata.list(version_id)}
+        tables = describe_tables(st.sources.for_version(version_id).catalog, list(snapshots) or None, None, snapshots=snapshots)
+        report("Declared foreign keys and matching names")
+        suggester = RelationSuggester(llm)
+        out = suggester.suggest(onto, spec, tables, on_progress=report)
+        st.registry.update_content(version_id, actor=me.name, mapping=out.to_dict())
+        rep = suggester.report
+        return {"added": len(out.relations) - len(spec.relations), "declared": len(rep["declared"]), "by_name": len(rep["by_name"]), "ai": len(rep["ai"]),
+                "skipped": rep["skipped"], "unmappable": rep["unmappable"], "relations": len(out.relations)}
+    return _run_ai(request, version_id, "suggest-relations", background, response, me.name, work, need_llm=False)
 
 
 @router.get("/jobs/{job_id}")

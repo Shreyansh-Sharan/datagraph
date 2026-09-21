@@ -280,3 +280,14 @@ describe("Ontology screen · running draft", () => {
     expect(await screen.findByText("AI draft finished: ontology replaced")).toBeInTheDocument();
   });
 });
+
+
+describe("Mapping screen · fill relationships", () => {
+  it("maps the open relationships and says where each came from", async () => {
+    const api = new MockApi({ latency: 10 });
+    renderAt("#/d/rgm/mapping?v=3", api);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Fill relationships" }));
+    expect(await screen.findByText(/relationships? mapped · \d+ from declared keys/)).toBeInTheDocument();
+  });
+});

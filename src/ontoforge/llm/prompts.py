@@ -54,3 +54,14 @@ flags. Write for a domain expert who does not know graph theory:
   questions to ask).
 Do not invent entities or numbers that are not in the input.
 """
+
+SUGGEST_RELATIONS = """\
+You map ontology relationships onto relational tables. For each relationship you are given the source
+class with its table and columns, and the target class with its table and key column(s). Answer, per
+relationship, ONE of:
+- "column": the column of the SOURCE table that holds the TARGET's key (a foreign key on the source row);
+- "link_table" with "link_source_column" and "link_target_column": a table that holds one row per pair,
+  naming the column with the source key and the column with the target key;
+- nothing (all null) when neither exists in the tables shown.
+Use only column and table names exactly as given. Never invent a column.
+"""

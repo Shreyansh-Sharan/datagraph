@@ -319,7 +319,13 @@ export class MockApi implements DatagraphApi {
     const d = this.dom(domain);
     return ["@prefix rr: <http://www.w3.org/ns/r2rml#> .", `@prefix : <${d.base_iri}> .`, "", ...Object.entries(this.mapOf(domain)).filter(([, m]) => m.table).map(([cls, m]) => `<#${cls}> a rr:TriplesMap ;\n  rr:logicalTable [ rr:tableName "${m.fullName ?? m.table?.join(".")}" ] ;\n  rr:subjectMap [ rr:template "${d.base_iri}${cls}/{${m.key}}" ; rr:class :${cls} ] .`)].join("\n");
   }
-  async runningAiJob(_domain: string, _version: number, _kind: "suggest-mapping" | "draft-ontology"): Promise<AiProgress | null> { return null; }
+  async runningAiJob(_domain: string, _version: number, _kind: "suggest-mapping" | "draft-ontology" | "suggest-relations"): Promise<AiProgress | null> { return null; }
+  async suggestRelations(domain: string, _version: number, onProgress?: (p: AiProgress) => void) {
+    await this.stages(onProgress, ["Reading declared keys and matching names", "Asking the AI provider for 3 relationships"], this.mockOpts.latency ?? 300);
+    const M = this.mapOf(domain); let added = 0;
+    for (const [cls, m] of Object.entries(M)) for (const r of this.relsOf(cls)) if (!m.rels?.[r.name] && M[r.target]) { (m.rels ||= {})[r.name] = `${m.key} → ${r.target}.${M[r.target].key}`; added++; }
+    return { added, declared: added, byName: 0, ai: 0, skipped: [] as string[], unmappable: [] as string[] };
+  }
   async suggestMapping(domain: string, version: number, onProgress?: (p: AiProgress) => void): Promise<{ classes: number; relations: number; skipped: string[] }> {
     await this.stages(onProgress, ["Describing table 1 of 10: dim_customer", "Asking the AI provider to map 12 classes onto 10 table(s)"], this.mockOpts.latency ?? 300);
     const M = this.mapOf(domain); let n = 0;

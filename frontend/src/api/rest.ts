@@ -278,7 +278,11 @@ export class RestApi extends MockApi {
     if (job.status === "failed") throw new Error(job.error ?? "The AI task failed");
     return job.result as T;
   }
-  override async runningAiJob(domain: string, version: number, kind: "suggest-mapping" | "draft-ontology", onProgress?: (p: AiProgress) => void): Promise<AiProgress | null> {
+  override async suggestRelations(domain: string, version: number, onProgress?: (p: AiProgress) => void) {
+    const r = await this.aiJob<{ added: number; declared: number; by_name: number; ai: number; skipped?: string[]; unmappable?: string[] }>(`/versions/${this.vid(domain, version)}/llm/suggest-relations`, {}, onProgress);
+    return { added: r.added, declared: r.declared, byName: r.by_name, ai: r.ai, skipped: r.skipped ?? [], unmappable: r.unmappable ?? [] };
+  }
+  override async runningAiJob(domain: string, version: number, kind: "suggest-mapping" | "draft-ontology" | "suggest-relations", onProgress?: (p: AiProgress) => void): Promise<AiProgress | null> {
     const latest = await this.req<AiJob<unknown> | null>("GET", `/versions/${this.vid(domain, version)}/jobs?kind=${kind}`);
     if (!latest || latest.status !== "running") return null;
     const job = await this.followJob(latest, onProgress);
