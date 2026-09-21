@@ -95,7 +95,7 @@ export interface Constraint { name: string; target: string; kind: string; severi
 // -- build ------------------------------------------------------------------------------
 export type RunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 export interface BuildStep { name: string; detail: string; seconds: number | null; state: "done" | "running" | "queued" }
-export interface BuildRun { id: string; status: RunStatus; actor: string; duration: string; triples: string; inferred: string; error: string; steps: BuildStep[]; stepIndex: number }
+export interface BuildRun { id: string; label?: string; status: RunStatus; actor: string; duration: string; triples: string; inferred: string; error: string; steps: BuildStep[]; stepIndex: number }   // id is what the API polls; label is what the screen shows
 export interface ChecklistItem { label: string; value: string; ok: boolean; go: { screen: string; arg?: string } }
 
 // -- graph ------------------------------------------------------------------------------

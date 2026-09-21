@@ -380,3 +380,50 @@ describe("metadata snapshot (scan)", () => {
     expect((await api.refreshSnapshot("aw", 1))[0]).toMatchObject({ table: "adventurework2022.dbo.errorlog", added: ["severity"] });
   });
 });
+
+
+describe("build (rest)", () => {
+  const vid = "11111111-2222-3333-4444-555555555555", rid = "5e255332-aaaa-bbbb-cccc-dddddddddddd";
+  const running = { id: rid, status: "running", actor: "alice", started_at: "2026-09-21T12:00:00Z", finished_at: null, triple_count: null, error: null, steps: [{ name: "compile", seconds: 0.41, detail: { selects: 3 } }, { name: "drift", seconds: null }] };
+  const failed = { ...running, status: "failed", finished_at: "2026-09-21T12:00:01Z", error: "BuildError: Version has neither a mapping spec nor an R2RML document", steps: [{ name: "compile", seconds: 0.1 }] };
+  const calls: string[] = [];
+  const api = (run: unknown) => {
+    calls.length = 0;
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      const key = `${init?.method ?? "GET"} ${url}`; calls.push(key);
+      const routes: Record<string, unknown> = {
+        "GET /api/auth/config": { mode: "header", header: "X-Actor", source: { kind: "databricks", catalog: "finops_metadata" } },
+        "GET /api/domains/aw": { name: "aw", description: "", base_iri: "http://p/aw/", review_quorum: 1, materialization: "none", sources: [] },
+        "GET /api/domains/aw/versions/summary": [{ id: vid, version: 1, status: "draft", has_ontology: true, has_mapping: false, rule_count: 0, constraint_count: 0, created_at: "2026-09-21T10:00:00Z", created_by: "alice", is_active: false, stats: { classes: 4, attributes: 9, relationships: 2, bindings: 0, rules: 0, constraints: 0, triples: 0 }, mapping: { completion: 0.25, classes_mapped: 1, classes: 4, complete_classes: 0 }, last_build: null, review: null, lease: null }],
+        "GET /api/domains/cards": [{ name: "aw", version_count: 1, active_version: null, latest_version: { version: 1, status: "draft" }, triples: 0, last_build: null, source: { kind: "databricks", connection: null, catalog: null, schema: null, schemas: [] }, source_count: 0, mcp: { exposed: true, disabled_tools: [] } }],
+        [`GET /api/versions/${vid}/builds`]: [run], [`GET /api/builds/${rid}`]: run, [`POST /api/versions/${vid}/builds`]: run,
+        [`GET /api/versions/${vid}/ontology`]: { classes: [{}, {}, {}, {}] }, [`GET /api/versions/${vid}/ontology/checks`]: [{ severity: "error" }, { severity: "warning" }],
+        [`GET /api/versions/${vid}/mapping/status`]: { completion: 0.25, summary: { classes: 4, mapped_classes: 1, complete_classes: 0, attributes: 9, mapped_attributes: 2, excluded_attributes: 1, relations: 2, mapped_relations: 0, excluded_relations: 0 }, classes: [] },
+        [`GET /api/versions/${vid}/mapping/drift`]: [{ table: "t" }], [`GET /api/versions/${vid}/metadata`]: [{ table: "a" }, { table: "b" }],
+      };
+      return new Response(JSON.stringify(routes[key] ?? { detail: `no route ${key}` }), { status: key in routes ? 200 : 404 });
+    }) as typeof fetch;
+    return new RestApi({ base: "/api" });
+  };
+  it("keeps the full run id for polling and shows a short label, with live steps and the queued rest of the pipeline", async () => {
+    const a = api(running); await a.domain("aw");
+    const r = (await a.builds("aw", 1))[0];
+    expect(r.id).toBe(rid); expect(r.label).toBe("#5e25"); expect(r.status).toBe("running");
+    expect(r.steps.map(s => [s.name, s.state])).toEqual([["compile", "done"], ["drift", "running"], ["prepare", "queued"], ["load", "queued"], ["finalize", "queued"]]);
+    expect(r.steps[0].detail).toBe("3 selects"); expect(r.stepIndex).toBe(1);
+    await a.buildStatus(r.id);
+    expect(calls).toContain(`GET /api/builds/${rid}`);
+  });
+  it("reports a failed run with its error and no running step", async () => {
+    const a = api(failed); await a.domain("aw");
+    const r = (await a.builds("aw", 1))[0];
+    expect(r.status).toBe("failed"); expect(r.error).toMatch(/neither a mapping spec/); expect(r.stepIndex).toBe(-1); expect(r.duration).toBe("1.0 s");
+    expect(r.steps.map(s => s.state)).toEqual(["done"]);
+  });
+  it("builds the pre-build checklist and mapping KPIs from the version's real state", async () => {
+    const a = api(failed); await a.domain("aw");
+    const items = await a.checklist("aw", 1);
+    expect(items.map(i => [i.label, i.value, i.ok])).toEqual([["Snapshot", "2 tables", true], ["Ontology", "4 classes", true], ["Mapping completion", "25%", false], ["Ontology checks", "1 error", false], ["Schema drift", "1 issue", false]]);
+    expect(await a.mappingKpis("aw", 1)).toEqual({ completion: 25, classesMapped: [1, 4], attributes: [2, 9], relationships: [0, 2], excluded: 1 });
+  });
+});

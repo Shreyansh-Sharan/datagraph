@@ -2,7 +2,7 @@
 // Methods with a settled contract call the API; the rest fall through to the mock so the
 // app stays usable while integration proceeds. Replace fallbacks method by method.
 import { MockApi } from "./mock";
-import type { AuditEntry, BuildRun, CatalogTable, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, RefreshChange, SnapshotTable, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus } from "./types";
+import type { AuditEntry, BuildRun, BuildStep, CatalogTable, ChecklistItem, MappingKpis, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, RefreshChange, SnapshotTable, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus } from "./types";
 import { tableName } from "./types";
 import { humanAction, relTime } from "./format";
 
@@ -28,6 +28,7 @@ export class RestApi extends MockApi {
   private base: string;
   private ropts: RestOptions;
   private versionIds: Record<string, string> = {};   // "domain:3" -> uuid
+  private materializations: Record<string, string> = {};   // domain -> none | view | table (decides whether a build publishes)
   private cfg: Config | null = null;
 
   constructor(opts: RestOptions = {}) {
@@ -82,6 +83,7 @@ export class RestApi extends MockApi {
     const cfg = this.cfg ?? await this.config();
     const versions = vs.map((v, i) => this.toVersion(d, v, vs[i + 1]));
     const c = card ?? (await this.req<BackendCard[]>("GET", "/domains/cards")).find(x => x.name === d.name);
+    this.materializations[d.name] = d.materialization ?? cfg.materialization;
     return { name: d.name, description: d.description ?? "", base_iri: d.base_iri, quorum: d.review_quorum, schema: d.schemas?.[0] ?? c?.source.schema ?? d.default_schema ?? "", schemas: d.schemas ?? (d.default_schema ? [d.default_schema] : []), sources: (d.sources ?? []).map(x => ({ connectionId: x.connection_id ?? null, catalog: x.catalog ?? null, schemas: [...(x.schemas ?? [])] })), catalog: c?.source.catalog ?? d.default_catalog ?? cfg.catalog ?? d.name,
       materialization: d.materialization ?? cfg.materialization, target: d.target_schema ?? "", mcpExposed: c?.mcp.exposed ?? d.mcp_policy?.exposed ?? true, disabledTools: c?.mcp.disabled_tools ?? d.mcp_policy?.disabled_tools ?? [],
       triples: c ? c.triples.toLocaleString() : "—", lastBuild: c?.last_build ? `${c.last_build.status}${c.last_build.finished_at ? " · " + new Date(c.last_build.finished_at).toLocaleString() : ""}` : "never",
@@ -236,16 +238,52 @@ export class RestApi extends MockApi {
     return this.req<string>("GET", `/versions/${this.vid(domain, v.version)}/mapping/sql?dialect=${cfg.sourceKind}&class_iri=${encodeURIComponent(`${d.base_iri.replace(/\/$/, "")}#${cls}`)}`, undefined, true);
   }
 
-  private toRun(r: { id: string; status: BuildRun["status"]; actor: string | null; started_at: string; finished_at: string | null; triple_count: number | null; error: string | null; steps: { name: string; seconds: number; detail?: Record<string, unknown> }[] }): BuildRun {
+  /** The pipeline's step order, so a running build shows what is still to come. */
+  private pipeline(domain: string): string[] {
+    const publish = (this.materializations[domain] ?? "none") !== "none";
+    return ["compile", "drift", "prepare", ...(publish ? ["publish"] : []), "load", "finalize"];
+  }
+  private toRun(r: { id: string; status: BuildRun["status"]; actor: string | null; started_at: string; finished_at: string | null; triple_count: number | null; error: string | null; steps: { name: string; seconds: number | null; detail?: Record<string, unknown> }[] }, domain?: string): BuildRun {
     const secs = r.finished_at ? (new Date(r.finished_at).getTime() - new Date(r.started_at).getTime()) / 1000 : null;
     const running = r.status === "running" || r.status === "queued";
-    return { id: `#${r.id.slice(0, 4)}`, status: r.status, actor: r.actor ?? "", duration: secs != null ? `${secs.toFixed(1)} s` : "—", triples: r.triple_count?.toLocaleString() ?? "—", inferred: "—", error: r.error ?? "", stepIndex: running ? r.steps.length : -1,
-      steps: r.steps.map(s => ({ name: s.name, detail: s.detail ? Object.entries(s.detail).map(([k, v]) => `${v} ${k}`).join(", ") : "", seconds: s.seconds, state: "done" })) };
+    const detail = (d?: Record<string, unknown>) => d ? Object.entries(d).filter(([, v]) => typeof v !== "object" || v === null).map(([k, v]) => `${v} ${k}`).join(", ") + (Array.isArray(d.issues) ? `${d.issues.length} drift issue${d.issues.length === 1 ? "" : "s"}` : "") : "";
+    const done = r.steps.map(s => ({ name: s.name, detail: detail(s.detail), seconds: s.seconds, state: (s.seconds == null && running ? "running" : "done") as BuildStep["state"] }));
+    const seen = new Set(done.map(s => s.name));
+    const queued = running && domain ? this.pipeline(domain).filter(n => !seen.has(n)).map(n => ({ name: n, detail: "", seconds: null, state: "queued" as const })) : [];
+    const steps = [...done, ...queued];
+    const stepIndex = running ? Math.max(steps.findIndex(s => s.state === "running"), 0) : -1;
+    const inferred = r.steps.find(s => s.name === "infer")?.detail?.inferred;
+    return { id: r.id, label: `#${r.id.slice(0, 4)}`, status: r.status, actor: r.actor ?? "", duration: secs != null ? `${secs.toFixed(1)} s` : "—", triples: r.triple_count?.toLocaleString() ?? "—", inferred: typeof inferred === "number" ? inferred.toLocaleString() : "—", error: r.error ?? "", stepIndex, steps };
   }
-  override async builds(domain: string, version: number): Promise<BuildRun[]> { const rs = await this.req<Parameters<RestApi["toRun"]>[0][]>("GET", `/versions/${this.vid(domain, version)}/builds`); return rs.map(r => this.toRun(r)); }
-  override async startBuild(domain: string, version: number): Promise<BuildRun> { return this.toRun(await this.req("POST", `/versions/${this.vid(domain, version)}/builds`)); }
-  override async buildStatus(runId: string): Promise<BuildRun> { return this.toRun(await this.req("GET", `/builds/${runId.replace(/^#/, "")}`)); }
-  override async cancelBuild(runId: string): Promise<BuildRun> { return this.toRun(await this.req("POST", `/builds/${runId.replace(/^#/, "")}/cancel`)); }
+  private runDomains: Record<string, string> = {};   // run id -> domain, so a poll can still show the queued steps
+  private remember(domain: string, run: BuildRun): BuildRun { this.runDomains[run.id] = domain; return run; }
+  override async builds(domain: string, version: number): Promise<BuildRun[]> { const rs = await this.req<Parameters<RestApi["toRun"]>[0][]>("GET", `/versions/${this.vid(domain, version)}/builds`); return rs.map(r => this.remember(domain, this.toRun(r, domain))); }
+  override async startBuild(domain: string, version: number): Promise<BuildRun> { return this.remember(domain, this.toRun(await this.req("POST", `/versions/${this.vid(domain, version)}/builds`), domain)); }
+  override async buildStatus(runId: string): Promise<BuildRun> { return this.toRun(await this.req("GET", `/builds/${runId}`), this.runDomains[runId]); }
+  override async cancelBuild(runId: string): Promise<BuildRun> { return this.toRun(await this.req("POST", `/builds/${runId}/cancel`), this.runDomains[runId]); }
+  override async checklist(domain: string, version: number): Promise<ChecklistItem[]> {
+    const vid = this.vid(domain, version);
+    const opt = <T,>(path: string) => this.req<T>("GET", path).catch(() => null);
+    const [snap, onto, status, checks, drift] = await Promise.all([
+      opt<unknown[]>(`/versions/${vid}/metadata`), opt<{ classes: unknown[] }>(`/versions/${vid}/ontology`), opt<{ completion: number }>(`/versions/${vid}/mapping/status`),
+      opt<{ severity: string }[]>(`/versions/${vid}/ontology/checks`), opt<unknown[]>(`/versions/${vid}/mapping/drift`)]);
+    const n = (k: number, one: string, many = one + "s") => `${k} ${k === 1 ? one : many}`;
+    const errors = (checks ?? []).filter(c => c.severity === "error").length;
+    const pct = status ? Math.round(status.completion * 100) : null;
+    return [
+      { label: "Snapshot", value: snap?.length ? n(snap.length, "table") : "no tables imported", ok: !!snap?.length, go: { screen: "metadata" } },
+      { label: "Ontology", value: onto?.classes.length ? n(onto.classes.length, "class", "classes") : "none yet", ok: !!onto?.classes.length, go: { screen: "ontology" } },
+      { label: "Mapping completion", value: pct == null ? "no mapping" : `${pct}%`, ok: pct === 100, go: { screen: "mapping" } },
+      { label: "Ontology checks", value: checks ? n(errors, "error") : "—", ok: !!checks && errors === 0, go: { screen: "ontology", arg: "checks" } },
+      { label: "Schema drift", value: n(drift?.length ?? 0, "issue"), ok: !(drift?.length), go: { screen: "metadata" } },
+    ];
+  }
+  override async mappingKpis(domain: string, version: number): Promise<MappingKpis> {
+    const st = await this.req<{ completion: number; summary: Record<string, number> }>("GET", `/versions/${this.vid(domain, version)}/mapping/status`).catch(() => null);
+    if (!st) return { completion: 0, classesMapped: [0, 0], attributes: [0, 0], relationships: [0, 0], excluded: 0 };
+    const s = st.summary;
+    return { completion: Math.round(st.completion * 100), classesMapped: [s.mapped_classes, s.classes], attributes: [s.mapped_attributes, s.attributes], relationships: [s.mapped_relations, s.relations], excluded: (s.excluded_attributes ?? 0) + (s.excluded_relations ?? 0) };
+  }
 
   private async activeVid(domain: string): Promise<string> { const d = await this.domain(domain); const v = d.versions.find(x => x.active) ?? d.versions[0]; return this.vid(domain, v.version); }
   override async search(domain: string, q: string): Promise<SearchHit[]> {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "@/App";
 import { MockApi } from "@/api/mock";
@@ -170,4 +170,23 @@ describe("Metadata screen · scan", () => {
     expect(await screen.findByRole("button", { name: "Import selected" })).toBeDisabled();
     expect(screen.getByText(/Only the lease holder of a draft can import/)).toBeInTheDocument();
   });
+});
+
+
+describe("Build screen", () => {
+  it("runs a build, shows live steps and settles with the result in the history", async () => {
+    renderAt("#/d/rgm/build?v=3", new MockApi({ stepScale: 1 }));
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Start build" }));
+    expect(await screen.findByText("Run in progress")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/Build succeeded · 263,695 triples/)).toBeInTheDocument(), { timeout: 8000 });
+    expect(screen.getByRole("heading", { name: /Last run · #/ })).toBeInTheDocument();
+  }, 10000);
+  it("stops polling and says so when the status cannot be read", async () => {
+    class Broken extends MockApi { override async buildStatus(): Promise<never> { throw new Error("connection refused"); } }
+    renderAt("#/d/rgm/build?v=3", new Broken({ stepScale: 1 }));
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Start build" }));
+    await waitFor(() => expect(screen.getByText(/Lost track of the build: connection refused/)).toBeInTheDocument(), { timeout: 8000 });
+  }, 10000);
 });

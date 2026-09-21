@@ -16,16 +16,26 @@ export function Build() {
   const history = useLoad(() => api.builds(domain.name, version!.version), [domain.name, version?.version]);
   const checklist = useLoad(() => api.checklist(domain.name, version!.version), [domain.name, version?.version]);
   const [live, setLive] = useState<BuildRun | null>(null);
+  const [lost, setLost] = useState<string | null>(null);
   const poll = useRef<ReturnType<typeof setInterval>>();
 
-  // Poll the run until it settles, exactly as the REST adapter will (GET /builds/{id}).
+  // A build still running when the screen opens (reload mid-build) is picked up and polled.
+  useEffect(() => { const r = history.data?.[0]; if (r && (r.status === "running" || r.status === "queued") && !live) setLive(r); }, [history.data]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Poll the run until it settles (GET /builds/{id}); give up after three failed reads and say so.
   useEffect(() => {
     if (!live || (live.status !== "running" && live.status !== "queued")) { clearInterval(poll.current); return; }
+    let failures = 0, busy = false;
     poll.current = setInterval(async () => {
-      const r = await api.buildStatus(live.id);
-      setLive(r);
-      if (r.status !== "running" && r.status !== "queued") { clearInterval(poll.current); history.reload(); say(r.status === "succeeded" ? `Build succeeded · ${r.triples} triples` : `Build ${r.status}`); }
-    }, 400);
+      if (busy) return; busy = true;
+      try {
+        const r = await api.buildStatus(live.id);
+        failures = 0; setLive(r);
+        if (r.status !== "running" && r.status !== "queued") { clearInterval(poll.current); history.reload(); say(r.status === "succeeded" ? `Build succeeded · ${r.triples} triples` : r.status === "failed" ? `Build failed · ${r.error}` : `Build ${r.status}`); }
+      } catch (e) {
+        if (++failures >= 3) { clearInterval(poll.current); setLost(e instanceof Error ? e.message : String(e)); setLive(null); history.reload(); }
+      } finally { busy = false; }
+    }, 500);
     return () => clearInterval(poll.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live?.id, live?.status]);
@@ -34,8 +44,8 @@ export function Build() {
   const shown = live ?? runs[0] ?? null;
   const building = shown?.status === "running" || shown?.status === "queued";
   const built = shown?.status === "succeeded";
-  const start = async () => { const r = await api.startBuild(domain.name, version!.version); setLive(r); };
-  const cancel = async () => { if (live) setLive(await api.cancelBuild(live.id)); };
+  const start = async () => { setLost(null); try { setLive(await api.startBuild(domain.name, version!.version)); } catch (e) { say(e instanceof Error ? e.message : String(e)); } };
+  const cancel = async () => { if (live) { try { setLive(await api.cancelBuild(live.id)); } catch (e) { say(e instanceof Error ? e.message : String(e)); } } };
   const blockReason = editable ? "" : "Only the lease holder can build a draft";
 
   return (
@@ -50,7 +60,8 @@ export function Build() {
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 320px", gap: 20, alignItems: "start" }}>
         <div className="grid">
           <Card>
-            <div className="row between" style={{ alignItems: "baseline", marginBottom: 12 }}><h2 className="h2">{building ? "Run in progress" : shown ? `Last run · ${shown.id}` : "No build yet"}</h2><span className="mono muted small">{building && shown ? `step ${shown.stepIndex + 1} of ${shown.steps.length}` : shown ? `${shown.actor} · ${shown.duration}` : ""}</span></div>
+            <div className="row between" style={{ alignItems: "baseline", marginBottom: 12 }}><h2 className="h2">{building ? "Run in progress" : shown ? `Last run · ${shown.label ?? shown.id}` : "No build yet"}</h2><span className="mono muted small">{building && shown ? `step ${shown.stepIndex + 1} of ${shown.steps.length}` : shown ? `${shown.actor} · ${shown.duration}` : ""}</span></div>
+            {lost && <div className="notice error" style={{ marginBottom: 12 }}><div className="row" style={{ fontWeight: 700, color: "var(--orange)" }}><Dot color={ORANGE} size={8} />Lost track of the build: {lost}</div><div className="muted xs" style={{ marginTop: 4 }}>The build keeps running on the server; the history below refreshes when you reload.</div></div>}
             {history.loading && !shown && <Skeleton h={90} />}
             {shown && (
               <div role="status" aria-live="polite" style={{ display: "grid", gridTemplateColumns: `repeat(${shown.steps.length},minmax(0,1fr))`, gap: 8 }}>
@@ -70,7 +81,7 @@ export function Build() {
             <div className="grid-head" style={{ gridTemplateColumns: ".8fr 1fr .8fr .8fr 1fr 2fr" }}><span>Run</span><span>Status</span><span>Actor</span><span>Duration</span><span>Triples</span><span>Error</span></div>
             {runs.map(r => (
               <div key={r.id} className="grid-row" style={{ gridTemplateColumns: ".8fr 1fr .8fr .8fr 1fr 2fr" }}>
-                <span className="mono small">{r.id}</span><span className="row"><Dot color={RUN_DOT[r.status]} />{r.status}</span><span>{r.actor}</span><span className="mono small">{r.duration}</span><span className="mono small">{r.triples}</span><span className="small" style={{ color: "#B84F00" }}>{r.error}</span>
+                <span className="mono small" title={r.id}>{r.label ?? r.id}</span><span className="row"><Dot color={RUN_DOT[r.status]} />{r.status}</span><span>{r.actor}</span><span className="mono small">{r.duration}</span><span className="mono small">{r.triples}</span><span className="small" style={{ color: "#B84F00" }}>{r.error}</span>
               </div>
             ))}
             {runs.length === 0 && !history.loading && <p className="muted" style={{ padding: 20 }}>No runs yet.</p>}
