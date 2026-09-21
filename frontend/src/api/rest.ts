@@ -190,12 +190,13 @@ export class RestApi extends MockApi {
     return hit?.[0] ?? null;
   }
   override async catalogTables(domain: string, schema: string, version?: number): Promise<CatalogTable[]> {
-    const [rows, snap, mapped] = await Promise.all([
-      this.req<{ name: string; columns: number; comment: string | null }[]>("GET", `/catalog/tables?schema_name=${encodeURIComponent(schema)}&detail=true`),
+    const [raw, snap, mapped] = await Promise.all([
+      this.req<({ name: string; columns: number; comment: string | null } | string)[]>("GET", `/catalog/tables?schema_name=${encodeURIComponent(schema)}&detail=true`),
       version !== undefined ? this.snapshot(domain, version).catch(() => [] as SnapshotTable[]) : Promise.resolve([] as SnapshotTable[]),
       version !== undefined ? this.mapping(domain, version).catch(() => ({} as Record<string, ClassMapping>)) : Promise.resolve({} as Record<string, ClassMapping>)]);
     const held = new Map(snap.map(t => [t.table.toLowerCase(), t]));
     const byTable = new Map(Object.entries(mapped).filter(([, x]) => x.fullName).map(([cls, x]) => [x.fullName!.toLowerCase(), cls]));
+    const rows = raw.map(r => (typeof r === "string" ? { name: r, columns: 0, comment: null } : r));   // an older backend answers with bare names
     return rows.map(r => { const name = r.name.split(".").pop() ?? r.name; const q = `${schema}.${name}`.toLowerCase(); const t = held.get(q) ?? held.get(name.toLowerCase());
       return { name, cols: r.columns || t?.columns || 0, imported: !!t, cls: byTable.get(q) ?? null }; });
   }

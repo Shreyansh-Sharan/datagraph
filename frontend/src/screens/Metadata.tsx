@@ -97,7 +97,7 @@ export function Metadata() {
             <input aria-label="Search tables" className="input sm" placeholder="Search tables" value={search} onChange={e => setSearch(e.target.value)} />
           </div>
           <div className="row between label-caps" style={{ padding: "8px 14px 4px", fontSize: 10.5, color: "var(--muted-3)" }}><span>{catList.length} tables</span><span>{catList.filter(t => t.imported).length} of {catList.length} in snapshot</span></div>
-          {tables.error && <div style={{ padding: 12 }}><ErrorNotice error={tables.error} action={<span className="small">Ask the workspace admin for USE CATALOG / USE SCHEMA / SELECT on this catalog.</span>} /></div>}
+          {tables.error && <div style={{ padding: 12 }}><ErrorNotice error={tables.error} action={<span className="small">{/PERMISSION|denied|USE CATALOG/i.test(tables.error) ? "Ask the workspace admin for USE CATALOG / USE SCHEMA / SELECT on this catalog." : "Reload the page; if it persists, check that the API is running the current version."}</span>} /></div>}
           {tables.loading && <div style={{ padding: 12, display: "grid", gap: 8 }}><Skeleton h={30} /><Skeleton h={30} /><Skeleton h={30} /></div>}
           {catList.filter(t => !search || t.name.includes(search.toLowerCase())).map(t => { const on = t.name === (table || catList[0]?.name); return (
             <div key={t.name} className="row" style={{ gap: 0, borderTop: "1px solid var(--line-2)", background: on ? "var(--blue-soft)" : undefined }}>

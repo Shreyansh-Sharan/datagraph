@@ -546,6 +546,13 @@ describe("metadata screen data (rest)", () => {
     expect(await a.tableClass("aw", "customer", 1)).toBe("Customer");
     expect(await a.tableClass("aw", "store", 1)).toBeNull();
   });
+  it("still lists tables when an older backend answers the detail request with bare names", async () => {
+    const a = api();
+    const inner = globalThis.fetch;
+    globalThis.fetch = (async (url: string, init?: RequestInit) => url.includes("/catalog/tables?") ? new Response(JSON.stringify(["customer", "store"])) : inner(url, init)) as typeof fetch;
+    await a.domain("aw");
+    expect(await a.catalogTables("aw", "adventurework2022.sales", 1)).toEqual([{ name: "customer", cols: 1, imported: true, cls: "Customer" }, { name: "store", cols: 0, imported: false, cls: null }]);
+  });
   it("says which extras the deployment offers instead of showing design data", async () => {
     const a = api();
     expect((await a.config()).capabilities).toEqual({ profiling: false, quality: false, glossary: false, ontoDiffs: false });
