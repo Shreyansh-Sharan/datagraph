@@ -186,12 +186,30 @@ def mapping_from_json(ontology: Ontology, tables: list[TableMeta], base_iri: str
                                              target_key=cols(rel_table, r.get("target_key"), "target_key") or None, table=link))
         except (LLMOutputError, KeyError) as exc:
             skipped.append(f"relation {r.get('property', '?')}: {exc}")
-    spec = MappingSpec(base_iri=base_iri, classes=tuple(class_mappings), relations=tuple(relations))
-    try:
-        spec.to_r2rml()
-    except MappingSpecError as exc:
-        raise LLMOutputError(f"Suggested mapping is not compilable: {exc}") from None
-    return spec
+    # Compile piece by piece: a class or relation the compiler rejects is dropped and reported, the rest stays.
+    def compiles(classes, rels) -> str | None:
+        try:
+            MappingSpec(base_iri=base_iri, classes=tuple(classes), relations=tuple(rels)).to_r2rml()
+            return None
+        except MappingSpecError as exc:
+            return str(exc)
+    kept_classes = []
+    for c in class_mappings:
+        err = compiles([c], [])
+        if err:
+            skipped.append(f"class {ontology.local_name(c.class_iri)}: {err}")
+        else:
+            kept_classes.append(c)
+    if not kept_classes:
+        raise LLMOutputError("The suggestion contained nothing usable: " + ("; ".join(skipped[:3]) if skipped else "no classes"))
+    kept_relations = []
+    for r in relations:
+        err = compiles(kept_classes, kept_relations + [r])
+        if err:
+            skipped.append(f"relation {ontology.local_name(r.property_iri)}: {err}")
+        else:
+            kept_relations.append(r)
+    return MappingSpec(base_iri=base_iri, classes=tuple(kept_classes), relations=tuple(kept_relations))
 
 
 def _iri(o: Ontology, name: str) -> str:

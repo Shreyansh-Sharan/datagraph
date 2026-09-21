@@ -273,3 +273,22 @@ def test_suggested_mapping_skips_unknown_names_instead_of_failing(db):
     import pytest
     with pytest.raises(LLMOutputError, match="nothing usable"):
         mapping_from_json(onto, tables, BASE, {"classes": [{"class": "Unicorn", "table": "employees", "key_columns": ["empno"]}]})
+
+
+def test_suggested_mapping_drops_only_the_uncompilable_parts(db):
+    """A relation joining on the wrong number of key columns must not void the sixty classes around it."""
+    from ontoforge.llm import mapping_from_json
+    onto = ontology()
+    tables = [{"table": "employees", "comment": None, "columns": [{"name": "empno", "type": "int"}, {"name": "deptno", "type": "int"}, {"name": "ename", "type": "text"}], "primary_key": ["empno"], "foreign_keys": [], "samples": []},
+              {"table": "departments", "comment": None, "columns": [{"name": "deptno", "type": "int"}, {"name": "region", "type": "text"}], "primary_key": ["deptno", "region"], "foreign_keys": [], "samples": []}]
+    data = {"classes": [
+        {"class": "Employee", "table": "employees", "key_columns": ["empno"], "attributes": [{"property": "name", "column": "ename"}]},
+        {"class": "Department", "table": "departments", "key_columns": ["deptno", "region"], "attributes": []},
+    ], "relations": [
+        {"property": "worksIn", "source_class": "Employee", "target_class": "Department", "source_key": ["empno"], "target_key": ["deptno"]},   # 1 column for a 2-column key
+    ]}
+    skipped: list[str] = []
+    spec = mapping_from_json(onto, tables, BASE, data, skipped=skipped)
+    assert [c.class_iri for c in spec.classes] == [EX + "Employee", EX + "Department"]
+    assert spec.relations == () and len(skipped) == 1 and "worksIn" in skipped[0] and "key" in skipped[0]
+    spec.to_r2rml()   # what is left compiles
