@@ -70,6 +70,7 @@ function Bubble({ data }: NodeProps<Node<BubbleData>>) {
         style={{ width: r * 2, height: r * 2, background: n.fill, borderColor: n.border ?? "rgba(0,0,0,.12)", fontSize: n.size === "lg" ? 12.5 : n.size === "sm" ? 9.5 : 11 }}>
         <span className="cap">{short}</span>
         {n.props !== undefined && <span className="props" aria-hidden="true">{n.props}</span>}
+        {short !== n.label && <span className="name" aria-hidden="true">{n.label}</span>}
       </button>
       <Handle type="source" position={Position.Bottom} className="stage-handle" />
     </>
@@ -85,7 +86,9 @@ function FloatingEdge({ id, source, target, markerEnd, style, label, labelStyle,
   const a = c(s), b = c(t);
   const dx = b.x - a.x, dy = b.y - a.y, d = Math.max(1, Math.hypot(dx, dy));
   const ux = dx / d, uy = dy / d;
-  const [path, lx, ly] = getStraightPath({ sourceX: a.x + ux * (a.r + 2), sourceY: a.y + uy * (a.r + 2), targetX: b.x - ux * (b.r + 6), targetY: b.y - uy * (b.r + 6) });
+  const sx = a.x + ux * (a.r + 2), sy = a.y + uy * (a.r + 2), tx = b.x - ux * (b.r + 6), ty = b.y - uy * (b.r + 6);
+  const [path] = getStraightPath({ sourceX: sx, sourceY: sy, targetX: tx, targetY: ty });
+  const lx = sx + (tx - sx) * 0.62, ly = sy + (ty - sy) * 0.62;   // nearer the target: labels around a hub spread out instead of piling up
   const fill = (labelStyle as { fill?: string } | undefined)?.fill, bg = (labelBgStyle as { fill?: string } | undefined)?.fill;
   return (
     <>
