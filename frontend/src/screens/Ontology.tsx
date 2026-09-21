@@ -41,7 +41,8 @@ export function Ontology() {
   // Colour by hierarchy when there is one (the root class each class descends from), else by name.
   const rootOf = (id: string, seen = new Set<string>()): string => { const c = list.find(x => x.id === id); const p = c?.parents.find(x => list.some(y => y.id === x)); return !p || seen.has(p) ? id : rootOf(p, seen.add(id)); };
   const roots = Object.fromEntries(list.map(c => [c.id, rootOf(c.id)]));
-  const hierarchical = new Set(Object.values(roots)).size < list.length;
+  const rootCount = new Set(Object.values(roots)).size;
+  const hierarchical = rootCount < list.length && rootCount <= 12;   // a legend of dozens of roots would not help
   const groups: StageGroup[] | undefined = hierarchical ? [...new Set(Object.values(roots))].sort().map(r => ({ id: r, label: r, color: colorFor(r) })) : undefined;
   const nodes: StageNode[] = list.map(c => ({ id: c.id, label: c.id, glyph: glyphOf(c.id), x: c.x, y: c.y, fill: colorFor(hierarchical ? roots[c.id] : c.id), border: c.id === sel?.id ? BLUE : undefined, selected: c.id === sel?.id, props: c.attrs.length + c.rels.length, title: c.iri, group: hierarchical ? roots[c.id] : undefined }));
 
@@ -67,7 +68,7 @@ export function Ontology() {
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 340px", gap: 20, alignItems: "start" }}>
           <Stage nodes={nodes} edges={edges} height={640} dotted groups={groups} onSelect={id => setCls(id)} onExpand={id => { setCls(id); setView("map"); }}
             legend={<><span><i style={{ width: 18, height: 2, background: "#8FA1FF" }} />relationship</span><span><i style={{ width: 18, height: 0, borderTop: "2px dashed #FF7000" }} />inheritance</span></>}
-            status={`${list.length} nodes · ${edges.length} edges`} />
+            />
           <Card>
             <div className="row" style={{ gap: 10, marginBottom: 4 }}><Glyph size={28} fontSize={12}>{glyphOf(sel.id)}</Glyph><h2 style={{ fontSize: 17, fontWeight: 800 }}>{sel.id}</h2></div>
             <div className="mono" style={{ fontSize: 11, color: "var(--muted-2)", marginBottom: 14, wordBreak: "break-all" }}>{sel.iri}</div>
