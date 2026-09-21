@@ -561,3 +561,37 @@ describe("metadata screen data (rest)", () => {
     expect((await new MockApi().config()).capabilities).toEqual({ profiling: true, quality: true, glossary: true, ontoDiffs: true });
   });
 });
+
+
+describe("ontology drafting", () => {
+  it("rest: drafts with AI from the snapshot tables, or from the catalog without AI", async () => {
+    const vid = "dddddddd-0000-0000-0000-000000000001"; const calls: string[] = [];
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      const key = `${init?.method ?? "GET"} ${url}`; calls.push(key + (init?.body ? " " + init.body : ""));
+      const routes: Record<string, unknown> = {
+        "GET /api/auth/config": { mode: "header", header: "X-Actor", source: { kind: "databricks", catalog: "finops_metadata" } },
+        "GET /api/domains/aw": { name: "aw", description: "", base_iri: "http://p/aw/", review_quorum: 1, materialization: "none", sources: [] },
+        "GET /api/domains/aw/versions/summary": [{ id: vid, version: 1, status: "draft", has_ontology: false, has_mapping: false, rule_count: 0, constraint_count: 0, created_at: "2026-09-21T10:00:00Z", created_by: "alice", is_active: false, stats: { classes: 0, attributes: 0, relationships: 0, bindings: 0, rules: 0, constraints: 0, triples: 0 }, mapping: null, last_build: null, review: null, lease: null }],
+        "GET /api/domains/cards": [{ name: "aw", version_count: 1, active_version: null, latest_version: { version: 1, status: "draft" }, triples: 0, last_build: null, source: { kind: "databricks", connection: null, catalog: null, schema: null, schemas: [] }, source_count: 0, mcp: { exposed: true, disabled_tools: [] } }],
+        [`GET /api/versions/${vid}/metadata`]: [{ table: "adventurework2022.sales.customer", comment: null, columns: [{ name: "customerid", type: "int", comment: null }], primary_key: ["customerid"], foreign_keys: [] }, { table: "adventurework2022.sales.salesorderheader", comment: null, columns: [], primary_key: [], foreign_keys: [] }],
+        [`POST /api/versions/${vid}/llm/draft-ontology`]: { classes: 2, properties: 34, issues: [{ severity: "warning" }], ontology: {} },
+        [`POST /api/versions/${vid}/autodraft`]: { classes: 2, properties: 12, mapping: { classes: 2 } },
+      };
+      return new Response(JSON.stringify(routes[key] ?? { detail: `no route ${key}` }), { status: key in routes ? 200 : 404 });
+    }) as typeof fetch;
+    const a = new RestApi({ base: "/api" }); await a.domain("aw");
+    expect(await a.draftOntology("aw", 1, { ai: true, description: "Sales" })).toEqual({ classes: 2, properties: 34, warnings: 1 });
+    expect(calls).toContain(`POST /api/versions/${vid}/llm/draft-ontology {"ontology_iri":"http://p/aw/ontology","description":"Sales","tables":["adventurework2022.sales.customer","adventurework2022.sales.salesorderheader"]}`);
+    expect(await a.draftOntology("aw", 1, { ai: false, tables: ["adventurework2022.sales.customer"] })).toEqual({ classes: 2, properties: 12, warnings: 0 });
+    expect(calls).toContain(`POST /api/versions/${vid}/autodraft {"ontology_iri":"http://p/aw/ontology","tables":["adventurework2022.sales.customer"],"infer_keys":true}`);
+  });
+  it("mock: drafting fills an empty domain with classes", async () => {
+    const api = new MockApi();
+    await api.createDomain({ name: "aw", description: "", base_iri: "http://p/aw/", quorum: 1, ai_connection_id: "c-gpt" });
+    await api.createDraft("aw");
+    expect(await api.ontology("aw", 1)).toEqual([]);
+    const r = await api.draftOntology("aw", 1, { ai: true });
+    expect(r.classes).toBeGreaterThan(0);
+    expect((await api.ontology("aw", 1)).length).toBe(r.classes);
+  });
+});

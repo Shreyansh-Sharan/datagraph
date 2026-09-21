@@ -220,3 +220,21 @@ describe("Metadata screen · list", () => {
     expect(await screen.findByText("8 of 10 in snapshot")).toBeInTheDocument();
   });
 });
+
+
+describe("Ontology screen · drafting", () => {
+  it("drafts the ontology with AI from the snapshot tables through a dialog", async () => {
+    const api = new MockApi();
+    await api.createDomain({ name: "aw", description: "Adventure", base_iri: "http://p/aw/", quorum: 1, ai_connection_id: "c-gpt", sources: [{ connection_id: "c-warehouse", catalog: "aw", schemas: ["gold"] }] });
+    await api.createDraft("aw");
+    renderAt("#/d/aw/ontology?v=1", api);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Draft with AI" }));
+    const dlg = screen.getByRole("dialog", { name: "Draft the ontology with AI" });
+    expect(within(dlg).getAllByRole("checkbox").length).toBeGreaterThan(0);
+    await user.type(within(dlg).getByLabelText("What this domain is about"), "Revenue and customers");
+    await user.click(within(dlg).getByRole("button", { name: "Draft ontology" }));
+    expect(await screen.findByText(/Drafted \d+ classes/)).toBeInTheDocument();
+    expect((await api.ontology("aw", 1)).length).toBeGreaterThan(0);
+  });
+});

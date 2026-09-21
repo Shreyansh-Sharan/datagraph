@@ -168,3 +168,16 @@ def test_api_without_llm_configured_returns_503(db):
         c.post("/domains", json={"name": "hr", "base_iri": BASE})
         v = c.post("/domains/hr/versions").json()
         assert c.post(f"/versions/{v['id']}/llm/draft-ontology", json={"ontology_iri": ONTO_IRI}).status_code == 503
+
+
+def test_describe_tables_qualifies_names_with_the_schema():
+    from ontoforge.llm import describe_tables
+
+    class Cat:
+        def table_comment(self, t): return None
+        def column_details(self, t): return [{"name": "id", "type": "int", "comment": None}]
+        def primary_key(self, t): return ("id",)
+        def foreign_keys(self, t): return []
+        def list_tables(self, schema=None): return []
+    metas = describe_tables(Cat(), ["customer", "sales.store", "cat.sales.order"], "cat.sales")
+    assert [m["table"] for m in metas] == ["cat.sales.customer", "sales.store", "cat.sales.order"]

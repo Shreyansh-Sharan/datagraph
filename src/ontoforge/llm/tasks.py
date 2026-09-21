@@ -23,6 +23,8 @@ def describe_tables(catalog: CatalogAdapter, tables: list[str] | None = None, sc
     catalog when present: they carry the comments users wrote."""
     out = []
     snapshots = snapshots or {}
+    if tables is not None and schema:   # bare names belong to the given schema, dotted ones are already placed
+        tables = [t if "." in t else f"{schema}.{t}" for t in tables]
     for t in (tables if tables is not None else (list(snapshots) or catalog.list_tables(schema))):
         snap = snapshots.get(t)
         if snap is not None:
