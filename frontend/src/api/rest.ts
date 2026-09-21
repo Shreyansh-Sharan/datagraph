@@ -341,9 +341,9 @@ export class RestApi extends MockApi {
   override async excludeUnmapped(domain: string, version: number): Promise<void> { await this.req("POST", `/versions/${this.vid(domain, version)}/mapping/exclude-unmapped`); }
   override async drift(domain: string, version: number): Promise<DriftIssue[]> { return this.req<DriftIssue[]>("GET", `/versions/${this.vid(domain, version)}/mapping/drift`); }
   override async r2rml(domain: string, version: number): Promise<string> { return this.req<string>("GET", `/versions/${this.vid(domain, version)}/mapping/r2rml`, undefined, true); }
-  override async suggestMapping(domain: string, version: number, onProgress?: (p: AiProgress) => void): Promise<{ classes: number; relations: number }> {
-    const r = await this.aiJob<{ classes: number; relations: number }>(`/versions/${this.vid(domain, version)}/llm/suggest-mapping`, {}, onProgress);
-    return { classes: r.classes, relations: r.relations };
+  override async suggestMapping(domain: string, version: number, onProgress?: (p: AiProgress) => void): Promise<{ classes: number; relations: number; skipped: string[] }> {
+    const r = await this.aiJob<{ classes: number; relations: number; skipped?: string[] }>(`/versions/${this.vid(domain, version)}/llm/suggest-mapping`, {}, onProgress);
+    return { classes: r.classes, relations: r.relations, skipped: r.skipped ?? [] };
   }
   override async tablePreview(domain: string, cls: string, version?: number): Promise<TablePreview> {
     const v = version ?? (await this.domain(domain)).versions[0]?.version; if (v === undefined) return { columns: [], rows: [] };

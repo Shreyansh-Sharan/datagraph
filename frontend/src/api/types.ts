@@ -193,7 +193,7 @@ export interface DatagraphApi {
   excludeUnmapped(domain: string, version: number): Promise<void>;
   drift(domain: string, version: number): Promise<DriftIssue[]>;
   r2rml(domain: string, version: number): Promise<string>;
-  suggestMapping(domain: string, version: number, onProgress?: (p: AiProgress) => void): Promise<{ classes: number; relations: number }>;
+  suggestMapping(domain: string, version: number, onProgress?: (p: AiProgress) => void): Promise<{ classes: number; relations: number; skipped: string[] }>;   // skipped: suggestions naming things the ontology or tables do not have
   runningAiJob(domain: string, version: number, kind: "suggest-mapping" | "draft-ontology", onProgress?: (p: AiProgress) => void): Promise<AiProgress | null>;   // a job started earlier (or from another tab): followed to its end, null when none is running
 
   rules(domain: string, version: number): Promise<Rule[]>;

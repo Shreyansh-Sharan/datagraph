@@ -29,6 +29,7 @@ export function Mapping() {
   const [drift, setDrift] = useState<DriftIssue[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [aiStatus, setAiStatus] = useState<{ progress: string; since: number } | null>(null);
+  const [skipped, setSkipped] = useState<string[]>([]);
   const [tick, setTick] = useState(0);
   useEffect(() => { if (!aiStatus) return; const t = setInterval(() => setTick(x => x + 1), 1000); return () => clearInterval(t); }, [aiStatus]);
   // A suggestion started earlier (or from another tab) is still running on the server: show it and reload when it ends.
@@ -68,7 +69,8 @@ export function Mapping() {
   const exportR2rml = async () => { try { const ttl = await api.r2rml(domain.name, v); const blob = new Blob([ttl], { type: "text/turtle" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `${domain.name}-v${v}.r2rml.ttl`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); say("R2RML exported"); } catch (e) { say(e instanceof Error ? e.message : String(e)); } };
   const suggest = async () => {
     setAiStatus({ progress: "Starting", since: Date.now() });
-    try { await edit("suggest", () => api.suggestMapping(domain.name, v, p => setAiStatus({ progress: p.progress, since: p.startedAt ? new Date(p.startedAt).getTime() : Date.now() })), r => { const x = r as { classes: number; relations: number }; return `AI suggested bindings for ${x.classes} class${x.classes === 1 ? "" : "es"} and ${x.relations} relationship${x.relations === 1 ? "" : "s"}`; }); }
+    setSkipped([]);
+    try { await edit("suggest", () => api.suggestMapping(domain.name, v, p => setAiStatus({ progress: p.progress, since: p.startedAt ? new Date(p.startedAt).getTime() : Date.now() })), r => { const x = r as { classes: number; relations: number; skipped: string[] }; setSkipped(x.skipped ?? []); return `AI suggested bindings for ${x.classes} class${x.classes === 1 ? "" : "es"} and ${x.relations} relationship${x.relations === 1 ? "" : "s"}${x.skipped?.length ? ` · ${x.skipped.length} skipped` : ""}`; }); }
     finally { setAiStatus(null); }
   };
   const elapsed = aiStatus ? Math.max(0, Math.round((Date.now() - aiStatus.since) / 1000)) : 0;
@@ -90,6 +92,13 @@ export function Mapping() {
           <div className="row" style={{ gap: 8, fontWeight: 600 }}><Spinner blue />Suggesting with AI · {aiStatus.progress} · {elapsed >= 60 ? `${Math.floor(elapsed / 60)} min ${elapsed % 60} s` : `${elapsed} s`}</div>
           <div className="muted xs" style={{ marginTop: 4 }}>The source is read table by table, then the whole ontology goes to the AI provider in one request; with dozens of tables that step alone takes minutes. The job runs on the server, so you can leave this screen and come back.</div>
         </div>
+      )}
+      {skipped.length > 0 && (
+        <Card style={{ marginBottom: 16, borderColor: "var(--orange)" }}>
+          <div className="row between"><h2 className="h2">{skipped.length} suggestion{skipped.length === 1 ? "" : "s"} skipped</h2><Button size="xs" variant="ghost" onClick={() => setSkipped([])}>Close</Button></div>
+          <p className="muted small" style={{ margin: "4px 0 8px" }}>The AI named columns, properties or classes that do not exist there. Everything else was applied; fix these by hand on the class, with the relationship form.</p>
+          <div style={{ maxHeight: 220, overflowY: "auto" }}>{skipped.map((x, i) => <div key={i} className="mono" style={{ padding: "4px 0", borderTop: "1px solid var(--line-2)", fontSize: 11.5, color: "var(--ink-2)" }}>{x}</div>)}</div>
+        </Card>
       )}
       {drift && (
         <Card style={{ marginBottom: 16, borderColor: drift.length ? "var(--orange)" : "var(--blue-border)" }}>

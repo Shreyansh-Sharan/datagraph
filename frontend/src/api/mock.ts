@@ -320,11 +320,11 @@ export class MockApi implements DatagraphApi {
     return ["@prefix rr: <http://www.w3.org/ns/r2rml#> .", `@prefix : <${d.base_iri}> .`, "", ...Object.entries(this.mapOf(domain)).filter(([, m]) => m.table).map(([cls, m]) => `<#${cls}> a rr:TriplesMap ;\n  rr:logicalTable [ rr:tableName "${m.fullName ?? m.table?.join(".")}" ] ;\n  rr:subjectMap [ rr:template "${d.base_iri}${cls}/{${m.key}}" ; rr:class :${cls} ] .`)].join("\n");
   }
   async runningAiJob(_domain: string, _version: number, _kind: "suggest-mapping" | "draft-ontology"): Promise<AiProgress | null> { return null; }
-  async suggestMapping(domain: string, version: number, onProgress?: (p: AiProgress) => void): Promise<{ classes: number; relations: number }> {
+  async suggestMapping(domain: string, version: number, onProgress?: (p: AiProgress) => void): Promise<{ classes: number; relations: number; skipped: string[] }> {
     await this.stages(onProgress, ["Describing table 1 of 10: dim_customer", "Asking the AI provider to map 12 classes onto 10 table(s)"], this.mockOpts.latency ?? 300);
     const M = this.mapOf(domain); let n = 0;
     for (const [table, cls] of Object.entries(D.TABLE_CLASS)) if (!M[cls] && D.CLASSES.some(c => c.id === cls)) { await this.mapClass(domain, version, cls, `${this.dom(domain).catalog}.gold.${table}`, ["id"]); n++; }
-    return { classes: n, relations: 0 };
+    return { classes: n, relations: 0, skipped: [] };
   }
   async tablePreview(_domain: string, cls: string, _version?: number): Promise<TablePreview> { return this.wait(clone(D.PREVIEW[cls] || D.PREVIEW.Customer), this.kind === "databricks" ? 900 : 200); }
   async classSql(domain: string, cls: string, _version?: number) { const m = this.mapOf(domain)[cls]; if (!m) return ""; const d = this.dom(domain); return compileClassSql(this.kind, d.base_iri, cls, m, d.catalog); }

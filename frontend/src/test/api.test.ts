@@ -493,7 +493,7 @@ describe("mapping editor (rest)", () => {
     const a = api(); await a.domain("aw");
     expect((await a.drift("aw", 1))[0]).toMatchObject({ kind: "missing-column", column: "name", mapping_ref: "Customer.customerName" });
     expect(await a.r2rml("aw", 1)).toMatch(/^@prefix rr:/);
-    expect(await a.suggestMapping("aw", 1)).toEqual({ classes: 2, relations: 1 });
+    expect(await a.suggestMapping("aw", 1)).toEqual({ classes: 2, relations: 1, skipped: [] });
     const snap = await a.snapshot("aw", 1);
     expect(snap[1]).toMatchObject({ table: "adventurework2022.sales.salesorderheader", columnNames: ["salesorderid", "customerid", "orderdate"], primaryKey: ["salesorderid"] });
   });
@@ -618,7 +618,7 @@ describe("AI tasks report progress", () => {
     const a = new RestApi({ base: "/api", pollMs: 1 }); await a.domain("aw");
     const seen: string[] = [];
     const r = await a.suggestMapping("aw", 1, p => seen.push(p.progress));
-    expect(r).toEqual({ classes: 66, relations: 40 });
+    expect(r).toEqual({ classes: 66, relations: 40, skipped: [] });
     expect(seen).toEqual(["Queued", "Describing table 3 of 68: customer", "Asking the AI provider to map 66 classes onto 68 table(s)"]);
     await expect(a.draftOntology("aw", 1, { ai: true }, () => {})).rejects.toThrow(/returned no JSON/);
   });
