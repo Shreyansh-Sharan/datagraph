@@ -65,14 +65,21 @@ def test_suggester_validates_against_catalog_and_ontology(db):
     tables = describe_tables(PostgresCatalog(db))
     spec = MappingSuggester(FakeProvider([MAPPING])).suggest(onto, tables, base_iri=BASE)
     assert spec.classes[0].class_iri == ONTO_IRI + "#Employee" and spec.relations[0].target_key == ("deptno",)
+    # a slip on one column drops that binding and reports it; the rest of the suggestion survives
     bad = json.loads(json.dumps(MAPPING))
     bad["classes"][0]["attributes"][0]["column"] = "nope"
-    with pytest.raises(LLMOutputError, match="nope"):
-        MappingSuggester(FakeProvider([bad])).suggest(onto, tables, base_iri=BASE)
+    s = MappingSuggester(FakeProvider([bad]))
+    spec = s.suggest(onto, tables, base_iri=BASE)
+    assert len(spec.classes) == len(MAPPING["classes"]) and len(s.skipped) == 1 and "nope" in s.skipped[0]
+    # a class the ontology does not have is dropped with everything that hangs off it
     bad = json.loads(json.dumps(MAPPING))
     bad["classes"][0]["class"] = "Alien"
-    with pytest.raises(LLMOutputError, match="Alien"):
-        MappingSuggester(FakeProvider([bad])).suggest(onto, tables, base_iri=BASE)
+    s = MappingSuggester(FakeProvider([bad]))
+    spec = s.suggest(onto, tables, base_iri=BASE)
+    assert len(spec.classes) == len(MAPPING["classes"]) - 1 and any("Alien" in x for x in s.skipped)
+    # only an answer with nothing usable is an error
+    with pytest.raises(LLMOutputError, match="nothing usable"):
+        MappingSuggester(FakeProvider([{"classes": [{"class": "Alien", "table": "employees", "key_columns": ["empno"]}], "relations": []}])).suggest(onto, tables, base_iri=BASE)
 
 
 def test_suggested_mapping_is_buildable(db):
