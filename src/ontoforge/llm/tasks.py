@@ -288,6 +288,11 @@ class RelationSuggester:
                 name = tgt.key_columns[0].lower()
                 if name in src_cols and not (d == t and src_cols[name] in src.key_columns):
                     done = accept(RelationMapping(p.iri, d, t, source_key=src.key_columns, target_key=(src_cols[name],)), "by_name")
+            if not done and d != t and len(src.key_columns) == 1:   # parent -> child: the child's table carries the parent's key
+                tgt_cols = cols_of(tgt_meta)
+                name = src.key_columns[0].lower()
+                if name in tgt_cols and tgt_cols[name] not in tgt.key_columns or (name in tgt_cols and len(tgt.key_columns) > 1):
+                    done = accept(RelationMapping(p.iri, d, t, source_key=(tgt_cols[name],), target_key=tgt.key_columns, table=tgt.table), "by_name")
             if not done:
                 ask.append((p, d, t))
         # 3. the model, a few relationships at a time with only the tables they involve

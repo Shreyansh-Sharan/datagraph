@@ -296,7 +296,9 @@ def test_suggested_mapping_drops_only_the_uncompilable_parts(db):
 
 def _rel_fixture():
     from ontoforge.mapping import ClassMapping, MappingSpec
+    from ontoforge.ontology import ObjectProperty
     onto = ontology()
+    onto.add_object_property(ObjectProperty(EX + "hasEmployee", "has employee", domain=EX + "Department", range=EX + "Employee"))   # parent -> child: the key sits on the child
     spec = MappingSpec(base_iri=BASE, classes=(
         ClassMapping(EX + "Employee", table="employees", key_columns=("empno",)),
         ClassMapping(EX + "Department", table="departments", key_columns=("deptno",))), relations=())
@@ -322,10 +324,11 @@ def test_relations_are_filled_from_declared_keys_then_the_model_one_pair_of_tabl
     out = s.suggest(onto, spec, tables)
     rels = {r.property_iri.split("#")[-1]: r for r in out.relations}
     assert rels["worksIn"].target_key == ("deptno",) and rels["worksIn"].source_key == ("empno",)          # declared foreign key, no model needed
+    assert rels["hasEmployee"].table == "employees" and rels["hasEmployee"].source_key == ("deptno",) and rels["hasEmployee"].target_key == ("empno",)   # read from the child's table
     assert rels["reportsTo"].target_key == ("mgr",)                                                          # the model, from the two tables only
     assert rels["collaboratesWith"].table == "collaborations" and rels["collaboratesWith"].source_key == ("emp_a",) and rels["collaboratesWith"].target_key == ("emp_b",)
     assert "manages" not in rels and any("manages" in x and "nope" in x for x in s.report["skipped"])
-    assert s.report["declared"] == ["worksIn"] and set(s.report["ai"]) == {"reportsTo", "collaboratesWith"}
+    assert s.report["declared"] == ["worksIn"] and s.report["by_name"] == ["hasEmployee"] and set(s.report["ai"]) == {"reportsTo", "collaboratesWith"}
     assert len(provider.calls) == 1 and "employees" in provider.calls[0][1] and "salespersonquota" not in provider.calls[0][1]
     out.to_r2rml()
     # a second run has nothing left to ask
@@ -339,7 +342,7 @@ def test_relations_without_a_provider_use_declared_keys_and_names_only():
     onto, spec, tables = _rel_fixture()
     s = RelationSuggester(None)
     out = s.suggest(onto, spec, tables)
-    assert [r.property_iri.split("#")[-1] for r in out.relations] == ["worksIn"]
+    assert sorted(r.property_iri.split("#")[-1] for r in out.relations) == ["hasEmployee", "worksIn"]
     assert {u.split(" ")[0] for u in s.report["unmappable"]} == {"reportsTo", "manages", "collaboratesWith"}   # need the model
     # a self-relationship never uses the class's own key column as the foreign key
     assert all(r.target_key != ("empno",) for r in out.relations)
