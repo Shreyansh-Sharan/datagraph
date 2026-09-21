@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>datagraph UI Blueprint</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --bg: #f6f7f8; --surface: #ffffff; --surface-2: #eef1f2; --border: #d6dbde; --border-strong: #b4bcc2;
+  --text: #1a2024; --muted: #5b6670; --accent: #0b6e4f; --accent-soft: #e1f2ea; --accent-text: #ffffff;
+  --info: #175cd3; --info-soft: #e5eefb; --warn: #9a5400; --warn-soft: #fff1dd; --danger: #b42318; --danger-soft: #fde8e6; --ok: #067647; --ok-soft: #e1f5ea;
+  --font: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --radius: 4px; --radius-lg: 6px; --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1214; --surface: #171b1f; --surface-2: #1f2429; --border: #2b323a; --border-strong: #3d4650;
+    --text: #e7eaed; --muted: #9aa4ae; --accent: #3ecf8e; --accent-soft: #123526; --accent-text: #0b1a13;
+    --info: #6ea8fe; --info-soft: #12243f; --warn: #f5a524; --warn-soft: #3a2a0a; --danger: #f97066; --danger-soft: #3a1512; --ok: #47d18a; --ok-soft: #0f2d1e;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1214; --surface: #171b1f; --surface-2: #1f2429; --border: #2b323a; --border-strong: #3d4650;
+  --text: #e7eaed; --muted: #9aa4ae; --accent: #3ecf8e; --accent-soft: #123526; --accent-text: #0b1a13;
+  --info: #6ea8fe; --info-soft: #12243f; --warn: #f5a524; --warn-soft: #3a2a0a; --danger: #f97066; --danger-soft: #3a1512; --ok: #47d18a; --ok-soft: #0f2d1e;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.55 var(--font); }
+.wrap { max-width: 1180px; margin: 0 auto; padding-block: var(--s6) var(--s7); padding-inline: var(--s5); display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: var(--s7); }
+@media (max-width: 900px) { .wrap { grid-template-columns: 1fr; gap: var(--s5); padding-inline: var(--s4); } .toc { position: static; } }
+.toc { position: sticky; top: env(safe-area-inset-top, 0px); align-self: start; font-size: 13px; }
+.toc a { display: block; color: var(--muted); text-decoration: none; padding: 3px 0; border-left: 2px solid transparent; padding-left: 10px; }
+.toc a:hover { color: var(--text); border-color: var(--border-strong); }
+.toc .grp { margin: var(--s4) 0 var(--s1); padding-left: 12px; font-weight: 600; color: var(--text); font-size: 12px; letter-spacing: .04em; text-transform: uppercase; }
+header.hero { grid-column: 1 / -1; border-bottom: 1px solid var(--border); padding-bottom: var(--s5); }
+.kicker { font-family: var(--mono); font-size: 12px; color: var(--accent); margin-bottom: var(--s2); }
+h1 { font-size: 34px; line-height: 1.15; margin: 0 0 var(--s3); font-weight: 700; text-wrap: balance; letter-spacing: -0.01em; }
+.lede { font-size: 17px; color: var(--muted); max-width: 70ch; margin: 0 0 var(--s4); }
+.meta { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); font-size: 13px; color: var(--muted); }
+.meta b { color: var(--text); font-weight: 500; }
+main { min-width: 0; }
+section { margin-bottom: var(--s7); scroll-margin-top: var(--s4); }
+h2 { font-size: 24px; margin: 0 0 var(--s3); font-weight: 600; letter-spacing: -0.01em; text-wrap: balance; padding-top: var(--s3); border-top: 1px solid var(--border); }
+h3 { font-size: 17px; margin: var(--s5) 0 var(--s2); font-weight: 600; }
+h4 { font-size: 14px; margin: var(--s4) 0 var(--s2); font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+p, ul, ol { max-width: 76ch; }
+p { margin: 0 0 var(--s3); }
+ul, ol { margin: 0 0 var(--s3); padding-left: 22px; }
+li { margin-bottom: 4px; }
+li > ul { margin-top: 4px; }
+code { font-family: var(--mono); font-size: 13px; background: var(--surface-2); padding: 1px 5px; border-radius: 3px; }
+pre { font-family: var(--mono); font-size: 12.5px; line-height: 1.5; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--s3) var(--s4); overflow-x: auto; margin: 0 0 var(--s4); }
+pre code { background: none; padding: 0; font-size: inherit; }
+.tablewrap { overflow-x: auto; margin: 0 0 var(--s4); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { font-weight: 600; background: var(--surface-2); white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td code { white-space: nowrap; }
+.badge { display: inline-block; font-size: 11.5px; font-weight: 500; padding: 1px 8px; border-radius: 999px; border: 1px solid transparent; white-space: nowrap; }
+.p0 { background: var(--danger-soft); color: var(--danger); }
+.p1 { background: var(--warn-soft); color: var(--warn); }
+.p2 { background: var(--info-soft); color: var(--info); }
+.done { background: var(--ok-soft); color: var(--ok); }
+.callout { border: 1px solid var(--accent); background: var(--accent-soft); border-radius: var(--radius-lg); padding: var(--s3) var(--s4); margin: 0 0 var(--s4); max-width: 80ch; }
+.callout strong { color: var(--accent); }
+.note { border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius-lg); padding: var(--s3) var(--s4); margin: 0 0 var(--s4); max-width: 80ch; color: var(--muted); font-size: 14px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--s4); margin-bottom: var(--s4); }
+.panel { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); padding: var(--s3) var(--s4); }
+.panel h4 { margin-top: 0; }
+.panel ul { margin-bottom: 0; }
+.swatches { display: flex; flex-wrap: wrap; gap: var(--s2); margin-bottom: var(--s4); }
+.sw { display: inline-flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 12px; border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px 3px 4px; background: var(--surface); }
+.sw i { width: 18px; height: 18px; border-radius: 50%; display: inline-block; border: 1px solid var(--border); }
+.wire { font-family: var(--mono); font-size: 12px; line-height: 1.4; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--s3) var(--s4); overflow-x: auto; margin: 0 0 var(--s4); color: var(--text); }
+.mermaid { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--s3); margin: 0 0 var(--s4); overflow-x: auto; }
+a { color: var(--info); }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+<header class="hero">
+  <div class="kicker">datagraph · github.com/Shreyansh-Sharan/datagraph · UI build specification</div>
+  <h1>Technical design and product feature list for the datagraph UI</h1>
+  <p class="lede">What the UI has to do, screen by screen, on top of the existing datagraph backend (package <code>ontoforge</code>): a knowledge-graph builder that designs an ontology, maps it onto warehouse tables through <strong>Postgres</strong> and <strong>Databricks</strong> as the two primary adapters, builds the graph, reasons over it and serves it to people and agents.</p>
+  <div class="meta">
+    <span>Audience: <b>UI engineers and designers building or rebuilding the front end</b></span>
+    <span>Backend reference: <b>commit 89617af, 121 REST routes, MCP + GraphQL</b></span>
+    <span>Date: <b>21 September 2026</b></span>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Contents">
+  <div class="grp">Context</div>
+  <a href="#scope">1. Scope and product</a>
+  <a href="#architecture">2. Architecture</a>
+  <a href="#adapters">3. Postgres and Databricks adapters</a>
+  <a href="#model">4. Domain model and lifecycle</a>
+  <a href="#ia">5. Navigation and layout</a>
+  <div class="grp">Features</div>
+  <a href="#features">6. Feature list by screen</a>
+  <a href="#graph-stage">7. Graph stage</a>
+  <a href="#contracts">8. Data contracts</a>
+  <div class="grp">Quality</div>
+  <a href="#design">9. Design system</a>
+  <a href="#nfr">10. Non-functional requirements</a>
+  <a href="#plan">11. Delivery plan and acceptance</a>
+  <a href="#open">12. Open items</a>
+</nav>
+
+<main>
+
+<section id="scope">
+  <h2>1. Scope and product</h2>
+  <p><strong>datagraph</strong> turns warehouse tables into a queryable knowledge graph. A builder drafts an ontology (with key inference or AI help), binds classes and attributes to tables and columns (an R2RML mapping compiled to SQL), builds the graph into Postgres, adds inference and quality rules, and publishes a version that people explore in the UI and agents query over MCP and GraphQL.</p>
+  <p>This document specifies the UI. It is the deliverable for a front-end team (or agent) that builds the interface against the existing REST API; it does not change the backend. Where the current single-page app already implements a feature, it is marked <span class="badge done">exists</span> so the team can decide between reuse and rebuild.</p>
+
+  <div class="callout"><strong>Adapter requirement.</strong> The UI must treat <strong>Postgres</strong> and <strong>Databricks</strong> as the two primary source adapters. Every screen that touches warehouse data (catalog browsing, metadata, mapping, SQL preview, table preview, build, warehouse publishing) must work identically against both, show which adapter the deployment is running, and generate SQL in that adapter's dialect. Other warehouses (Fabric, SQL Server) come later through the same ports and must not require UI changes beyond a new label.</p></div>
+
+  <h3>Users and jobs</h3>
+  <div class="grid2">
+    <div class="panel"><h4>Builder (data engineer)</h4><ul><li>Draft an ontology from tables, refine it, map it, build the graph, fix quality issues.</li><li>Works long sessions, keyboard-heavy, in an IDE-and-dashboards day.</li></ul></div>
+    <div class="panel"><h4>Reviewer / domain expert</h4><ul><li>Reads the ontology map and the mapping status, comments, approves or rejects a version.</li><li>Needs the map to read without knowing RDF.</li></ul></div>
+    <div class="panel"><h4>Explorer (analyst)</h4><ul><li>Finds an entity, sees what it connects to, follows relationships, spots hubs and communities.</li><li>Uses search, the graph stage and the triples grid.</li></ul></div>
+    <div class="panel"><h4>Admin</h4><ul><li>Principals and roles, API keys, locks, MCP exposure per domain, the source adapter in use.</li></ul></div>
+  </div>
+
+  <h3>Non-goals</h3>
+  <ul>
+    <li>Marketing surface, mobile-first layouts (tablet-tolerant is enough), custom visual language for standard controls.</li>
+    <li>Editing the graph's triples by hand: the graph is always derived from the mapping and a build.</li>
+    <li>Drag-and-drop ontology editing on the canvas in the first release (see <a href="#open">open items</a>).</li>
+  </ul>
+</section>
+
+<section id="architecture">
+  <h2>2. Architecture</h2>
+  <p>The UI is a thin client. All state lives in the backend; the browser holds only the current route, the identity, and per-viewer conveniences (theme, last tab). The API is same-origin under <code>/</code>, the UI is served at <code>/ui/</code>.</p>
+  <pre class="mermaid">flowchart LR
+  UI["UI (SPA at /ui)"] -->|REST JSON| API["FastAPI · ontoforge.api"]
+  Agents["LLM agents"] -->|MCP at /mcp · GraphQL| API
+  API --> REG["Registry (Postgres)\ndomains · versions · reviews · builds · audit"]
+  API --> STORE["Graph store (Postgres)\ntriples table + inferred flag"]
+  API --> SRC["SourceEngine port"]
+  SRC --> PG["Postgres adapter\ncatalog + dialect + engine"]
+  SRC --> DBX["Databricks adapter\ncatalog + dialect + engine"]
+  API --> LLM["LLMProvider port\nAzure OpenAI · Anthropic · none"]</pre>
+
+  <div class="tablewrap"><table>
+    <tr><th>Layer</th><th>What it is</th><th>What the UI needs from it</th></tr>
+    <tr><td>Registry</td><td>Postgres tables for domains, versions (draft → in review → published → archived), leases, reviews with quorum, build runs, audit, comments, active version, MCP policy.</td><td>Everything on the Domains, Overview, Build, Settings, Tasks and Admin screens.</td></tr>
+    <tr><td>Graph store</td><td>One shared <code>triples</code> table per version with an <code>inferred</code> flag; search, overview sampling, neighbourhood, entity detail, paged triples.</td><td>Explore, Triples, Analytics.</td></tr>
+    <tr><td>Source adapters</td><td>Three ports per warehouse: <code>SqlDialect</code> (identifier quoting, IRI encoding, three-part names), <code>CatalogAdapter</code> (tables, columns, comments, keys), <code>SourceEngine</code> (stream / query / execute).</td><td>Catalog browser, metadata, mapping previews, table preview, dialect for compiled SQL, warehouse publish.</td></tr>
+    <tr><td>Compiler</td><td>W3C R2RML → SQL (UNION ALL of triple-producing SELECTs), per class or whole mapping.</td><td>SQL tab in the mapping designer; R2RML export.</td></tr>
+    <tr><td>Reasoning</td><td>OWL 2 RL closure, SHACL validation, SWRL-style rules compiled to SQL, SQL-validated quality constraints (14 kinds).</td><td>Rules, Data quality, Build step results.</td></tr>
+    <tr><td>Auth</td><td><code>header</code> mode (trusted proxy header, default <code>X-Actor</code>; Databricks Apps sends <code>X-Forwarded-Email</code>) or <code>token</code> mode (API keys). Roles: viewer &lt; builder &lt; reviewer &lt; admin.</td><td>Identity picker or key entry, role-gated controls.</td></tr>
+  </table></div>
+
+  <h3>Backend facts the UI can rely on</h3>
+  <ul>
+    <li>121 REST routes under one FastAPI app; JSON errors as <code>{"detail": "..."}</code> with 400/401/403/404/409 semantics.</li>
+    <li>Builds are asynchronous (<code>BuildScheduler</code>); the run record is updated step by step so the UI can poll <code>GET /builds/{run_id}</code>.</li>
+    <li>Static UI assets are served with <code>Cache-Control: no-cache</code> (ETag revalidation) so a deploy is visible on reload.</li>
+    <li>Reference scale (live Databricks domain <code>rgm</code>, 17 tables): 263,695 triples, +23,207 inferred, 12,445 entities, 109k edges. The graph stage must stay fluid at this scale by sampling and expanding, never by loading everything.</li>
+  </ul>
+</section>
+
+<section id="adapters">
+  <h2>3. Postgres and Databricks adapters</h2>
+  <p>The deployment runs exactly one source adapter, chosen by <code>ONTOFORGE_SOURCE_KIND</code>. The UI reads it from <code>GET /auth/config</code> and must surface it everywhere warehouse data appears. Both adapters are first-class: acceptance tests for every warehouse-facing screen run against both.</p>
+
+  <div class="tablewrap"><table>
+    <tr><th>Concern</th><th>Postgres adapter</th><th>Databricks adapter</th><th>UI behaviour</th></tr>
+    <tr><td>Configuration</td><td><code>ONTOFORGE_SOURCE_KIND=postgres</code>; uses the registry database (optionally another schema).</td><td><code>ONTOFORGE_SOURCE_KIND=databricks</code> plus <code>DATABRICKS_HOST</code>, <code>DATABRICKS_HTTP_PATH</code> (SQL warehouse), <code>DATABRICKS_TOKEN</code>, optional <code>DATABRICKS_CATALOG</code> / <code>DATABRICKS_SCHEMA</code>.</td><td>Never shown or edited in the UI (secrets stay in env). The UI shows kind and catalog only: <code>{"source": {"kind": "databricks", "catalog": "finops_metadata"}}</code>.</td></tr>
+    <tr><td>Table names</td><td><code>schema.table</code> or bare <code>table</code>.</td><td>Three-part <code>catalog.schema.table</code>; the session catalog is the configured default.</td><td>Catalog browser shows a schema picker; the table name is always displayed in full as the adapter returns it; mapping stores the exact string.</td></tr>
+    <tr><td>Catalog metadata</td><td><code>information_schema</code> incl. primary and foreign keys.</td><td><code>information_schema</code> for columns and comments; Unity Catalog tables often have <em>no</em> declared keys.</td><td>When keys are missing the UI offers <strong>Infer keys</strong> (autodraft <code>infer_keys=true</code>) and labels inferred keys distinctly from declared ones.</td></tr>
+    <tr><td>SQL dialect</td><td>Double-quoted identifiers, <code>ontoforge_iri_encode()</code> helper installed by <code>prepare()</code>.</td><td>Backtick identifiers, <code>url_encode()</code>, <code>concat()</code>.</td><td>SQL previews default to the running adapter's dialect; a dialect selector (postgres / databricks / sqlite) is available for export only.</td></tr>
+    <tr><td>Previews</td><td colspan="2"><code>GET /mapping/preview</code> (compiled triples for a class), <code>GET /mapping/table-preview</code> (first rows of a table, name validated), <code>POST /mapping/test-sql</code> (SELECT-only, row-capped).</td><td>All three must render the same grid component; Databricks calls can take 2–10 s on a cold warehouse, so show a skeleton and keep the request cancellable.</td></tr>
+    <tr><td>Warehouse publish</td><td>Optional: triple views or tables in a target schema.</td><td><code>ONTOFORGE_WAREHOUSE_MATERIALIZATION=view|table</code> with Liquid Clustering / OPTIMIZE.</td><td>Build screen shows the materialization mode and target schema as read-only facts of the deployment.</td></tr>
+    <tr><td>Identity</td><td>Header <code>X-Actor</code> in dev; API keys in production.</td><td>Databricks Apps forwards <code>X-Forwarded-Email</code>; the app sets <code>auth_header</code> accordingly.</td><td>In header mode the UI lets the user choose an identity (dev) or shows the forwarded one (Databricks Apps); in token mode it asks for a key once and stores it in <code>localStorage</code>.</td></tr>
+  </table></div>
+
+  <h3>Required adapter-aware UI elements</h3>
+  <ol>
+    <li><strong>Source chip in the top bar</strong> <span class="badge done">exists</span>: icon + <code>Postgres</code> or <code>Databricks · &lt;catalog&gt;</code>, tooltip "Source warehouse".</li>
+    <li><strong>Catalog browser</strong> (Metadata and Mapping): schema picker, searchable table list from <code>GET /catalog/tables?schema_name=</code>, column list with type, comment and key badges from <code>GET /catalog/tables/{table}</code>.</li>
+    <li><strong>Dialect-correct SQL</strong> in every SQL view, with a copy button.</li>
+    <li><strong>Adapter error surfacing</strong>: permission errors (e.g. Databricks <code>INSUFFICIENT_PERMISSIONS</code> on a catalog) must be shown verbatim with the action the user can take ("ask for USE CATALOG / USE SCHEMA / SELECT on …"), not as a generic failure.</li>
+    <li><strong>Settings → Source</strong> panel: read-only summary of the adapter (kind, catalog, schema, materialization mode, auth mode) and a "Test connection" that calls <code>GET /catalog/tables</code> and reports latency.</li>
+  </ol>
+</section>
+
+<section id="model">
+  <h2>4. Domain model and lifecycle</h2>
+  <div class="grid2">
+    <div class="panel"><h4>Domain</h4><ul><li><code>name</code> (slug), <code>description</code>, <code>base_iri</code>, <code>review_quorum</code>.</li><li>Has many versions; one may be <em>active</em> (served to MCP/GraphQL).</li><li>MCP policy: <code>exposed</code>, <code>disabled_tools[]</code>.</li></ul></div>
+    <div class="panel"><h4>Version</h4><ul><li><code>version</code> number, <code>status</code>: <code>draft</code> → <code>in_review</code> → <code>published</code> → <code>archived</code>.</li><li>Content flags: <code>has_ontology</code>, <code>has_mapping</code>, <code>has_r2rml</code>, <code>rule_count</code>, <code>constraint_count</code>.</li><li>Editable only in <code>draft</code>; a builder takes a <em>lease</em> (lock) to edit.</li></ul></div>
+    <div class="panel"><h4>Build run</h4><ul><li><code>status</code> (queued/running/succeeded/failed/cancelled), <code>steps[]</code> with name, seconds, detail; <code>triple_count</code>, <code>error</code>.</li><li>Failed builds keep the previous graph.</li></ul></div>
+    <div class="panel"><h4>Roles</h4><ul><li><code>viewer</code>: read everything published.</li><li><code>builder</code>: edit drafts, build, submit for review.</li><li><code>reviewer</code>: approve/reject, publish, archive.</li><li><code>admin</code>: principals, keys, locks, MCP policy.</li></ul></div>
+  </div>
+  <h3>Pipeline the UI must make visible</h3>
+  <p>Every domain screen shows where the version is in <strong>Ontology › Mapping › Graph</strong>. The breadcrumb ticks each stage as it completes (<code>has_ontology</code>, mapping completion 100 %, last build succeeded) <span class="badge done">exists</span>. A version that is missing a stage shows a next-step empty state instead of a blank screen.</p>
+  <div class="wire">Domains › rgm v1 › ✓ Ontology › ✓ Mapping › ✓ Graph   [draft]      ☰ My tasks   🛡 Admin   ▦ Databricks · finops_metadata   ☾   alice (admin)</div>
+</section>
+
+<section id="ia">
+  <h2>5. Navigation and layout</h2>
+  <p>Top bar + left section nav within a domain + content area. Content is a task area (page head with title, one-line intent, primary actions right-aligned, then the working surface), not a card grid.</p>
+  <div class="tablewrap"><table>
+    <tr><th>Route</th><th>Screen</th><th>Notes</th></tr>
+    <tr><td><code>#/domains</code></td><td>Domains list</td><td>Landing page. Create / import domain.</td></tr>
+    <tr><td><code>#/d/{name}</code></td><td>Domain overview</td><td>Versions, lifecycle actions, comments, active version.</td></tr>
+    <tr><td><code>#/d/{name}/{tab}[/{arg}]</code></td><td>Domain tab</td><td><code>tab</code> ∈ metadata, ontology, mapping, rules, quality, build, explore, triples, analytics, settings. <code>arg</code> is a class IRI or entity IRI to preselect.</td></tr>
+    <tr><td><code>#/tasks</code></td><td>My tasks</td><td>Reviews waiting for me, my leases, my failed builds.</td></tr>
+    <tr><td><code>#/admin</code></td><td>Admin</td><td>Principals, API keys, locks. Admin role only.</td></tr>
+  </table></div>
+  <h3>Side nav groups</h3>
+  <ul>
+    <li><strong>Domain</strong>: Overview · Settings</li>
+    <li><strong>Design</strong>: Metadata · Ontology · Mapping · Rules · Data quality</li>
+    <li><strong>Knowledge graph</strong>: Build · Explore · Triples · Analytics</li>
+  </ul>
+  <p>A version selector sits at the top of the side nav. Switching versions keeps the current tab. Tabs that need a version but have none show a "Create a draft version" empty state.</p>
+</section>
+
+<section id="features">
+  <h2>6. Feature list by screen</h2>
+  <p>Priority: <span class="badge p0">P0</span> must ship in the first release, <span class="badge p1">P1</span> second release, <span class="badge p2">P2</span> later. <span class="badge done">exists</span> marks features present in the current SPA.</p>
+
+  <h3>6.1 Domains</h3>
+  <div class="tablewrap"><table>
+    <tr><th>Feature</th><th>Priority</th><th>API</th></tr>
+    <tr><td>List domains with active version, status, triple count, last build; search and sort.</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td><code>GET /domains</code></td></tr>
+    <tr><td>Create domain (name slug validation <code>^[A-Za-z0-9_-]+$</code>, base IRI, review quorum).</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td><code>POST /domains</code></td></tr>
+    <tr><td>Import a domain bundle (ontology + mapping + rules + quality) and export one.</td><td><span class="badge p1">P1</span> <span class="badge done">exists</span></td><td><code>POST /domains/import</code>, <code>GET /domains/{name}/export</code></td></tr>
+    <tr><td>Delete domain with typed confirmation.</td><td><span class="badge p1">P1</span></td><td><code>DELETE /domains/{name}</code></td></tr>
+  </table></div>
+
+  <h3>6.2 Overview</h3>
+  <div class="tablewrap"><table>
+    <tr><th>Feature</th><th>Priority</th><th>API</th></tr>
+    <tr><td>Version list with status badges, content flags, build state; create draft; set active version.</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td><code>GET/POST /domains/{name}/versions</code>, <code>POST /domains/{name}/active</code></td></tr>
+    <tr><td>Lifecycle actions gated by role: submit for review, approve/reject with comment, publish (quorum shown as <em>2 of 3 approvals</em>), archive.</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td><code>POST /versions/{id}/transition</code>, <code>GET/POST /versions/{id}/reviews</code></td></tr>
+    <tr><td>Lease: take / release / force-take (admin); show who holds it and when it expires.</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td><code>POST/DELETE /versions/{id}/lease</code></td></tr>
+    <tr><td>Comment thread on the version; audit log (who changed what, when).</td><td><span class="badge p1">P1</span> <span class="badge done">exists</span></td><td><code>GET/POST /versions/{id}/comments</code>, <code>GET /versions/{id}/audit</code></td></tr>
+    <tr><td>Readiness card: ontology ✓, mapping x %, build ✓/✗, drift ✓/✗, one click to the blocking step.</td><td><span class="badge p0">P0</span></td><td><code>GET /versions/{id}</code>, <code>/mapping/status</code>, <code>/mapping/drift</code>, <code>/builds</code></td></tr>
+  </table></div>
+
+  <h3>6.3 Metadata (catalog snapshot)</h3>
+  <div class="tablewrap"><table>
+    <tr><th>Feature</th><th>Priority</th><th>API</th></tr>
+    <tr><td>Browse the adapter's catalog: schema picker, table search, column grid with type, comment, key badges (declared vs inferred).</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td><code>GET /catalog/tables</code>, <code>GET /catalog/tables/{table}</code></td></tr>
+    <tr><td>Import tables into the version's metadata snapshot; refresh; remove.</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td><code>POST /versions/{id}/metadata/import</code>, <code>/metadata/refresh</code>, <code>DELETE /metadata/{table}</code></td></tr>
+    <tr><td>Edit table and column descriptions inline (they feed the AI drafts).</td><td><span class="badge p1">P1</span> <span class="badge done">exists</span></td><td><code>PUT /metadata/{table}</code>, <code>PUT /metadata/{table}/columns/{column}</code></td></tr>
+    <tr><td>Schema drift panel: renamed/dropped columns versus the stored mapping, with "fix in mapping" links.</td><td><span class="badge p1">P1</span> <span class="badge done">exists</span></td><td><code>GET /versions/{id}/mapping/drift</code></td></tr>
+  </table></div>
+
+  <h3>6.4 Ontology</h3>
+  <div class="tablewrap"><table>
+    <tr><th>Feature</th><th>Priority</th><th>API</th></tr>
+    <tr><td><strong>Ontology map</strong> as the default view: classes as labelled nodes with their icon, relationships as labelled edges, inheritance in the accent colour, sized by property count; click a class to edit it in a side panel.</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td><code>GET /versions/{id}/ontology</code> (JSON)</td></tr>
+    <tr><td>Class editor: icon, label, description, parents (multi), equivalent / disjoint classes, restrictions (min/max/exactly/some/only/has_value), delete.</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td><code>PUT /versions/{id}/ontology/json</code></td></tr>
+    <tr><td>Property editor: datatype properties (range XSD, functional), object properties (range, inverse, characteristics, sub-property, chains, union domains).</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td>same</td></tr>
+    <tr><td>Class list view with filter and property counts (alternative to the map).</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td>same</td></tr>
+    <tr><td><strong>Draft from tables</strong>: pick tables (or a schema), infer keys, generate classes/attributes/relations with icons; confirm before replacing.</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td><code>POST /versions/{id}/autodraft</code></td></tr>
+    <tr><td><strong>Draft with AI</strong> from metadata + a description; <strong>AI assist</strong> ("add a Region class above Geography"). Hidden when <code>llm_provider=none</code>.</td><td><span class="badge p1">P1</span> <span class="badge done">exists</span></td><td><code>POST /llm/draft-ontology</code>, <code>POST /llm/assist</code></td></tr>
+    <tr><td>Import (Turtle/XML/JSON-LD/N3/NT, merge or replace) incl. an industry-ontology catalogue; export Turtle.</td><td><span class="badge p1">P1</span> <span class="badge done">exists</span></td><td><code>POST /ontology/import</code>, <code>GET /ontologies/industry</code>, <code>GET /ontology/turtle</code></td></tr>
+    <tr><td>Checks panel: consistency issues (code, subject, severity) with click-to-fix navigation.</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td><code>GET /versions/{id}/ontology/checks</code></td></tr>
+    <tr><td>Drag-and-drop on the canvas: drag a class onto another to set the parent, drag between classes to create a relationship.</td><td><span class="badge p2">P2</span></td><td>same PUT</td></tr>
+  </table></div>
+
+  <h3>6.5 Mapping</h3>
+  <div class="tablewrap"><table>
+    <tr><th>Feature</th><th>Priority</th><th>API</th></tr>
+    <tr><td><strong>Designer</strong>: the ontology map coloured by mapping status (complete / partial / unmapped, legend), click a class to open the bottom panel.</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td><code>GET /mapping/status</code></td></tr>
+    <tr><td>Bottom panel tabs: <strong>Status</strong> (attributes → columns, relationships → keys, bind / exclude), <strong>Data</strong> (first rows of the table; column headers carry ID / attribute badges; click a header to bind it), <strong>SQL</strong> (compiled SQL for this class in the adapter's dialect).</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td><code>GET /mapping/table-preview</code>, <code>GET /mapping/sql?class_iri=</code>, <code>PUT /mapping</code></td></tr>
+    <tr><td>Map a class to a table (catalog picker) or to a SQL query (SELECT-only, tested before saving); key columns; IRI template.</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td><code>PUT /mapping</code>, <code>POST /mapping/test-sql</code></td></tr>
+    <tr><td>Relationship mapping: FK on the source table, link table with source/target keys, or SQL; direction forward / reverse / bidirectional.</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td><code>PUT /mapping</code></td></tr>
+    <tr><td>KPIs: completion %, classes mapped, attributes, relationships, excluded; "Exclude unmapped" bulk action.</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td><code>POST /mapping/exclude-unmapped</code></td></tr>
+    <tr><td>Preview compiled triples for a class (subject / predicate / object grid).</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td><code>GET /mapping/preview</code></td></tr>
+    <tr><td>Suggest with AI (column ↔ attribute), draft from tables, R2RML export, whole-mapping SQL export with dialect selector.</td><td><span class="badge p1">P1</span> <span class="badge done">exists</span></td><td><code>POST /llm/suggest-mapping</code>, <code>GET /mapping/r2rml</code>, <code>GET /mapping/sql</code></td></tr>
+    <tr><td>Unmap a class (removes its relations too) with confirmation.</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td><code>DELETE /mapping/classes?class_iri=</code></td></tr>
+  </table></div>
+
+  <h3>6.6 Rules and Data quality</h3>
+  <div class="tablewrap"><table>
+    <tr><th>Feature</th><th>Priority</th><th>API</th></tr>
+    <tr><td>Rules editor: name, rule text (SWRL-like atoms with built-ins), mode <code>materialize</code> | <code>violation</code>, enabled toggle; syntax errors shown inline; compiled SQL view.</td><td><span class="badge p1">P1</span> <span class="badge done">exists</span></td><td><code>GET/PUT /rules</code>, <code>GET /rules/sql</code></td></tr>
+    <tr><td>Run rules / OWL RL inference / SHACL validation on demand with a result summary (added triples, violations).</td><td><span class="badge p1">P1</span> <span class="badge done">exists</span></td><td><code>POST /reasoning/rules</code>, <code>/reasoning/infer</code>, <code>/reasoning/validate</code></td></tr>
+    <tr><td>Constraint editor for the 14 kinds (<code>min_count, max_count, datatype, class, pattern, in, min/max_inclusive, min/max_exclusive, unique, node_kind, require_label, no_orphans</code>) with severity; derive constraints from ontology restrictions.</td><td><span class="badge p1">P1</span> <span class="badge done">exists</span></td><td><code>GET/PUT /quality</code></td></tr>
+    <tr><td>Run quality checks; results table with count, sample violating entities linking into Explore; SHACL import/export; SQL view.</td><td><span class="badge p1">P1</span> <span class="badge done">exists</span></td><td><code>POST /reasoning/quality</code>, <code>/quality/import-shacl</code>, <code>GET /quality/shacl</code>, <code>/quality/sql</code></td></tr>
+  </table></div>
+
+  <h3>6.7 Build</h3>
+  <div class="tablewrap"><table>
+    <tr><th>Feature</th><th>Priority</th><th>API</th></tr>
+    <tr><td>Start a build; live step list (compile, load, infer, rules, quality, publish) with durations; cancel; final triple count.</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td><code>POST /versions/{id}/builds</code>, <code>GET /builds/{run_id}</code>, <code>POST /builds/{run_id}/cancel</code></td></tr>
+    <tr><td>Run history with status, actor, duration, error; expand a failed run to its error and the step it failed on.</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td><code>GET /versions/{id}/builds</code></td></tr>
+    <tr><td>Pre-build checklist: mapping completion, ontology checks, drift; block the button with a reason if the mapping is empty.</td><td><span class="badge p0">P0</span></td><td>status endpoints</td></tr>
+    <tr><td>Warehouse publish facts (materialization mode, target schema) for the running adapter.</td><td><span class="badge p1">P1</span></td><td><code>GET /auth/config</code> (extend)</td></tr>
+  </table></div>
+
+  <h3>6.8 Explore</h3>
+  <div class="tablewrap"><table>
+    <tr><th>Feature</th><th>Priority</th><th>API</th></tr>
+    <tr><td>Whole-graph backdrop: a balanced sample (up to 1,500 nodes) rendered grey until something is focused.</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td><code>GET /graph/overview?limit=</code></td></tr>
+    <tr><td>Ranked search with type filter, field (any / label / IRI) and match (contains / exact / starts / ends); results as icon pills.</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td><code>GET /graph/search</code></td></tr>
+    <tr><td>Entity drawer: identity (icon, types, IRI), attributes with datatype/lang, outgoing and incoming relations grouped by predicate, inferred badge, "more" paging.</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td><code>GET /graph/entity?iri=</code></td></tr>
+    <tr><td>Expand neighbourhood (depth 1–6, limit) and merge into the stage; focus rebuilds around an entity.</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td><code>GET /graph/neighbourhood</code></td></tr>
+    <tr><td>Datasets, bridges and virtual attributes on an entity; run a declared action.</td><td><span class="badge p1">P1</span> <span class="badge done">exists</span></td><td><code>/graph/entity/datasets</code>, <code>/bridges</code>, <code>/virtual</code>, <code>POST /graph/entity/actions/{name}</code></td></tr>
+    <tr><td>Deep link <code>#/d/{name}/explore/{iri}</code> opens the entity directly.</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td>—</td></tr>
+  </table></div>
+
+  <h3>6.9 Triples</h3>
+  <div class="tablewrap"><table>
+    <tr><th>Feature</th><th>Priority</th><th>API</th></tr>
+    <tr><td>Paged grid (100 / 500 / 1000) with text, predicate, subject and asserted/inferred filters; sortable headers (subject, predicate, object, inferred); totals.</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td><code>GET /graph/triples?sort=&direction=&limit=&offset=</code></td></tr>
+    <tr><td>Subject and object IRIs link into Explore; literals show datatype and language.</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td>—</td></tr>
+    <tr><td>Export the current filter as CSV / N-Triples.</td><td><span class="badge p2">P2</span></td><td>new endpoint</td></tr>
+  </table></div>
+
+  <h3>6.10 Analytics</h3>
+  <div class="tablewrap"><table>
+    <tr><th>Feature</th><th>Priority</th><th>API</th></tr>
+    <tr><td>Graph health: triples, inferred, entities per class, predicate usage, orphans.</td><td><span class="badge p1">P1</span> <span class="badge done">exists</span></td><td><code>GET /analytics/health</code>, <code>GET /graph/status</code></td></tr>
+    <tr><td>Centralities (top N) and communities (Louvain, resolution, seed, persist) as runs; results table with links into Explore; AI interpretation of a run.</td><td><span class="badge p1">P1</span> <span class="badge done">exists</span></td><td><code>POST /analytics/centralities</code>, <code>/communities</code>, <code>GET /analytics/runs</code>, <code>POST /analytics/runs/{id}/interpret</code></td></tr>
+    <tr><td>Cohorts: define, evaluate, list members, materialise.</td><td><span class="badge p2">P2</span> <span class="badge done">exists</span></td><td><code>/versions/{id}/cohorts…</code></td></tr>
+  </table></div>
+
+  <h3>6.11 Settings, Tasks, Admin</h3>
+  <div class="tablewrap"><table>
+    <tr><th>Feature</th><th>Priority</th><th>API</th></tr>
+    <tr><td>Domain settings: description, MCP policy (exposed, disabled tools), attachments (datasets, actions, virtual attributes), GraphQL console with schema viewer.</td><td><span class="badge p1">P1</span> <span class="badge done">exists</span></td><td><code>GET/PUT /domains/{name}/mcp-policy</code>, <code>/attachments</code>, <code>POST /graphql</code>, <code>GET /graphql/schema</code></td></tr>
+    <tr><td>Source panel (adapter kind, catalog, auth mode, materialization) with "Test connection".</td><td><span class="badge p0">P0</span></td><td><code>GET /auth/config</code>, <code>GET /catalog/tables</code></td></tr>
+    <tr><td>My tasks: reviews waiting for me, my leases, my failed builds.</td><td><span class="badge p1">P1</span> <span class="badge done">exists</span></td><td><code>GET /tasks</code></td></tr>
+    <tr><td>Admin: principals and roles, API keys (create shows the secret once), locks (view, force release).</td><td><span class="badge p1">P1</span> <span class="badge done">exists</span></td><td><code>/admin/principals</code>, <code>/admin/api-keys</code>, <code>/admin/locks</code></td></tr>
+    <tr><td>Identity: header-mode picker (dev), forwarded identity display (Databricks Apps), token entry (token mode), role shown next to the name; theme toggle.</td><td><span class="badge p0">P0</span> <span class="badge done">exists</span></td><td><code>GET /auth/config</code>, <code>GET /me</code></td></tr>
+  </table></div>
+</section>
+
+<section id="graph-stage">
+  <h2>7. Graph stage</h2>
+  <p>One reusable WebGL component used by Ontology (map), Mapping (designer) and Explore. Current implementation: sigma.js 2.4 + graphology 0.25 + graphology-library 0.8, vendored (MIT). Any replacement must keep the contract below.</p>
+  <pre><code>renderGraph(container, {
+  nodes: [{ id, label, type, glyph?, color?, size? }],
+  edges: [{ source, target, label?, kind?: "inheritance" }],
+  selected?, colorBy?: "type" | "community", showEdgeLabels?, backdrop?, focusDim?, legend?,
+  onSelect(node), onExpand(node), onContextMenu(node, items)
+}) → { destroy, select(id), fit, highlight(ids), clearHighlight, has(id),
+      setting(name, value), attrs(id), merge({ nodes, edges }), graph }</code></pre>
+  <ul>
+    <li><strong>Layout</strong>: ForceAtlas2 with noverlap, incremental on merge; "Layout" button re-runs it; F fits.</li>
+    <li><strong>Colour</strong>: stable palette by class with a legend (≤ 12 entries), or by Louvain community; explicit per-node colour wins (mapping status).</li>
+    <li><strong>Backdrop mode</strong> (Explore): everything grey and label-less until hover, selection or a highlight set; then the neighbourhood lights up and the rest dims.</li>
+    <li><strong>Focus-dim off</strong> (Ontology, Mapping): selection outlines the node without greying the rest, so status colours stay readable.</li>
+    <li><strong>Interactions</strong>: hover highlights neighbourhood; click selects and opens the panel; double-click expands / opens the form; right-click context menu (expand, focus, hide, copy IRI); arrow keys move selection; Enter opens; Escape closes.</li>
+    <li><strong>Clusters</strong>: detect (resolution slider), collapse into super-nodes with member counts, expand, clear; chips list the clusters.</li>
+    <li><strong>Toolbar</strong>: zoom in/out, fit, layout, clusters, colour-by select, edge-labels toggle; status line "N nodes · M edges"; legend bottom-left.</li>
+    <li><strong>Resilience</strong>: renders into a 0×0 container without error and fits once it gets a size; resizes with its container; hidden panels use <code>[hidden]</code> and must not leak outlines.</li>
+    <li><strong>Scale</strong>: 1,500 nodes / 5,000 edges must stay above 30 fps on a 2020 laptop; larger sets are sampled server-side.</li>
+  </ul>
+</section>
+
+<section id="contracts">
+  <h2>8. Data contracts</h2>
+  <p>The shapes the UI binds to. Field names are exact; everything is JSON over REST.</p>
+
+  <h3>Runtime config</h3>
+  <pre><code>GET /auth/config
+{ "mode": "header" | "token", "header": "X-Actor", "default_role": "viewer",
+  "source": { "kind": "postgres" | "databricks", "catalog": "finops_metadata" | null } }
+
+GET /me → { "name": "alice", "role": "admin" }</code></pre>
+
+  <h3>Version</h3>
+  <pre><code>{ "id": uuid, "domain_name": "rgm", "version": 1, "status": "draft",
+  "has_ontology": true, "has_mapping": true, "has_r2rml": false,
+  "rule_count": 2, "constraint_count": 5, "created_at": iso, "updated_at": iso,
+  "lease": { "holder": "alice", "expires_at": iso } | null }</code></pre>
+
+  <h3>Ontology (JSON form, <code>GET /versions/{id}/ontology</code> · <code>PUT …/ontology/json</code>)</h3>
+  <pre><code>{ "iri": "http://polestar.ai/rgm", "label": "RGM", "description": null,
+  "classes": [ { "iri", "label", "description", "parents": [iri], "equivalent_to": [iri], "disjoint_with": [iri],
+                 "restrictions": [ { "property": iri, "kind": "min"|"max"|"exactly"|"some"|"only"|"has_value", "value": 1 | iri } ],
+                 "icon": "📦" | null } ],
+  "object_properties":   [ { "iri", "label", "description", "domain", "domains": [iri], "range", "inverse_of",
+                             "characteristics": ["functional","symmetric",…], "sub_property_of": [iri], "chain": [[iri, iri]] } ],
+  "datatype_properties": [ { "iri", "label", "description", "domain", "domains": [iri], "range": xsd iri, "functional": bool } ] }</code></pre>
+  <div class="note">The Turtle form (<code>PUT /versions/{id}/ontology</code> with <code>{"turtle": "…"}</code>) is the source of truth; the icon lives in the annotation <code>ofui:icon</code> (namespace <code>http://ontoforge.dev/ui#</code>). The UI edits the JSON form and never needs to touch Turtle.</div>
+
+  <h3>Mapping spec (<code>GET/PUT /versions/{id}/mapping</code>)</h3>
+  <pre><code>{ "base_iri": "http://polestar.ai/rgm/",
+  "classes": [ { "class_iri", "table": "rgm.gold.dim_customer" | null, "sql_query": string | null,
+                 "key_columns": ["customer_id"], "iri_template": string | null,
+                 "attributes": [ { "property_iri", "column", "datatype": xsd | null, "language": string | null } ],
+                 "excluded": [property iri] } ],
+  "relations": [ { "property_iri", "source_class", "target_class",
+                   "source_key": [col] | null, "target_key": [col] | null,
+                   "table": string | null, "sql_query": string | null,
+                   "direction": "forward" | "reverse" | "bidirectional" } ] }
+
+GET /mapping/status → { "completion": 0.0–1.0, "classes": [ { "class_iri", "state": "complete"|"partial"|"unmapped",
+                        "unmapped_attributes": [iri], "unmapped_relations": [iri] } ], … }
+GET /mapping/table-preview?table=&limit= → { "columns": [string], "rows": [ { column: string | null } ] }
+GET /mapping/sql?dialect=&class_iri= → text/plain</code></pre>
+
+  <h3>Graph</h3>
+  <pre><code>GET /graph/status        → { "triples": 263695, "inferred": 23207, … }
+GET /graph/search?q=&type=&limit=&match=&field= → [ { "iri", "label", "types": [iri] } ]
+GET /graph/overview?limit=  |  GET /graph/neighbourhood?iri=&depth=&limit=
+  → { "nodes": [ { "iri", "label", "types" } ], "edges": [ { "source", "predicate", "target" } ] }
+GET /graph/entity?iri= → { "iri", "label", "types",
+  "attributes": [ { "predicate", "value", "datatype", "lang", "inferred" } ],
+  "outgoing": [ { "predicate", "target", "inferred" } ], "incoming": [ { "predicate", "source", "inferred" } ] }
+GET /graph/triples?… → { "total": n, "rows": [ { "subject", "predicate", "object", "object_type": "iri"|"literal",
+                                                  "datatype", "lang", "inferred" } ] }</code></pre>
+
+  <h3>Build run</h3>
+  <pre><code>{ "id": uuid, "domain_version_id": uuid, "status": "queued"|"running"|"succeeded"|"failed"|"cancelled",
+  "actor": "alice", "started_at": iso, "finished_at": iso | null, "triple_count": int | null, "error": string | null,
+  "steps": [ { "name": "compile", "seconds": 0.412, "detail": { "selects": 57 } }, … ] }</code></pre>
+
+  <h3>Quality constraint</h3>
+  <pre><code>{ "name", "target_class": iri, "property": iri | null, "kind": one of 14, "value": any, "severity": "violation"|"warning"|"info" }</code></pre>
+</section>
+
+<section id="design">
+  <h2>9. Design system</h2>
+  <p>Register: <strong>product</strong>. Restrained colour strategy: tinted neutrals, one accent (deep green) for primary actions, selection and state; semantic colours only for status. Both themes are first-class and follow the OS, with a manual toggle stored per viewer.</p>
+
+  <h4>Tokens (light)</h4>
+  <div class="swatches">
+    <span class="sw"><i style="background:#f4f5f7"></i>--bg #f4f5f7</span>
+    <span class="sw"><i style="background:#ffffff"></i>--surface #ffffff</span>
+    <span class="sw"><i style="background:#eef0f2"></i>--surface-2 #eef0f2</span>
+    <span class="sw"><i style="background:#d7dbe0"></i>--border #d7dbe0</span>
+    <span class="sw"><i style="background:#1b2026"></i>--text #1b2026</span>
+    <span class="sw"><i style="background:#5a6470"></i>--muted #5a6470</span>
+    <span class="sw"><i style="background:#0b6e4f"></i>--accent #0b6e4f</span>
+    <span class="sw"><i style="background:#175cd3"></i>--info #175cd3</span>
+    <span class="sw"><i style="background:#067647"></i>--ok #067647</span>
+    <span class="sw"><i style="background:#9a5400"></i>--warn #9a5400</span>
+    <span class="sw"><i style="background:#b42318"></i>--danger #b42318</span>
+  </div>
+  <div class="swatches">
+    <span class="sw"><i style="background:#0f1214"></i>dark --bg #0f1214</span>
+    <span class="sw"><i style="background:#171b1f"></i>dark --surface #171b1f</span>
+    <span class="sw"><i style="background:#3ecf8e"></i>dark --accent #3ecf8e</span>
+    <span class="sw"><i style="background:#e7eaed"></i>dark --text #e7eaed</span>
+  </div>
+
+  <div class="tablewrap"><table>
+    <tr><th>Area</th><th>Rule</th></tr>
+    <tr><td>Type</td><td>One family (system sans stack), fixed rem scale 12 / 13 / 14 / 16 / 20, weight for hierarchy; mono for IRIs, SQL and code. Body text ≥ 4.5:1 contrast on its surface, including placeholders.</td></tr>
+    <tr><td>Spacing</td><td>4 px scale (<code>--s1</code>…<code>--s6</code>); radius 4 px controls, 6 px panels; no shadows; structure by 1 px borders and surface steps (<code>--bg</code> &lt; <code>--surface</code> &lt; <code>--surface-2</code>).</td></tr>
+    <tr><td>Layout</td><td>Top bar 48 px; side nav 220 px; content max-width none (data-dense); split panels for list + detail; the graph stage fills <code>calc(100vh − 230px)</code>.</td></tr>
+    <tr><td>Components</td><td>Buttons (default / primary / danger / ghost / sm) with default, hover, focus, active, disabled, loading states; inputs, selects, textareas; dense tables with hover rows and sortable headers; badges (draft, in review, published, archived, running, succeeded, failed, complete, partial, unmapped, inferred); toasts bottom-right 4.5 s; native <code>&lt;dialog&gt;</code> for confirmations and short forms; skeletons for loading; empty states that say what to do next.</td></tr>
+    <tr><td>Icons</td><td>Inline SVG set (info, table, ontology, mapping, rules, quality, build, explore, triples, analytics, settings, overview, domain, check, search, arrows, id, tag, key, list, sun, moon, tasks, shield, expand, cluster). Class icons are emoji chosen by keyword (<code>icon_for</code>) and editable per class.</td></tr>
+    <tr><td>Motion</td><td>150–200 ms ease-out on hover, selection and panel changes; none on page load; <code>prefers-reduced-motion</code> respected.</td></tr>
+    <tr><td>Copy</td><td>Plain, specific, terse. Button labels are verb + object ("Map to a table", "Unmap", "Start build"). Errors say what went wrong and what to do.</td></tr>
+  </table></div>
+</section>
+
+<section id="nfr">
+  <h2>10. Non-functional requirements</h2>
+  <div class="tablewrap"><table>
+    <tr><th>Area</th><th>Requirement</th></tr>
+    <tr><td>Performance</td><td>First screen interactive under 1 s on a warm cache; table grids virtualise beyond 200 rows; graph stage sampled server-side (≤ 1,500 nodes) and expanded on demand; Databricks calls show a skeleton within 100 ms and are cancellable.</td></tr>
+    <tr><td>States</td><td>Every data surface has loading, empty, error and permission-denied states. Errors show the backend <code>detail</code> verbatim plus a next step. 401 in token mode reopens the key prompt; 403 explains the role needed.</td></tr>
+    <tr><td>Concurrency</td><td>Editing requires the lease; if another user holds it the editor is read-only with the holder's name and a "Request / force" action by role. 409 on save reloads and shows a diff-style message.</td></tr>
+    <tr><td>Accessibility</td><td>WCAG 2.1 AA: keyboard operable throughout (including the graph stage: arrows, Enter, F, Escape), visible focus, ARIA roles on tabs/dialogs/menus, <code>aria-sort</code> on sortable headers, live regions for build progress, 4.5:1 contrast.</td></tr>
+    <tr><td>Responsiveness</td><td>Desktop first (1280–1920). At ≤ 1400 px the top-bar labels collapse to icons; at ≤ 1024 px split panels stack; the app is tablet-tolerant, not mobile-first.</td></tr>
+    <tr><td>Security</td><td>Secrets never reach the browser; API keys stored only in <code>localStorage</code> under the user's control; all SQL previews go through the backend's SELECT-only guard; table names for previews are validated server-side.</td></tr>
+    <tr><td>Deployability</td><td>No build step required (ES modules) or a single static bundle; served by the same FastAPI app under <code>/ui</code>; works behind Databricks Apps' forwarded-identity proxy and in Docker.</td></tr>
+    <tr><td>Testing</td><td>Browser smoke tests (agent-browser or Playwright) for each P0 screen against both adapters; contract tests pinned to the shapes in §8; visual checks of the graph stage at 400 and 1,500 nodes.</td></tr>
+  </table></div>
+</section>
+
+<section id="plan">
+  <h2>11. Delivery plan and acceptance</h2>
+  <h3>Release 1 (P0)</h3>
+  <ol>
+    <li>Shell: routing, top bar with pipeline breadcrumb and source chip, side nav, identity, theme.</li>
+    <li>Domains, Overview (versions, lifecycle, lease, readiness card).</li>
+    <li>Metadata catalog browser against Postgres and Databricks.</li>
+    <li>Ontology map + class/property editors, draft from tables, checks.</li>
+    <li>Mapping designer with Status / Data / SQL panel and click-to-bind headers.</li>
+    <li>Build with live steps and history; Explore with backdrop, search, entity drawer, expand; Triples grid with sorting.</li>
+    <li>Settings → Source panel with "Test connection".</li>
+  </ol>
+  <h3>Release 2 (P1)</h3>
+  <p>AI draft/assist/suggest, ontology import and industry catalogue, rules and data quality editors with runs, analytics runs and interpretation, tasks, admin, comments and audit, drift panel, GraphQL console, MCP policy.</p>
+  <h3>Release 3 (P2)</h3>
+  <p>Drag-and-drop canvas editing, cohorts, triples export, dashboards.</p>
+
+  <h3>Acceptance criteria (release 1)</h3>
+  <ul>
+    <li>A builder can go from an empty domain to a built graph on <strong>Databricks</strong> (three-part table names, inferred keys) and on <strong>Postgres</strong> without leaving the UI, with the breadcrumb ticking each stage.</li>
+    <li>The source chip and the Settings → Source panel show the correct adapter, and "Test connection" reports latency or a verbatim permission error with the grant to request.</li>
+    <li>All SQL shown for the running adapter executes unchanged in that warehouse.</li>
+    <li>Explore renders the <code>rgm</code> graph (263k triples) with a sub-second first paint and expands any entity in under 500 ms after the API responds.</li>
+    <li>Every P0 screen passes keyboard-only operation and an axe-core scan with no serious violations, in both themes.</li>
+  </ul>
+</section>
+
+<section id="open">
+  <h2>12. Open items</h2>
+  <ul>
+    <li><strong>Catalog on the chip</strong>: <code>/auth/config</code> reports the deployment's default catalog (<code>finops_metadata</code>) even when a domain maps tables from another catalog (<code>rgm</code>). Decide whether the chip should show the domain's catalogs (derived from the mapping) instead.</li>
+    <li><strong>Materialization facts</strong> (mode, target schema) are not yet in <code>/auth/config</code>; the Build screen's read-only facts need that one-field extension.</li>
+    <li><strong>Typed sort</strong> in the triples grid is lexicographic on the literal text; a numeric sort needs a cast on the object column.</li>
+    <li><strong>Drag-and-drop editing</strong> and <strong>dashboards</strong> are not designed yet (P2).</li>
+    <li><strong>finops_metadata</strong> access on Databricks is blocked pending <code>USE CATALOG / USE SCHEMA / SELECT</code> grants for the service principal; the UI's permission-error surfacing (§3) should be validated against that case.</li>
+  </ul>
+</section>
+
+</main>
+</div>
+</body>
+</html>

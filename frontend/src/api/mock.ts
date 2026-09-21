@@ -1,0 +1,170 @@
+// In-memory adapter carrying the design's data. Mutations are kept in memory so the
+// UI behaves like the real thing (lifecycle transitions, builds with live steps, comments).
+import * as D from "./mockData";
+import { compileClassSql, tableName } from "./types";
+import type {
+  Analytics, ApiKey, AuditEntry, BuildRun, BuildStep, CatalogTable, ChecklistItem, ClassMapping, Comment, Config, ConnResult, Constraint,
+  DatagraphApi, DomainSummary, DqColumnIssue, EntityDetail, GlossaryTerm, GraphStatus, Lock, MappingKpis, Me, NewDomainInput, OntoCheck,
+  OntoClass, OntoDiff, Principal, Role, Rule, SearchHit, SourceKind, TableDetail, TablePreview, TableProfile, Task, TriplePage, TripleQuery,
+  VersionStatus,
+} from "./types";
+
+export interface MockOptions { sourceKind?: SourceKind; role?: Role; catalogDenied?: boolean; latency?: number; stepScale?: number }
+
+const clone = <T>(x: T): T => JSON.parse(JSON.stringify(x));
+
+export class MockApi implements DatagraphApi {
+  private domainsState: DomainSummary[] = clone(D.DOMAINS);
+  private commentStore: Record<string, Comment[]> = Object.fromEntries(Object.entries(D.COMMENTS).map(([k, v]) => [k, v.map(([who, when, text]) => ({ who, when, text }))]));
+  private runs: Record<string, BuildRun[]> = {};
+  private live: Record<string, { run: BuildRun; timers: ReturnType<typeof setTimeout>[] }> = {};
+  private nextRun = 0xb105;
+  readonly kind: SourceKind;
+  readonly role: Role;
+  protected mockOpts: MockOptions;
+
+  constructor(opts: MockOptions = {}) {
+    this.mockOpts = opts;
+    this.kind = opts.sourceKind ?? "databricks";
+    this.role = opts.role ?? "admin";
+  }
+
+  private async wait<T>(value: T, ms = this.mockOpts.latency ?? 0): Promise<T> {
+    if (ms) await new Promise(r => setTimeout(r, ms));
+    return value;
+  }
+  private dom(name: string): DomainSummary {
+    const d = this.domainsState.find(x => x.name === name);
+    if (!d) throw new Error(`Domain ${name} not found`);
+    return d;
+  }
+
+  async config(): Promise<Config> {
+    const dbx = this.kind === "databricks";
+    return { sourceKind: this.kind, catalog: dbx ? "finops_metadata" : null, authMode: "header", authHeader: dbx ? "X-Forwarded-Email" : "X-Actor", materialization: dbx ? "view" : "view" };
+  }
+  async me(): Promise<Me> { return { name: "alice", role: this.role }; }
+  async domains() { return this.wait(clone(this.domainsState)); }
+  async domain(name: string) { return this.wait(clone(this.dom(name))); }
+  async createDomain(input: NewDomainInput): Promise<DomainSummary> {
+    if (!/^[A-Za-z0-9_-]+$/.test(input.name)) throw new Error("Name may contain letters, digits, - and _ only");
+    if (this.domainsState.some(d => d.name === input.name)) throw new Error(`Domain ${input.name} already exists`);
+    const d: DomainSummary = { name: input.name, description: input.description, base_iri: input.base_iri, quorum: input.quorum, schema: "gold", catalog: input.name, materialization: "view", target: `finops_metadata.${input.name}_graph`, mcpExposed: false, disabledTools: [], triples: "—", lastBuild: "never", versions: [], lease: null, review: null };
+    this.domainsState.push(d); this.commentStore[d.name] = [];
+    return clone(d);
+  }
+  async audit(domain: string): Promise<AuditEntry[]> { return (D.AUDIT[domain] || []).map(([who, what, version, when]) => ({ who, what, version, when })); }
+  async comments(domain: string) { return clone(this.commentStore[domain] || []); }
+  async addComment(domain: string, text: string) { (this.commentStore[domain] ||= []).push({ who: "alice", when: "just now", text }); return this.comments(domain); }
+  async transition(domain: string, version: number, to: VersionStatus | "active") {
+    const d = this.dom(domain);
+    const v = d.versions.find(x => x.version === version);
+    if (!v) throw new Error(`v${version} not found`);
+    if (to === "active") { d.versions.forEach(x => { x.active = false; }); v.active = true; }
+    else { v.status = to; if (to === "draft") v.review = null; if (to !== "draft") v.lease = null; }
+    return clone(d);
+  }
+  async createDraft(domain: string, from?: number) {
+    const d = this.dom(domain);
+    const src = d.versions.find(v => v.version === from) || d.versions.find(v => v.active) || d.versions[0];
+    const n = (d.versions[0]?.version || 0) + 1;
+    d.versions.unshift({ version: n, status: "draft", content: src ? src.content : "empty", mappingPct: src?.mappingPct ?? null, lastBuild: "never", active: false, created: "just now", by: "alice", stats: src ? { ...src.stats, triples: 0 } : { classes: 0, attrs: 0, rels: 0, bindings: 0, rules: 0, constraints: 0, triples: 0 }, lease: { holder: "alice", expires: "15 min" }, changes: src ? [{ sign: "+", text: `draft created from v${src.version}` }] : [] });
+    return clone(d);
+  }
+  async setMcp(domain: string, exposed: boolean) { this.dom(domain).mcpExposed = exposed; }
+
+  async schemas(domain: string) { const d = this.dom(domain); const cat = d.catalog; return ["gold", "silver", "bronze"].map(s => ({ id: s, label: this.kind === "databricks" ? `${cat}.${s}` : `${cat}_${s}` })); }
+  async catalogTables(_domain: string, schema: string): Promise<CatalogTable[]> {
+    if (this.kind === "databricks" && this.mockOpts.catalogDenied) throw new Error("[INSUFFICIENT_PERMISSIONS] User does not have USE CATALOG on Catalog 'finops_metadata'.");
+    return this.wait((D.CATALOG[schema] || []).map(([name, cols, imported]) => ({ name, cols, imported, cls: D.TABLE_CLASS[name] || null })));
+  }
+  async tableDetail(domain: string, schema: string, table: string): Promise<TableDetail> {
+    const d = this.dom(domain); const ct = D.COLUMNS[table] || D.GENERIC_COLS;
+    return { name: table, fullName: tableName(this.kind, d.catalog, schema, table), comment: ct.comment, columns: ct.cols.map(([name, type, comment, k]) => ({ name, type, comment, key: k || null, keyInferred: this.kind === "databricks" })) };
+  }
+  async tableProfile(_domain: string, table: string): Promise<TableProfile> { return this.wait(D.PROFILE[table] || { rows: "—", fresh: "—", dup: "—", cols: {} }, 400); }
+  async tableDq(_domain: string, table: string): Promise<DqColumnIssue[]> {
+    const ct = D.COLUMNS[table] || D.GENERIC_COLS;
+    return ct.cols.filter(c => D.DQ_BY_COL[c[0]]).map(c => ({ column: c[0], count: D.DQ_BY_COL[c[0]][0], kind: D.DQ_BY_COL[c[0]][1] }));
+  }
+  async glossary(_domain: string): Promise<GlossaryTerm[]> { return clone(D.GLOSSARY); }
+  async ontoDiffs(_domain: string, table: string): Promise<OntoDiff[]> { return clone(D.ONTO_DIFFS[table] || []); }
+  async tableClass(_domain: string, table: string) { return D.TABLE_CLASS[table] || null; }
+
+  async ontology(_domain: string, _version: number): Promise<OntoClass[]> { return clone(D.CLASSES); }
+  async ontologyChecks(_domain: string, _version: number): Promise<OntoCheck[]> { return clone(D.CHECKS); }
+
+  async mapping(_domain: string, _version: number): Promise<Record<string, ClassMapping>> { return clone(D.MAP); }
+  async mappingKpis(_domain: string, _version: number): Promise<MappingKpis> { return { completion: 78, classesMapped: [10, 12], attributes: [41, 52], relationships: [8, 10], excluded: 3 }; }
+  async tablePreview(_domain: string, cls: string): Promise<TablePreview> { return this.wait(clone(D.PREVIEW[cls] || D.PREVIEW.Customer), this.kind === "databricks" ? 900 : 200); }
+  async classSql(domain: string, cls: string) { const m = D.MAP[cls]; if (!m) return ""; const d = this.dom(domain); return compileClassSql(this.kind, d.base_iri, cls, m, d.catalog); }
+
+  async rules(_domain: string, _version: number): Promise<Rule[]> { return clone(D.RULES); }
+  async constraints(_domain: string, _version: number): Promise<Constraint[]> { return clone(D.CONSTRAINTS); }
+
+  private historicRun(id: string, status: BuildRun["status"], actor: string, duration: string, triples: string, error = ""): BuildRun {
+    const ok = status === "succeeded";
+    return { id, status, actor, duration, triples, inferred: ok ? "23,207" : "—", error, stepIndex: -1, steps: D.STEP_NAMES.map(([name, detail], i) => ({ name, detail: ok ? detail : (i === 0 && status === "failed" ? "failed" : detail), seconds: ok ? D.STEP_SECS[i] : (i === 0 ? 12.3 : null), state: ok || i === 0 ? "done" : "queued" })) };
+  }
+  private historyFor(domain: string, version: number): BuildRun[] {
+    const key = `${domain}:${version}`;
+    if (!this.runs[key]) this.runs[key] = domain === "finops" ? [] : [this.historicRun("#a3f1", "succeeded", "alice", "61.4 s", "263,695"), this.historicRun("#9e02", "failed", "bob", "12.3 s", "—", "compile: relation viaChannel on Sale has no target key"), this.historicRun("#8c77", "succeeded", "alice", "58.9 s", "261,010")];
+    return this.runs[key];
+  }
+  async builds(domain: string, version: number) { return clone(this.historyFor(domain, version)); }
+  async startBuild(domain: string, version: number): Promise<BuildRun> {
+    const id = `#${(this.nextRun++).toString(16)}`;
+    const steps: BuildStep[] = D.STEP_NAMES.map(([name, detail], i) => ({ name, detail, seconds: null, state: i === 0 ? "running" : "queued" }));
+    const run: BuildRun = { id, status: "running", actor: "alice", duration: "—", triples: "—", inferred: "—", error: "", steps, stepIndex: 0 };
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const scale = this.mockOpts.stepScale ?? 350;
+    let acc = 0;
+    D.STEP_SECS.forEach((s, i) => {
+      acc += Math.min(s, 2.2) * scale + 300;
+      timers.push(setTimeout(() => {
+        run.steps[i] = { ...run.steps[i], seconds: s, state: "done" };
+        const done = i === D.STEP_SECS.length - 1;
+        if (done) { run.status = "succeeded"; run.stepIndex = -1; run.duration = `${D.STEP_SECS.reduce((a, b) => a + b, 0).toFixed(1)} s`; run.triples = "263,695"; run.inferred = "23,207"; delete this.live[id]; }
+        else { run.stepIndex = i + 1; run.steps[i + 1] = { ...run.steps[i + 1], state: "running" }; }
+      }, acc));
+    });
+    this.live[id] = { run, timers };
+    this.historyFor(domain, version).unshift(run);
+    return clone(run);
+  }
+  async buildStatus(runId: string): Promise<BuildRun> {
+    const l = this.live[runId]; if (l) return clone(l.run);
+    for (const rs of Object.values(this.runs)) { const r = rs.find(x => x.id === runId); if (r) return clone(r); }
+    throw new Error(`Run ${runId} not found`);
+  }
+  async cancelBuild(runId: string) {
+    const l = this.live[runId]; if (!l) return this.buildStatus(runId);
+    l.timers.forEach(clearTimeout); l.run.status = "cancelled"; l.run.stepIndex = -1; l.run.steps = l.run.steps.map(s => s.state === "running" ? { ...s, state: "queued" } : s); delete this.live[runId];
+    return clone(l.run);
+  }
+  async checklist(_domain: string, _version: number): Promise<ChecklistItem[]> {
+    return [{ label: "Mapping completion", value: "78%", ok: false, go: { screen: "mapping" } }, { label: "Ontology checks", value: "0 errors", ok: true, go: { screen: "ontology", arg: "checks" } }, { label: "Schema drift", value: "1 issue", ok: false, go: { screen: "metadata", arg: "fct_sales" } }];
+  }
+
+  async search(_domain: string, q: string): Promise<SearchHit[]> { const t = q.toLowerCase(); return D.SEARCH.filter(h => !t || h.label.toLowerCase().includes(t) || h.id.toLowerCase().includes(t)); }
+  async entity(_domain: string, id: string): Promise<EntityDetail> { return clone(D.ENTITIES[id] || D.ENTITIES["C-10482"]); }
+  async graphStatus(_domain: string): Promise<GraphStatus> { return { triples: "263,695", inferred: "23,207", entities: "12,445" }; }
+  async triples(_domain: string, qy: TripleQuery): Promise<TriplePage> {
+    let rows = D.TRIPLES.filter(t => qy.filter === "all" || (qy.filter === "inferred" ? t[4] : !t[4])).filter(t => !qy.q || t.join(" ").toLowerCase().includes(qy.q.toLowerCase()));
+    const ix = { subject: 0, predicate: 1, object: 2, inferred: 4 }[qy.sort];
+    rows = [...rows].sort((a, b) => (String(a[ix]) < String(b[ix]) ? -1 : 1) * (qy.dir === "asc" ? 1 : -1));
+    return { total: "263,695", rows: rows.slice(qy.offset, qy.offset + qy.limit).map(t => ({ s: t[0], p: t[1], o: t[2], isIri: !!t[3], dt: t[5] || "", inferred: !!t[4] })) };
+  }
+  async analytics(_domain: string): Promise<Analytics> { return clone(D.ANALYTICS); }
+
+  async testConnection(): Promise<ConnResult> {
+    const dbx = this.kind === "databricks";
+    await new Promise(r => setTimeout(r, this.mockOpts.latency ?? (dbx ? 1200 : 300)));
+    if (dbx && this.mockOpts.catalogDenied) return { ok: false, title: "Permission error", detail: "[INSUFFICIENT_PERMISSIONS] User does not have USE CATALOG on Catalog 'finops_metadata'.", action: "Ask the workspace admin for USE CATALOG / USE SCHEMA / SELECT on finops_metadata for the service principal." };
+    return { ok: true, title: "Connected", detail: `GET /catalog/tables → 17 tables in ${dbx ? "1,842" : "38"} ms` };
+  }
+  async tasks(): Promise<Task[]> { return clone(D.TASKS); }
+  async principals(): Promise<Principal[]> { return clone(D.PRINCIPALS); }
+  async apiKeys(): Promise<ApiKey[]> { return clone(D.API_KEYS); }
+  async locks(): Promise<Lock[]> { return clone(D.LOCKS); }
+}
