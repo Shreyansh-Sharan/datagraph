@@ -181,3 +181,17 @@ def test_describe_tables_qualifies_names_with_the_schema():
         def list_tables(self, schema=None): return []
     metas = describe_tables(Cat(), ["customer", "sales.store", "cat.sales.order"], "cat.sales")
     assert [m["table"] for m in metas] == ["cat.sales.customer", "sales.store", "cat.sales.order"]
+
+
+def test_guarded_sampler_stops_after_the_first_failure():
+    from ontoforge.llm import guarded_sampler
+    calls = []
+
+    def fetch(table):
+        calls.append(table)
+        raise PermissionError("no SELECT")
+    sample = guarded_sampler(fetch)
+    assert sample("a") == [] and sample("b") == [] and calls == ["a"]   # one failed attempt, then no more source round trips
+
+    ok = guarded_sampler(lambda t: [(1,)])
+    assert ok("a") == [(1,)] and ok("b") == [(1,)]

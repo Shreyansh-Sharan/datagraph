@@ -17,6 +17,22 @@ from .schemas import MAPPING_SCHEMA, ONTOLOGY_SCHEMA
 TableMeta = dict
 
 
+def guarded_sampler(fetch: Callable[[str], list[tuple]]) -> Callable[[str], list[tuple]]:
+    """Sample rows are a nicety: after the first failure (typically no SELECT grant) stop asking the
+    source, so a draft over many tables does not spend a round trip per table on the same error."""
+    state = {"ok": True}
+
+    def sample(table: str) -> list[tuple]:
+        if not state["ok"]:
+            return []
+        try:
+            return fetch(table)
+        except Exception:  # noqa: BLE001 - never fail a draft over samples
+            state["ok"] = False
+            return []
+    return sample
+
+
 def describe_tables(catalog: CatalogAdapter, tables: list[str] | None = None, schema: str | None = None,
                     sample_rows: Callable[[str], list[tuple]] | None = None, snapshots: dict | None = None) -> list[TableMeta]:
     """Catalog metadata in the shape the prompts expect. A version's snapshots win over the live

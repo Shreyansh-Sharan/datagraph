@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Card, Dialog, Dot, ErrorNotice, Glyph, Label, Pill, Skeleton, Spinner, Tabs } from "@/components/ui";
 import type { SnapshotTable } from "@/api";
 import { Stage, StageTools, glyphOf, type StageEdge, type StageNode } from "@/components/Stage";
@@ -99,9 +99,13 @@ function DraftDialog({ mode, existing, onClose, onDraft, tables }: { mode: "ai" 
   const [off, setOff] = useState<string[]>([]);
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
+  const [since, setSince] = useState<number | null>(null);
+  const [now, setNow] = useState(0);
+  useEffect(() => { if (since === null) return; const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, [since]);
   const all = snap.data ?? [];
   const chosen = all.map(t => t.table).filter(t => !off.includes(t));
-  const run = async () => { setBusy(true); try { await onDraft({ ai: mode === "ai", description, tables: chosen }); setOff([]); } catch (e) { say(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); } };
+  const run = async () => { setBusy(true); setSince(Date.now()); try { await onDraft({ ai: mode === "ai", description, tables: chosen }); setOff([]); } catch (e) { say(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); setSince(null); } };
+  const elapsed = since ? Math.max(0, Math.round(((now || since) - since) / 1000)) : 0;
   return (
     <Dialog title={mode === "ai" ? "Draft the ontology with AI" : "Draft the ontology from tables"} open={mode !== null} onClose={onClose} width={520}
       footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" disabled={busy || chosen.length === 0} onClick={run}>{busy && <Spinner />}Draft ontology</Button></>}>
@@ -113,7 +117,9 @@ function DraftDialog({ mode, existing, onClose, onDraft, tables }: { mode: "ai" 
       <div style={{ maxHeight: 220, overflowY: "auto" }}>
         {all.map(t => <label key={t.table} className="row" style={{ gap: 8, padding: "5px 0", fontSize: 12.5 }}><input type="checkbox" checked={!off.includes(t.table)} onChange={e => setOff(o => (e.target.checked ? o.filter(x => x !== t.table) : [...o, t.table]))} /><span className="mono" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{t.table}</span><span className="muted-2 xs" style={{ marginLeft: "auto" }}>{t.columns} cols</span></label>)}
       </div>
-      <div className="muted-2 xs" style={{ marginTop: 8 }}>{mode === "ai" ? "The AI connection reads the columns, keys and comments of these tables and proposes classes, attributes and relationships." : "One class per table, attributes from columns, relationships from foreign keys; keys are inferred where the catalog has none."}</div>
+      {busy
+        ? <div className="notice" style={{ marginTop: 10 }}><div className="row" style={{ gap: 8, fontWeight: 600 }}><Spinner blue />Reading {chosen.length} table{chosen.length === 1 ? "" : "s"} from the source, then asking the AI · {elapsed} s</div><div className="muted xs" style={{ marginTop: 4 }}>A few tables take about 15 seconds; dozens take a few minutes. Keep this dialog open.</div></div>
+        : <div className="muted-2 xs" style={{ marginTop: 8 }}>{mode === "ai" ? "The AI connection reads the columns, keys and comments of these tables and proposes classes, attributes and relationships." : "One class per table, attributes from columns, relationships from foreign keys; keys are inferred where the catalog has none."}{chosen.length > 20 && <> <strong style={{ color: "var(--orange-text)" }}>{chosen.length} tables selected: expect a few minutes, and a very large ontology.</strong></>}</div>}
     </Dialog>
   );
 }

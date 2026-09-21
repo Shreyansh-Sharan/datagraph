@@ -234,6 +234,7 @@ describe("Ontology screen · drafting", () => {
     expect(within(dlg).getAllByRole("checkbox").length).toBeGreaterThan(0);
     await user.type(within(dlg).getByLabelText("What this domain is about"), "Revenue and customers");
     await user.click(within(dlg).getByRole("button", { name: "Draft ontology" }));
+    expect(await within(dlg).findByText(/Reading \d+ tables? from the source, then asking the AI/)).toBeInTheDocument();   // progress while it runs
     expect(await screen.findByText(/Drafted \d+ classes/)).toBeInTheDocument();
     expect((await api.ontology("aw", 1)).length).toBeGreaterThan(0);
   });

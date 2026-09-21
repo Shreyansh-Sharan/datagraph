@@ -19,7 +19,7 @@ from ontoforge.cohorts import Cohort, CohortError
 from ontoforge.compiler import compile_mapping
 from ontoforge.dialects import DIALECTS
 from ontoforge.graphql import build_schema
-from ontoforge.llm import LLMUnavailable, MappingSuggester, OntologyAssistant, OntologyDrafter, describe_tables
+from ontoforge.llm import LLMUnavailable, MappingSuggester, OntologyAssistant, OntologyDrafter, describe_tables, guarded_sampler
 from ontoforge.mapping import ClassMapping, MappingSpec, mapping_status
 from ontoforge.ontology import INDUSTRY_ONTOLOGIES, Ontology, merge_ontologies
 from ontoforge.r2rml import serialize_r2rml
@@ -1181,15 +1181,12 @@ def _llm(request: Request):
 def _tables(request: Request, tables: list[str] | None, schema: str | None, version_id: UUID | None = None) -> list[dict]:
     st = _st(request)
     snapshots = {s.table: s for s in st.metadata.list(version_id)} if version_id else {}
-    return describe_tables(st.source.catalog, tables, schema, sample_rows=lambda t: _samples(request, t), snapshots=snapshots)
+    return describe_tables(st.source.catalog, tables, schema, sample_rows=guarded_sampler(lambda t: _samples(request, t)), snapshots=snapshots)
 
 
 def _samples(request: Request, table: str, n: int = 3) -> list[tuple]:
     src = _st(request).source
-    try:
-        return list(src.stream(f"SELECT * FROM {src.dialect.quote_table(table)} LIMIT {n}", batch=n))[:n]
-    except Exception:  # noqa: BLE001 - samples are a nicety, never a failure
-        return []
+    return list(src.stream(f"SELECT * FROM {src.dialect.quote_table(table)} LIMIT {n}", batch=n))[:n]
 
 
 @router.post("/versions/{version_id}/llm/draft-ontology")
