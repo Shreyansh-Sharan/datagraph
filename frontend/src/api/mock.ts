@@ -21,6 +21,7 @@ export class MockApi implements DatagraphApi {
   private nextRun = 0xb105;
   private conns: ConnectionRec[] = [];
   private snapshots: Record<string, Set<string>> = {};
+  protected removed: Record<string, Set<string>> = {};   // tables taken back out of a snapshot
   private maps: Record<string, Record<string, ClassMapping>> = {};
   private ontos: Record<string, OntoClass[]> = {};   // domains created in this session start without an ontology   // domain -> editable copy of the design mapping   // "domain:version" -> qualified table names imported on top of the design data
   readonly kind: SourceKind;
@@ -225,21 +226,30 @@ export class MockApi implements DatagraphApi {
     if (this.kind === "databricks" && this.mockOpts.catalogDenied) throw new Error("[INSUFFICIENT_PERMISSIONS] User does not have USE CATALOG on Catalog 'finops_metadata'.");
     const plain = schema.split(".").pop() ?? schema;
     const extra = version !== undefined ? this.snapshots[`${domain}:${version}`] : undefined;
-    return this.wait((D.CATALOG[plain] || []).map(([name, cols, imported]) => ({ name, cols, imported: imported || !!extra?.has(`${schema}.${name}`), cls: D.TABLE_CLASS[name] || null })));
+    const gone = version !== undefined ? this.removed[`${domain}:${version}`] : undefined;
+    return this.wait((D.CATALOG[plain] || []).map(([name, cols, imported]) => { const k = `${schema}.${name}`; const held = (imported || !!extra?.has(k)) && !gone?.has(k); return { name, cols, imported: held, cls: D.TABLE_CLASS[name] || null, held: held ? k : null }; }));
   }
   async snapshot(domain: string, version: number): Promise<SnapshotTable[]> {
     const { d } = this.ver(domain, version);
     const describe = (table: string, cols: number): SnapshotTable => { const name = table.split(".").pop() ?? table; const c = (D.COLUMNS[name] || D.GENERIC_COLS).cols; return { table, columns: cols || c.length, columnNames: c.map(x => x[0]), comment: null, primaryKey: c.filter(x => x[3] === "pk").map(x => x[0]) }; };
     const design = d.sources.flatMap(src => src.schemas.flatMap(sch => (D.CATALOG[sch] || []).filter(([, , imported]) => imported).map(([name, cols]) => describe(`${src.catalog ? src.catalog + "." : ""}${sch}.${name}`, cols))));
     const extra = [...(this.snapshots[`${domain}:${version}`] ?? [])].map(t => describe(t, D.CATALOG[t.split(".").slice(-2)[0]]?.find(([n]) => n === t.split(".").pop())?.[1] ?? 0));
-    return [...design, ...extra];
+    const gone = this.removed[`${domain}:${version}`];
+    return [...design, ...extra].filter(t => !gone?.has(t.table));
+  }
+  async removeTable(domain: string, version: number, table: string): Promise<void> {
+    const { v } = this.ver(domain, version);
+    if (v.status !== "draft") throw new Error("Only draft versions can be edited");
+    if (v.lease && v.lease.holder !== (await this.me()).name) throw new Error(`Version is being edited by ${v.lease.holder}`);
+    (this.removed[`${domain}:${version}`] ||= new Set()).add(table);
+    this.snapshots[`${domain}:${version}`]?.delete(table);
   }
   async importTables(domain: string, version: number, schema: string, tables: string[]): Promise<SnapshotTable[]> {
     const { v } = this.ver(domain, version);
     if (v.status !== "draft") throw new Error("Only draft versions can be edited");
     if (v.lease && v.lease.holder !== (await this.me()).name) throw new Error(`Version is being edited by ${v.lease.holder}`);
     const set = (this.snapshots[`${domain}:${version}`] ||= new Set());
-    for (const t of tables) set.add(`${schema}.${t}`);
+    for (const t of tables) { set.add(`${schema}.${t}`); this.removed[`${domain}:${version}`]?.delete(`${schema}.${t}`); }
     return this.snapshot(domain, version);
   }
   async refreshSnapshot(_domain: string, _version: number): Promise<RefreshChange[]> { return []; }

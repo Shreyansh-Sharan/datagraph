@@ -199,7 +199,7 @@ export class RestApi extends MockApi {
     const byTable = new Map(Object.entries(mapped).filter(([, x]) => x.fullName).map(([cls, x]) => [x.fullName!.toLowerCase(), cls]));
     const rows = raw.map(r => (typeof r === "string" ? { name: r, columns: 0, comment: null } : r));   // an older backend answers with bare names
     return rows.map(r => { const name = r.name.split(".").pop() ?? r.name; const q = `${schema}.${name}`.toLowerCase(); const t = held.get(q) ?? held.get(name.toLowerCase());
-      return { name, cols: r.columns || t?.columns || 0, imported: !!t, cls: byTable.get(q) ?? null }; });
+      return { name, cols: r.columns || t?.columns || 0, imported: !!t, cls: byTable.get(q) ?? null, held: t?.table ?? null }; });
   }
   override async tableClass(domain: string, table: string, version?: number): Promise<string | null> { return this.classOf(domain, version, table); }
   // Not offered by this backend yet: the screens hide the affordances (see Config.capabilities) instead of showing design data.
@@ -215,6 +215,9 @@ export class RestApi extends MockApi {
   }
   override async importTables(domain: string, version: number, schema: string, tables: string[]): Promise<SnapshotTable[]> {
     return (await this.req<Parameters<RestApi["toSnapshot"]>[0][]>("POST", `/versions/${this.vid(domain, version)}/metadata/import`, { tables, schema_name: schema })).map(t => this.toSnapshot(t));
+  }
+  override async removeTable(domain: string, version: number, table: string): Promise<void> {
+    await this.req<void>("DELETE", `/versions/${this.vid(domain, version)}/metadata/${encodeURIComponent(table)}`);
   }
   override async refreshSnapshot(domain: string, version: number): Promise<RefreshChange[]> {
     return this.req<RefreshChange[]>("POST", `/versions/${this.vid(domain, version)}/metadata/refresh`);

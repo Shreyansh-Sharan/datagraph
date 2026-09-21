@@ -106,14 +106,17 @@ means every schema it offers. The Metadata picker lists every source's schemas, 
 
 ### The scan (metadata snapshot)
 
-The Metadata screen is a workbench that fills the viewport: on the left a schema browser (every
-source, every schema and its tables, loaded at once, searchable, with a checkbox per table and per
-schema; the divider is draggable and its width is remembered), on the right what is selected. A
-schema shows its table list with columns, snapshot state and class, and a button to tick everything
-not yet in the snapshot; a table shows its columns, types, keys and comments. Ticked tables are
-imported into the draft's snapshot (`POST /versions/{id}/metadata/import` with `schema_name` and
-`tables`, one call per schema): columns, types, keys and comments are captured, and both panes mark
-what the snapshot holds (`GET /versions/{id}/metadata`). "Refresh snapshot" re-reads the source and reports added, removed
+The Metadata screen shows the source at a glance (schemas, tables, tables in the snapshot), a rail
+of filters (status: all / in snapshot / not imported / unmapped; one checkbox per schema; keyboard
+shortcuts), one list of every table of every schema grouped by schema (search matches table, schema
+and class; a checkbox per row, "Select all" per schema, shift-click for a range; `/` focuses the
+search, arrows walk the rows, space ticks) and a detail column for the chosen table: its card with
+class, columns and key and an "Add to snapshot" / "Remove from snapshot" button, then its columns
+with types, descriptions and keys, plus profile, glossary and data-quality tabs where the
+deployment offers them. Ticked tables are imported into the draft's snapshot
+(`POST /versions/{id}/metadata/import` with `schema_name` and `tables`, one call per schema);
+removal is `DELETE /versions/{id}/metadata/{table}`; the list marks what the snapshot holds
+(`GET /versions/{id}/metadata`). "Refresh snapshot" re-reads the source and reports added, removed
 or retyped columns. Both need a draft whose lease you hold, like every other edit.
 
 ### Build and mapping

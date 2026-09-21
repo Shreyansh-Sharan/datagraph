@@ -70,7 +70,7 @@ export interface AuditEntry { who: string; what: string; version: number; when: 
 export interface Comment { who: string; when: string; text: string }
 
 // -- catalog / metadata ----------------------------------------------------------
-export interface CatalogTable { name: string; cols: number; imported: boolean; cls: string | null }
+export interface CatalogTable { name: string; cols: number; imported: boolean; cls: string | null; held?: string | null }   // held: the snapshot's own name for the table, when imported
 export interface SnapshotTable { table: string; columns: number; columnNames: string[]; comment: string | null; primaryKey: string[]; capturedAt?: string | null }   // one table in a version's metadata snapshot
 export interface RefreshChange { table: string; missing: boolean; added: string[]; removed: string[]; modified: { column: string; from: string; to: string }[]; keys_changed: boolean }
 export interface CatalogColumn { name: string; type: string; comment: string; key: "pk" | "fk" | null; keyInferred: boolean }
@@ -169,6 +169,7 @@ export interface DatagraphApi {
   snapshot(domain: string, version: number): Promise<SnapshotTable[]>;
   importTables(domain: string, version: number, schema: string, tables: string[]): Promise<SnapshotTable[]>;   // the scan: capture columns, keys and comments into the draft
   refreshSnapshot(domain: string, version: number): Promise<RefreshChange[]>;
+  removeTable(domain: string, version: number, table: string): Promise<void>;   // drop one table (its snapshot name) from the draft's snapshot
   tableDetail(domain: string, schema: string, table: string): Promise<TableDetail>;
   tableProfile(domain: string, table: string): Promise<TableProfile>;
   tableDq(domain: string, table: string): Promise<DqColumnIssue[]>;

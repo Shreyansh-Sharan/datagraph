@@ -362,6 +362,11 @@ describe("metadata snapshot (scan)", () => {
         "GET /api/versions/v-1/metadata": snapshot,
         "POST /api/versions/v-1/metadata/refresh": [{ table: "adventurework2022.dbo.errorlog", missing: false, added: ["severity"], removed: [], modified: [], keys_changed: false }],
       };
+      if (key.startsWith("DELETE /api/versions/v-1/metadata/")) {
+        const name = decodeURIComponent(key.split("/metadata/")[1]); const i = snapshot.findIndex(t => t.table === name);
+        if (i >= 0) snapshot.splice(i, 1);
+        return new Response(null, { status: i >= 0 ? 204 : 404 });
+      }
       if (key === "POST /api/versions/v-1/metadata/import") {
         const body = JSON.parse(String(init?.body)) as { tables: string[]; schema_name: string };
         for (const t of body.tables) snapshot.push({ table: `${body.schema_name}.${t}`, comment: null, columns: [{ name: "id", type: "int", comment: null }, { name: "v", type: "string", comment: null }], primary_key: ["id"], foreign_keys: [] });
@@ -378,6 +383,10 @@ describe("metadata snapshot (scan)", () => {
     const after = await api.catalogTables("aw", "adventurework2022.dbo", 1);
     expect(after.map(t => [t.name, t.imported, t.cols])).toEqual([["awbuildversion", false, 4], ["databaselog", true, 8], ["errorlog", true, 9]]);
     expect((await api.refreshSnapshot("aw", 1))[0]).toMatchObject({ table: "adventurework2022.dbo.errorlog", added: ["severity"] });
+    expect(after.find(t => t.name === "errorlog")?.held).toBe("adventurework2022.dbo.errorlog");          // the snapshot's own name, for removal
+    await api.removeTable("aw", 1, "adventurework2022.dbo.errorlog");
+    expect(calls).toContain("DELETE /api/versions/v-1/metadata/adventurework2022.dbo.errorlog");
+    expect((await api.catalogTables("aw", "adventurework2022.dbo", 1)).map(t => t.imported)).toEqual([false, true, false]);
   });
 });
 
@@ -557,7 +566,7 @@ describe("metadata screen data (rest)", () => {
   it("lists tables with real column counts, snapshot state and the class each is mapped to", async () => {
     const a = api(); await a.domain("aw");
     const rows = await a.catalogTables("aw", "adventurework2022.sales", 1);
-    expect(rows).toEqual([{ name: "customer", cols: 7, imported: true, cls: "Customer" }, { name: "store", cols: 5, imported: false, cls: null }]);
+    expect(rows).toEqual([{ name: "customer", cols: 7, imported: true, cls: "Customer", held: "adventurework2022.sales.customer" }, { name: "store", cols: 5, imported: false, cls: null, held: null }]);
     expect(await a.tableClass("aw", "customer", 1)).toBe("Customer");
     expect(await a.tableClass("aw", "store", 1)).toBeNull();
   });
@@ -566,7 +575,7 @@ describe("metadata screen data (rest)", () => {
     const inner = globalThis.fetch;
     globalThis.fetch = (async (url: string, init?: RequestInit) => url.includes("/catalog/tables?") ? new Response(JSON.stringify(["customer", "store"])) : inner(url, init)) as typeof fetch;
     await a.domain("aw");
-    expect(await a.catalogTables("aw", "adventurework2022.sales", 1)).toEqual([{ name: "customer", cols: 1, imported: true, cls: "Customer" }, { name: "store", cols: 0, imported: false, cls: null }]);
+    expect(await a.catalogTables("aw", "adventurework2022.sales", 1)).toEqual([{ name: "customer", cols: 1, imported: true, cls: "Customer", held: "adventurework2022.sales.customer" }, { name: "store", cols: 0, imported: false, cls: null, held: null }]);
   });
   it("says which extras the deployment offers instead of showing design data", async () => {
     const a = api();
