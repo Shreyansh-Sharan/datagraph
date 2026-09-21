@@ -139,3 +139,10 @@ def test_search_ranks_exact_then_prefix_then_contains(env):
     hits = store.search(v.id, "cola")
     assert [h.label for h in hits][:3] == ["Cola", "Cola Zero Sugar", "Online Commerce (Coca-Cola)"]
     assert store.search(v.id, "col")[0].label == "Cola"
+
+
+def test_counts_total_and_inferred_in_one_pass(env):
+    _, store, pipeline, v = env
+    pipeline.run(v.id, actor="alice")
+    store.add_inferred(v.id, [(EX + "x", EX + "knows", EX + "y", "iri", None, None)])
+    assert store.counts(v.id) == (store.count(v.id), store.count(v.id, inferred=True)) == (store.count(v.id), 1)

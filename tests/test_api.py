@@ -1,3 +1,4 @@
+from uuid import UUID
 """REST API over the whole backend, exercised through FastAPI's test client on a live Postgres."""
 import pytest
 from fastapi.testclient import TestClient
@@ -236,3 +237,18 @@ def test_create_app_builds_the_llm_provider_from_settings(db):
     app = create_app(db=db, settings=Settings(auth_default_role="admin", llm_provider="azure_openai", azure_openai_api_key="k", azure_openai_endpoint="https://x.openai.azure.com/"))
     assert isinstance(app.state.llm, AzureOpenAIProvider)
     assert create_app(db=db, settings=Settings(auth_default_role="admin", llm_provider="none")).state.llm is None
+
+
+def test_graph_status_describes_the_last_build_and_refreshes_with_the_next(client):
+    """Counting millions of triples is slow; the status is computed once per build and served from memory."""
+    d = make_domain(client)
+    v = make_draft(client, d)
+    first = client.post(f"/versions/{v['id']}/builds", params={"wait": "true"}).json()
+    status = client.get(f"/versions/{v['id']}/graph/status").json()
+    assert status["inferred"] == 0 and status["last_build"]["id"] == first["id"]
+    client.app.state.store.add_inferred(UUID(v["id"]), [(BASE + "Employee/1", EX + "knows", BASE + "Employee/2", "iri", None, None)])
+    again = client.get(f"/versions/{v['id']}/graph/status").json()
+    assert again["inferred"] == 0 and again["triples"] == status["triples"]      # still the picture of that build
+    second = client.post(f"/versions/{v['id']}/builds", params={"wait": "true"}).json()
+    fresh = client.get(f"/versions/{v['id']}/graph/status").json()
+    assert fresh["last_build"]["id"] == second["id"] and fresh["triples"] == second["triple_count"]

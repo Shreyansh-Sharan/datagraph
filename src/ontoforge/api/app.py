@@ -64,6 +64,7 @@ def create_app(db: Database, source_db: Database | None = None, settings: Settin
     app.state.connections = _connections_backend(settings, hub_client)
     app.state.principals = Principals(db)
     app.state.store = TripleStore(db)
+    app.state.graph_status_cache = {}   # version id -> ((build id, status, finished_at), status payload)
     app.state.sources = SourceResolver(settings, app.state.registry, app.state.connections, lambda: _source_engine(settings, source_db or db))
     publish = PublishConfig(settings.warehouse_target_schema, settings.warehouse_materialization) \
         if settings.warehouse_target_schema else None

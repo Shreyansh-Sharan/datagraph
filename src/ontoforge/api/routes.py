@@ -793,11 +793,22 @@ def get_build(run_id: UUID, request: Request):
 
 @router.get("/versions/{version_id}/graph/status")
 def graph_status(version_id: UUID, request: Request):
+    """Counts and inventories of the graph. Only a build changes the graph, and counting millions of
+    triples takes seconds, so the answer is computed once per finished build and kept in memory."""
     st = _st(request)
     st.registry.get_version(version_id)
-    return {"triples": st.store.count(version_id), "inferred": st.store.count(version_id, inferred=True),
-            "types": dict(st.store.type_inventory(version_id)), "predicates": dict(st.store.predicate_inventory(version_id)),
-            "last_build": st.registry.latest_build(version_id)}
+    last = st.registry.latest_build(version_id)
+    key = (last.id, last.status, last.finished_at) if last else None
+    cache: dict = st.graph_status_cache
+    hit = cache.get(version_id) if key else None
+    if hit and hit[0] == key:
+        return hit[1]
+    total, inferred = st.store.counts(version_id)
+    payload = {"triples": total, "inferred": inferred, "types": dict(st.store.type_inventory(version_id)),
+               "predicates": dict(st.store.predicate_inventory(version_id)), "last_build": last}
+    if key and last.status != "running":
+        cache[version_id] = (key, payload)
+    return payload
 
 
 @router.get("/versions/{version_id}/graph/search")

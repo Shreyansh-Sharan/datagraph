@@ -23,7 +23,8 @@ def test_overview_returns_a_balanced_sample_of_relationships(db):
     preds = {e.predicate for e in sub.edges}
     assert len(preds) >= 2                                             # not just the first predicate's rows
     assert {n.iri for n in sub.nodes} >= {e.source for e in sub.edges} | {e.target for e in sub.edges}
-    assert all(n.types for n in sub.nodes)
+    sources = {e.source for e in sub.edges}
+    assert all(n.types for n in sub.nodes if n.iri in sources)          # a target may dangle (the fixture's Department/99 has no row)
 
 
 def test_triples_paging_and_filters(db):
@@ -51,3 +52,15 @@ def test_triples_sort_by_column_and_direction(db):
         store.triples(v.id, sort="object; drop table triples")
     with pytest.raises(ValueError):
         store.triples(v.id, direction="sideways")
+
+
+def test_overview_skips_blank_nodes_and_gives_every_relationship_a_share(db):
+    """Blank-node subjects sort before IRIs; the sample must not pick them, and each relationship
+    predicate keeps its share of the budget whatever the attribute predicates hold."""
+    reg, store, v = built_domain(db)
+    rel = next(e.predicate for e in store.overview(v.id, limit=50).edges)
+    store.add_inferred(v.id, [("_:b1", rel, BASE + "Employee/1", "iri", None, None), ("_:b2", rel, BASE + "Employee/2", "iri", None, None)])
+    sub = store.overview(v.id, limit=2)
+    assert not any(e.source.startswith("_:") for e in sub.edges), [e.source for e in sub.edges]
+    rels = {e.predicate for e in store.overview(v.id, limit=50).edges}
+    assert len(rels) >= 2 and all(sum(e.predicate == p for e in store.overview(v.id, limit=2 * len(rels)).edges) == 2 for p in rels)

@@ -15,6 +15,15 @@ _TRIPLE_SORT_COLUMNS = frozenset({"subject", "predicate", "object", "inferred"})
 RDFS_LABEL = "http://www.w3.org/2000/01/rdf-schema#label"
 COLUMNS = ("subject", "predicate", "object", "object_type", "datatype", "lang")
 Row = tuple  # (subject, predicate, object, object_type, datatype, lang)
+# Distinct predicates of a version by walking the (domain_version_id, predicate, ...) index one step at a time.
+_DISTINCT_PREDICATES = """
+WITH RECURSIVE p AS (
+    (SELECT predicate FROM triples WHERE domain_version_id = %s ORDER BY predicate LIMIT 1)
+    UNION ALL
+    SELECT (SELECT predicate FROM triples WHERE domain_version_id = %s AND predicate > p.predicate ORDER BY predicate LIMIT 1)
+    FROM p WHERE p.predicate IS NOT NULL
+)
+SELECT predicate FROM p WHERE predicate IS NOT NULL"""
 
 
 class TripleStore:
@@ -66,6 +75,13 @@ class TripleStore:
         with self.db.transaction() as cur:
             return cur.execute("SELECT count(*) FROM triples WHERE domain_version_id = %s AND (%s::boolean IS NULL OR inferred = %s)",
                                (version_id, inferred, inferred)).fetchone()[0]
+
+    def counts(self, version_id: UUID) -> tuple[int, int]:
+        """(all triples, inferred triples) in one pass over the version."""
+        with self.db.transaction() as cur:
+            total, inf = cur.execute("SELECT count(*), count(*) FILTER (WHERE inferred) FROM triples WHERE domain_version_id = %s",
+                                     (version_id,)).fetchone()
+            return int(total), int(inf)
 
     def iter_triples(self, version_id: UUID, inferred: bool | None = False, batch: int = 10_000) -> Iterator[Row]:
         with self.db.connection() as conn:
@@ -153,18 +169,22 @@ class TripleStore:
         return Subgraph(nodes=nodes, edges=unique_edges)
 
     def overview(self, version_id: UUID, limit: int = 300) -> Subgraph:
-        """A first picture of the graph: a few relationships of every predicate, spread evenly."""
+        """A first picture of the graph: a few relationships of every predicate, spread evenly.
+
+        Built for millions of triples: the predicates come from a loose index scan (one probe per
+        distinct predicate, never a pass over the table), a predicate counts as a relationship when
+        its first row has an IRI object, and each sample walks the (version, predicate) index."""
         with self.db.transaction() as cur:
-            preds = [p for p, _ in cur.execute(
-                "SELECT predicate, count(*) FROM triples WHERE domain_version_id = %s AND predicate <> %s AND object_type <> 'literal' "
-                "AND subject NOT LIKE '\\_:%%' GROUP BY 1 ORDER BY 2 DESC", (version_id, RDF_TYPE)).fetchall()]
-            if not preds:
+            preds = [p for (p,) in cur.execute(_DISTINCT_PREDICATES, (version_id, version_id)).fetchall() if p != RDF_TYPE]
+            rels = [p for p in preds if (cur.execute(
+                "SELECT object_type FROM triples WHERE domain_version_id = %s AND predicate = %s LIMIT 1", (version_id, p)).fetchone() or ("literal",))[0] != "literal"]
+            if not rels:
                 return Subgraph()
-            per = max(1, limit // len(preds))
+            per = max(1, limit // len(rels))
             edges: list[Edge] = []
-            for p in preds:
+            for p in rels:
                 for s_, o in cur.execute("SELECT subject, object FROM triples WHERE domain_version_id = %s AND predicate = %s "
-                                         "AND object_type <> 'literal' ORDER BY subject, object LIMIT %s", (version_id, p, per)):
+                                         "AND object_type <> 'literal' AND subject NOT LIKE '\\_:%%' ORDER BY object_key LIMIT %s", (version_id, p, per)):
                     edges.append(Edge(s_, p, o))
             edges = edges[:limit]
             iris = sorted({e.source for e in edges} | {e.target for e in edges})
