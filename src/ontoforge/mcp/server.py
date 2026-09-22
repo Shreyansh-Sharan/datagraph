@@ -77,7 +77,7 @@ def create_mcp_server(tools: GraphTools, name: str = "ontoforge") -> MCPServer:
         return tools.class_schema(domain, cls)
 
     @server.tool(description="How to get from one class to another through the relationships (shortest paths, forward or inverse steps), for filters and group_by paths in graph_aggregate.")
-    def ontology_paths(from_cls: str, to_cls: str, domain: str | None = None, max_depth: int = 3) -> dict:
+    def ontology_paths(from_cls: str, to_cls: str, domain: str | None = None, max_depth: int = 6) -> dict:
         return tools.ontology_paths(domain, from_cls, to_cls, max_depth)
 
     @server.tool(description="Count the instances of a class in the graph and sum/avg/min/max a numeric attribute, grouped by ONE dimension: an attribute (group_kind 'value', or 'year' / 'month' of a date) or a relationship target, reached directly or through a path of steps (a list means a chain, e.g. ['inTerritory', 'territoryGroup'], never two dimensions). filters keep instances that reach a value through a path (a step is a property name or IRI, '^' + name walks it backwards). Over time: group_by the date attribute with group_kind 'year'; against peers: group_by the relationship; both: filter on one, group by the other.")

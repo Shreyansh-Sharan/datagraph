@@ -57,3 +57,12 @@ def test_aggregate_rejects_a_step_that_is_not_in_the_ontology(db):
     assert "hasCulture" in out["error"] and "ontology_paths" in out["error"]
     out = tools.graph_aggregate("hr", "Employee", measure="salary", filters=[{"path": ["works in", "name"], "value": "SALES"}])
     assert out["rows"][0]["sum"] == 800
+
+
+def test_aggregate_resolves_a_filter_value_at_a_relationship_end_by_label(db):
+    reg, store, v = built_domain(db)
+    tools = GraphTools(reg, store)
+    out = tools.graph_aggregate("hr", "Employee", measure="salary", filters=[{"path": ["works in"], "value": "SALES"}])
+    assert out["rows"][0]["sum"] == 800 and out["resolved"] == {"SALES": BASE + "Department/10"}
+    out = tools.graph_aggregate("hr", "Employee", measure="salary", filters=[{"path": ["works in"], "value": "Nowhere"}])
+    assert "Nowhere" in out["error"] and "Department" in out["error"] and "SALES" in out["error"]

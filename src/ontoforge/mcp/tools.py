@@ -743,7 +743,7 @@ class GraphTools:
         return {"class": iri, "label": c.label or o.local_name(iri), "description": c.description, "parents": list(c.parents), "attributes": attrs, "outgoing": out, "incoming": inc,
                 "hint": "graph_aggregate(class, measure=<attribute>, group_by=<relationship or attribute>) counts and sums; filters walk relationships, '^' walks one backwards."}
 
-    def ontology_paths(self, domain: str | None, from_cls: str, to_cls: str, max_depth: int = 3) -> dict:
+    def ontology_paths(self, domain: str | None, from_cls: str, to_cls: str, max_depth: int = 6) -> dict:
         """Ways from one class to another through the relationships, shortest first, up to five."""
         v = self._version(domain)
         if v is None:
@@ -760,7 +760,8 @@ class GraphTools:
                     edges.setdefault(p.range, []).append((p.iri, "inverse", d))
         found, frontier = [], [(a, [])]
         seen = {a}
-        for _ in range(max(1, min(int(max_depth), 4))):
+        depth = max(1, min(int(max_depth), 8))
+        for _ in range(depth):
             nxt = []
             for node, path in frontier:
                 for prop, direction, target in edges.get(node, []):
@@ -772,7 +773,10 @@ class GraphTools:
             frontier = nxt
             if len(found) >= 5 or not frontier:
                 break
-        return {"from": a, "to": b, "paths": found[:5], "hint": "In graph_aggregate filters and group_by, write a forward step as the property IRI and an inverse step as '^' + IRI."}
+        out = {"from": a, "to": b, "paths": found[:5], "hint": "In graph_aggregate filters and group_by, write a forward step as the property IRI and an inverse step as '^' + IRI."}
+        if not found:
+            out["note"] = f"No path within {depth} steps: the ontology lacks a relationship along the way (add_relationship adds one the tables carry)."
+        return out
 
     def graph_aggregate(self, domain: str | None, cls: str, measure: str | None = None, group_by: "str | list[str] | None" = None,
                         group_kind: str = "value", filters: list[dict] | None = None, limit: int = 50) -> dict:
@@ -803,8 +807,24 @@ class GraphTools:
                 if st.lstrip("^") not in known:
                     return {"error": f"{st.lstrip('^')!r} is not a property of the ontology, so the graph holds nothing behind it. "
                                      "Use the steps ontology_paths returns; when it returns no path, the relationship is missing: add_relationship adds it."}
+        resolved: dict[str, str] = {}
+        for f in fl:   # a plain value at a relationship's end names an entity: find it by label or key in the range class
+            last = (f["path"] or [None])[-1]
+            val = str(f["value"])
+            if o is None or not last or last.startswith("^") or last not in o.object_properties or val.startswith(("http://", "https://", "urn:")):
+                continue
+            rng = o.object_properties[last].range
+            hits = self.store.search(v.id, val, type_iri=rng, limit=8)
+            exact = [e for e in hits if e.label.lower() == val.lower() or o.local_name(e.iri).lower() == val.lower()]
+            pick = exact[0] if exact else (hits[0] if len(hits) == 1 else None)
+            if pick is None:
+                near = ", ".join(f"{e.label} ({o.local_name(e.iri)})" for e in hits[:5]) or ", ".join(f"{e.label} ({o.local_name(e.iri)})" for e in self.store.search(v.id, "", type_iri=rng, limit=5))
+                return {"error": f"No {o.local_name(rng) if rng else 'entity'} named {val!r} at the end of the filter path; the graph has: {near}. "
+                                 "Use one of those labels, or end the path with an attribute (e.g. its name) and give the value it holds."}
+            resolved[val] = pick.iri
+            f["value"] = pick.iri
         rows = self.store.aggregate(v.id, iri, measure=m, group_by=steps(group_by), group_kind=group_kind, filters=fl, limit=limit)
-        return {"class": iri, "measure": m, "group_by": steps(group_by), "group_kind": group_kind, "rows": rows,
+        return {"class": iri, "measure": m, "group_by": steps(group_by), "group_kind": group_kind, "rows": rows, "resolved": resolved,
                 "note": "sum/avg/min/max are over the measure where present; count is instances. Check the source table's date coverage before reading a last-period drop as a decline."}
 
     def _resolve_type(self, v: DomainVersion, name: str) -> str | None:

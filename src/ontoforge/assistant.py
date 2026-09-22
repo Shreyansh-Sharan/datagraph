@@ -42,7 +42,10 @@ behind it: the source table's date range and freshness from table_profile and it
 table_quality, because a partial period or a failing rule explains many "inconsistencies"; 5) answer
 with the finding, the numbers behind it, the likely cause, and what you could not see. Measure the
 class that carries the events (orders, transactions, records) linked to the subject, not the
-subject's own summary attributes. When the user does not say what is inconsistent, do not ask: run
+subject's own summary attributes. When the events class carries no date of its own, group by a path
+through its incoming relationship to the class that has one: group_by ['^salesOrderHasDetailLine',
+'salesOrderDate'] with group_kind year walks from the line to its order ('^' walks a relationship
+backwards) and takes the order's date; never call that impossible. When the user does not say what is inconsistent, do not ask: run
 the usual checks, the last period against the earlier ones, the subject against its peers, and the
 rule results, and report what stands out. Use the class names exactly as the tools return them;
 never guess a class name. Do not start profiles, rule runs or builds while answering a question;
