@@ -406,7 +406,9 @@ export class RestApi extends MockApi {
       if (!d) return "";
       if (d.mode) return `${d.mode}: ${Array.isArray(d.changed) ? d.changed.length : 0} table${Array.isArray(d.changed) && d.changed.length === 1 ? "" : "s"} to read, ${fmt(d.unchanged ?? 0)} unchanged`;   // the plan step
       if (d.skipped) return "nothing changed: no rows read";
-      return Object.entries(d).filter(([k, v]) => (typeof v !== "object" || v === null) && k !== "reason").map(([k, v]) => k === "rows" ? `${fmt(v)} rows so far` : `${fmt(v)} ${k}`).join(", ") + (Array.isArray(d.issues) ? `${d.issues.length} drift issue${d.issues.length === 1 ? "" : "s"}` : "");
+      const parts = Object.entries(d).filter(([k, v]) => (typeof v !== "object" || v === null) && k !== "reason").map(([k, v]) => k === "rows" ? `${fmt(v)} rows so far` : `${fmt(v)} ${k}`);
+      if (Array.isArray(d.issues)) parts.push(`${d.issues.length} drift issue${d.issues.length === 1 ? "" : "s"}`);
+      return parts.join(", ");
     };
     const done = r.steps.map(s => ({ name: s.name, detail: detail(s.detail), seconds: s.seconds, state: (s.seconds == null && running ? "running" : "done") as BuildStep["state"] }));
     const seen = new Set(done.map(s => s.name));
