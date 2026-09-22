@@ -1,92 +1,122 @@
-import { useState, type FormEvent } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+// Ask: the assistant's conversation. It answers through the MCP tools, shows what it called,
+// acts where you ask it to (build, profile, rules), and keeps every thread.
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Icon } from "@/components/icons";
-import { Button, Skeleton } from "@/components/ui";
+import { Button, Skeleton, Spinner } from "@/components/ui";
 import { useApp, useLoad } from "@/state/app";
-import { answer, SUGGESTIONS, type AskAnswer, type AskLink } from "./askEngine";
-import { askTerm, type  DomainSummary } from "@/api";
+import { useAssistantContext } from "@/state/assistant";
+import { relTime } from "@/api/format";
+import type { ChatEvent, ChatMessage, Conversation, DomainSummary, ToolTrace } from "@/api";
 
-interface Turn extends AskAnswer { q: string }
+const SUGGESTIONS = ["What is in this domain?", "Profile the biggest table", "Which rules are failing?", "Start a build", "What does the glossary say about revenue?", "Show me 5 customers"];
+type Turn = { id: string; role: "user" | "assistant"; text: string; tools: ToolTrace[]; pending?: boolean; live?: string | null; error?: string | null };
 
-/** Ask assistant. At home it spans all domains; inside a domain it is scoped to it. */
-export function Ask({ inDomain, domains: given, domain: domainProp }: { inDomain?: boolean; domains?: DomainSummary[]; domain?: string }) {
-  const { api, config } = useApp();
+/** At home it spans every domain; inside a domain it is scoped to it (the context travels with each question). */
+export function Ask({ inDomain, domain: domainProp }: { inDomain?: boolean; domains?: DomainSummary[]; domain?: string }) {
+  const { api } = useApp();
   const navigate = useNavigate();
   const { name: routeDomain } = useParams();
-  const fixed = domainProp ?? (inDomain ? routeDomain : undefined);
-  const [domainName, setDomainName] = useState(fixed ?? "rgm");
+  const [sp, setSp] = useSearchParams();
+  const base = useAssistantContext();
+  const ctx = { ...base, domain: domainProp ?? (inDomain ? routeDomain : undefined) ?? base.domain };
+  const conversationId = sp.get("c");
   const [q, setQ] = useState("");
-  const [thread, setThread] = useState<Turn[]>([]);
-  const loaded = useLoad(async () => {
-    const domains = given ?? await api.domains();
-    const dom = fixed ?? domainName;
-    const d = domains.find(x => x.name === dom) ?? domains[0];
-    const v = d?.versions[0]?.version ?? 0;
-    const [glossary, classes, mapping] = d && v ? await Promise.all([api.glossary(d.name).then(es => es.map(askTerm)), api.ontology(d.name, v), api.mapping(d.name, v)]) : [[], [], {}];
-    return { domains, glossary, classes, mapping };
-  }, [given, fixed, domainName]);
+  const [turns, setTurns] = useState<Turn[]>([]);
+  const [busy, setBusy] = useState(false);
+  const bottom = useRef<HTMLDivElement>(null);
+  const threads = useLoad(() => api.conversations(ctx.domain), [ctx.domain]);
+  const thread = useLoad(() => conversationId ? api.conversation(conversationId) : Promise.resolve(null), [conversationId]);
 
-  const currentDomain = fixed ?? domainName;
-  const ask = (text: string) => {
-    if (!loaded.data) return;
-    const a = answer(text, { domain: currentDomain, domains: loaded.data.domains, glossary: loaded.data.glossary, classes: loaded.data.classes, mapping: loaded.data.mapping, sourceKind: config.sourceKind });
-    setThread(t => [{ q: text, ...a }, ...t]);
+  useEffect(() => {   // an opened thread is shown as turns: each assistant answer with the tools it called just before
+    if (!conversationId) { setTurns([]); return; }
+    if (!thread.data) return;
+    setTurns(fold(thread.data.messages));
+  }, [conversationId, thread.data]);
+  useEffect(() => { bottom.current?.scrollIntoView?.({ block: "end" }); }, [turns]);
+
+  const ask = async (text: string) => {
+    const message = text.trim();
+    if (!message || busy) return;
+    setBusy(true); setQ("");
+    const id = `t-${Date.now()}`;
+    setTurns(ts => [...ts, { id: `${id}-q`, role: "user", text: message, tools: [] }, { id, role: "assistant", text: "", tools: [], pending: true, live: "Thinking…" }]);
+    const patch = (p: Partial<Turn>) => setTurns(ts => ts.map(t => (t.id === id ? { ...t, ...p } : t)));
+    try {
+      const r = await api.chat(message, ctx, conversationId, (e: ChatEvent) => {
+        if (e.type === "tool_call") patch({ live: `Calling ${e.name}…` });
+        if (e.type === "tool_result") setTurns(ts => ts.map(t => (t.id === id ? { ...t, tools: [...t.tools, { id: e.id, name: e.name, arguments: {}, result: e.result }] } : t)));
+        if (e.type === "text") patch({ text: e.text, live: null });
+      });
+      patch({ text: r.answer, tools: r.tools, pending: false, live: null });
+      if (!conversationId) { setSp(prev => { const n = new URLSearchParams(prev); n.set("c", r.conversation_id); return n; }, { replace: true }); }
+      threads.reload();
+    } catch (e) { patch({ pending: false, live: null, error: e instanceof Error ? e.message : String(e) }); }
+    finally { setBusy(false); }
   };
-  const submit = (e: FormEvent) => { e.preventDefault(); const t = q.trim(); if (!t) return; ask(t); setQ(""); };
-  const follow = (l: AskLink) => {
-    if (l.screen === "tasks") return navigate("/tasks");
-    const d = l.domain ?? currentDomain; const qs = new URLSearchParams(l.params ?? {}).toString();
-    navigate(`/d/${encodeURIComponent(d)}/${l.screen}${qs ? `?${qs}` : ""}`);
-  };
+  const submit = (e: FormEvent) => { e.preventDefault(); void ask(q); };
+  const openThread = (c: Conversation | null) => setSp(prev => { const n = new URLSearchParams(prev); if (c) n.set("c", c.id); else n.delete("c"); return n; });
+  const remove = async (c: Conversation) => { await api.deleteConversation(c.id); if (c.id === conversationId) openThread(null); threads.reload(); };
 
   return (
-    <div style={{ maxWidth: 960, margin: "0 auto" }}>
-      <div style={{ textAlign: "center", padding: "20px 0 18px" }}>
-        <div style={{ display: "inline-flex", alignItems: "center", gap: 8, height: 26, padding: "0 12px", borderRadius: 999, background: "var(--blue-soft)", color: "var(--blue-dark)", fontSize: 11.5, fontWeight: 700, letterSpacing: ".04em", textTransform: "uppercase", marginBottom: 14 }}><i style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--yellow)" }} />P.AI assistant</div>
-        <h1 style={{ fontSize: 34, fontWeight: 900, letterSpacing: "-.025em", lineHeight: 1.1, marginBottom: 8 }}>Ask <span style={{ color: "var(--blue)" }}>{inDomain ? currentDomain : "datagraph"}</span></h1>
-        <p className="muted" style={{ maxWidth: "56ch", margin: "0 auto", fontSize: 14 }}>Look up a glossary term, find where to do something, or ask about a domain. Answers link straight to the right screen.</p>
-      </div>
-      <form onSubmit={submit} style={{ display: "flex", gap: 8, background: "#fff", border: "1px solid var(--grey-2)", borderRadius: 12, padding: "8px 8px 8px 16px", alignItems: "center" }}>
-        <Icon name="search" size={18} stroke="#7A7A80" />
-        <input id="ask-input" aria-label="Ask a question" value={q} onChange={e => setQ(e.target.value)} placeholder="e.g. What is net revenue? · Where do I map Channel? · Show hr domain" style={{ flex: 1, height: 38, border: 0, outline: 0, font: "400 14px var(--font)", color: "var(--ink)", background: "transparent" }} />
-        {!fixed && <select aria-label="Domain" className="select filled" style={{ height: 34, borderRadius: 8 }} value={domainName} onChange={e => setDomainName(e.target.value)}>{(loaded.data?.domains ?? []).map(d => <option key={d.name} value={d.name}>{d.name}</option>)}</select>}
-        <Button type="submit" variant="primary" style={{ borderRadius: 8 }}>Ask</Button>
-      </form>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, margin: "12px 0 24px", justifyContent: "center" }}>
-        {SUGGESTIONS.map(s => <Button key={s} size="sm" pill style={{ fontWeight: 500, color: "var(--ink-2)", borderColor: "var(--line)" }} onClick={() => ask(s)}>{s}</Button>)}
-      </div>
-      {loaded.loading && thread.length === 0 && <Skeleton h={0} />}
-      {thread.map((a, i) => (
-        <div key={i} style={{ marginBottom: 18 }}>
-          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}><span style={{ maxWidth: "70%", padding: "9px 14px", borderRadius: "12px 12px 2px 12px", background: "var(--ink)", color: "#fff", fontSize: 13 }}>{a.q}</span></div>
-          <div style={{ display: "grid", gridTemplateColumns: "28px minmax(0,1fr)", gap: 10 }}>
-            <span style={{ width: 28, height: 28, borderRadius: 8, background: "var(--blue)", color: "var(--yellow)", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>★</span>
-            <div style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: "2px 12px 12px 12px", padding: "14px 16px" }}>
-              <div style={{ fontSize: 13.5, lineHeight: 1.6 }}>{a.text}</div>
-              {a.term && (
-                <div style={{ marginTop: 12, padding: "12px 14px", borderRadius: 8, background: "var(--blue-soft)", border: "1px solid var(--blue-border)" }}>
-                  <div className="row between" style={{ alignItems: "baseline" }}><strong style={{ fontSize: 14, fontWeight: 800 }}>{a.term.term}</strong><span className="muted" style={{ fontSize: 11 }}>Glossary · steward {a.term.steward} · {a.term.domain}</span></div>
-                  <div style={{ fontSize: 13, color: "var(--ink-2)", margin: "4px 0 8px" }}>{a.term.def}</div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, fontSize: 11 }}>
-                    <a href="#" className="pill solid" onClick={e => { e.preventDefault(); follow({ title: "", sub: "", icon: "", screen: "ontology", domain: a.term!.domain, params: { cls: a.term!.cls, view: "map" } }); }}>class {a.term.cls}</a>
-                    {a.term.cols.map(c => <a key={c} href="#" className="pill outline mono" style={{ borderColor: "var(--blue-light)", color: "var(--blue-dark)", fontWeight: 400 }} onClick={e => { e.preventDefault(); follow({ title: "", sub: "", icon: "", screen: "metadata", domain: a.term!.domain, params: { table: a.term!.table, tab: "glossary", gq: a.term!.term } }); }}>{c}</a>)}
-                  </div>
-                </div>
-              )}
-              {a.links.length > 0 && (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 8, marginTop: 12 }}>
-                  {a.links.map(l => (
-                    <a key={l.title} href="#" onClick={e => { e.preventDefault(); follow(l); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, border: "1px solid var(--line)", color: "var(--ink)" }}>
-                      <span style={{ width: 28, height: 28, borderRadius: 7, background: "var(--blue-soft)", color: "var(--blue)", display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name={l.icon} /></span>
-                      <span style={{ minWidth: 0 }}><span style={{ display: "block", fontWeight: 700, fontSize: 12.5 }}>{l.title}</span><span className="muted" style={{ display: "block", fontSize: 11.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.sub}</span></span>
-                    </a>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
+    <div className="chat">
+      <aside className="chat-threads" aria-label="Conversations">
+        <Button variant="primary" size="sm" style={{ width: "100%", justifyContent: "center" }} onClick={() => openThread(null)}>New conversation</Button>
+        {threads.loading && !threads.data && <Skeleton h={40} style={{ marginTop: 10 }} />}
+        <ul>
+          {(threads.data ?? []).map(c => (
+            <li key={c.id} className={c.id === conversationId ? "on" : ""}>
+              <button type="button" onClick={() => openThread(c)}><span className="ttl">{c.title}</span><span className="muted-3 xs">{c.domain ?? "all domains"} · {relTime(c.updated_at)}</span></button>
+              <button type="button" className="chip-act" aria-label={`Delete conversation ${c.title}`} onClick={() => void remove(c)}>×</button>
+            </li>))}
+        </ul>
+        {threads.data?.length === 0 && <p className="muted small" style={{ padding: "10px 8px" }}>No conversation yet. Your threads stay here.</p>}
+      </aside>
+      <section className="chat-main">
+        <div className="chat-head">
+          <div><h1>Ask <span style={{ color: "var(--blue)" }}>{ctx.domain ?? "datagraph"}</span></h1><p className="muted">The assistant answers through the graph and the source, and can act: profile a table, run or add rules, start a build. It says which tools it used.</p></div>
+          <span className="muted small" title="Cmd+K or Ctrl+K opens the same assistant over any screen">Anywhere: <kbd>⌘K</kbd></span>
         </div>
-      ))}
+        <div className="chat-log" role="log" aria-label="Conversation">
+          {turns.length === 0 && !thread.loading && (
+            <div className="chat-empty">
+              <div className="ic"><Icon name="ask" size={18} /></div>
+              <p className="muted">Ask about a table, a rule, an entity or the graph, or say what to run.</p>
+              <div className="chat-sugg">{SUGGESTIONS.map(s => <button key={s} type="button" className="btn sm pill" onClick={() => void ask(s)}>{s}</button>)}</div>
+            </div>
+          )}
+          {thread.loading && turns.length === 0 && <Skeleton h={80} />}
+          {turns.map(t => (
+            <div key={t.id} className={`msg ${t.role}`}>
+              {t.role === "assistant" && t.tools.length > 0 && (
+                <details className="tools"><summary>Used {t.tools.length} tool{t.tools.length === 1 ? "" : "s"}: {t.tools.map(x => x.name).join(", ")}</summary>
+                  {t.tools.map(x => <div key={x.id} className="tool"><div className="mono small"><b>{x.name}</b>{Object.keys(x.arguments).length ? ` ${JSON.stringify(x.arguments)}` : ""}</div><pre>{x.result}</pre></div>)}
+                </details>)}
+              {t.live && <div className="muted small row" style={{ gap: 8 }}><Spinner blue />{t.live}</div>}
+              {t.error && <div className="notice error">{t.error}</div>}
+              {t.text && <div className="bubble">{t.text}</div>}
+            </div>))}
+          <div ref={bottom} />
+        </div>
+        <form className="chat-compose" onSubmit={submit}>
+          <input aria-label="Ask a question" placeholder={ctx.domain ? `Ask about ${ctx.domain}…` : "Ask about a domain…"} value={q} onChange={e => setQ(e.target.value)} disabled={busy} />
+          <Button type="submit" variant="primary" disabled={busy || !q.trim()}>{busy ? <Spinner /> : null}Ask</Button>
+        </form>
+        {ctx.domain && <p className="muted xs" style={{ margin: "6px 2px 0" }}>Context sent with each question: {ctx.domain}{ctx.version ? ` v${ctx.version}` : ""}{ctx.screen ? ` · ${ctx.screen}` : ""}{ctx.table ? ` · ${ctx.table}` : ""}. <a href="#" onClick={e => { e.preventDefault(); navigate("/"); }}>Ask across domains</a></p>}
+      </section>
     </div>
   );
+}
+
+/** Stored messages into turns: each assistant answer carries the tool calls made right before it. */
+function fold(messages: ChatMessage[]): Turn[] {
+  const out: Turn[] = [];
+  let pending: ToolTrace[] = [];
+  const results = new Map(messages.filter(m => m.role === "tool").map(m => [m.tool_call_id, m.content ?? ""]));
+  for (const m of messages) {
+    if (m.role === "user") out.push({ id: `m-${m.id}`, role: "user", text: m.content ?? "", tools: [] });
+    else if (m.role === "assistant" && m.tool_calls?.length) pending.push(...m.tool_calls.map(c => ({ id: c.id, name: c.name, arguments: c.arguments, result: results.get(c.id) ?? "" })));
+    else if (m.role === "assistant") { out.push({ id: `m-${m.id}`, role: "assistant", text: m.content ?? "", tools: pending }); pending = []; }
+  }
+  return out;
 }

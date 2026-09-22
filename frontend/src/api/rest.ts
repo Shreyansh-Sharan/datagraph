@@ -2,7 +2,7 @@
 // Methods with a settled contract call the API; the rest fall through to the mock so the
 // app stays usable while integration proceeds. Replace fallbacks method by method.
 import { MockApi } from "./mock";
-import type { DqRule, DqRun, DqStatus, FailingRows, GlossaryEntry, RuleInput, TableProfile, TermInput, AiProgress, AuditEntry, BuildRun, GraphSample, SearchOptions, BuildStep, CatalogTable, ChecklistItem, DriftIssue, MappingKpis, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, RefreshChange, SnapshotTable, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus } from "./types";
+import type { AssistantContext, ChatEvent, ChatMessage, ChatResult, Conversation, DqRule, DqRun, DqStatus, FailingRows, GlossaryEntry, RuleInput, TableProfile, TermInput, AiProgress, AuditEntry, BuildRun, GraphSample, SearchOptions, BuildStep, CatalogTable, ChecklistItem, DriftIssue, MappingKpis, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, RefreshChange, SnapshotTable, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus } from "./types";
 import { tableName } from "./types";
 import { humanAction, relTime } from "./format";
 
@@ -39,11 +39,12 @@ export class RestApi extends MockApi {
     this.base = (opts.base ?? "/api").replace(/\/$/, "");
   }
 
+  private authHeaders(): Record<string, string> {
+    return this.ropts.token ? { Authorization: `Bearer ${this.ropts.token}` } : { [this.cfg?.authHeader ?? "X-Actor"]: this.ropts.actor ?? "alice" };
+  }
   private async req<T>(method: string, path: string, body?: unknown, text = false): Promise<T> {
-    const headers: Record<string, string> = { Accept: text ? "text/plain" : "application/json" };
+    const headers: Record<string, string> = { Accept: text ? "text/plain" : "application/json", ...this.authHeaders() };
     if (body !== undefined) headers["Content-Type"] = "application/json";
-    if (this.ropts.token) headers.Authorization = `Bearer ${this.ropts.token}`;
-    else headers[this.cfg?.authHeader ?? "X-Actor"] = this.ropts.actor ?? "alice";
     const res = await fetch(this.base + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
     if (!res.ok) {
       let detail = res.statusText;
@@ -229,6 +230,35 @@ export class RestApi extends MockApi {
     const r = await this.req<{ added: number; skipped?: string[] }>("POST", `${this.tpath(domain, version, table)}/dq/auto`);
     return { added: r.added, skipped: r.skipped ?? [] };
   }
+  // -- the assistant: one POST, the answer streamed as server-sent events -------------------------------
+  override async chat(message: string, ctx: AssistantContext, conversationId: string | null, onEvent?: (e: ChatEvent) => void): Promise<ChatResult> {
+    const res = await fetch(`${this.base}/assistant/chat`, { method: "POST", headers: { "Content-Type": "application/json", Accept: "text/event-stream", ...this.authHeaders() },
+      body: JSON.stringify({ message, context: ctx, conversation_id: conversationId }) });
+    if (!res.ok) { let detail = res.statusText; try { const j = await res.json(); detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail ?? j); } catch { /* keep */ } throw new ApiError(res.status, detail); }
+    if (!res.body) throw new Error("The assistant sent no stream");
+    const reader = res.body.getReader(); const decoder = new TextDecoder();
+    let buffer = "", done: ChatResult | null = null;
+    const handle = (line: string) => {
+      if (!line.startsWith("data:")) return;
+      const e = JSON.parse(line.slice(5).trim()) as ChatEvent;
+      if (e.type === "error") throw new Error(e.error);
+      if (e.type === "done") done = { conversation_id: e.conversation_id, answer: e.answer, tools: e.tools };
+      onEvent?.(e);
+    };
+    for (;;) {
+      const { value, done: end } = await reader.read();
+      if (end) break;
+      buffer += decoder.decode(value, { stream: true });
+      let i: number;
+      while ((i = buffer.indexOf("\n\n")) >= 0) { const chunk = buffer.slice(0, i); buffer = buffer.slice(i + 2); for (const line of chunk.split("\n")) handle(line); }
+    }
+    if (buffer.trim()) for (const line of buffer.split("\n")) handle(line);
+    if (!done) throw new Error("The assistant's stream ended without an answer");
+    return done;
+  }
+  override async conversations(domain?: string): Promise<Conversation[]> { return this.req<Conversation[]>("GET", `/assistant/conversations${domain ? `?domain=${encodeURIComponent(domain)}` : ""}`); }
+  override async conversation(id: string): Promise<Conversation & { messages: ChatMessage[] }> { return this.req("GET", `/assistant/conversations/${id}`); }
+  override async deleteConversation(id: string): Promise<void> { await this.req<void>("DELETE", `/assistant/conversations/${id}`); }
   override async ruleFailures(ruleId: string, limit = 20): Promise<FailingRows> { return this.req<FailingRows>("GET", `/dq/rules/${ruleId}/failures?limit=${limit}`); }
   override async suggestTerms(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<{ added: number; skipped: string[] }> {
     const r = await this.aiJob<{ added: number; skipped?: string[] }>(`${this.tpath(domain, version, table)}/glossary/suggest`, undefined, onProgress);

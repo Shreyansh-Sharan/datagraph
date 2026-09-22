@@ -714,3 +714,27 @@ describe("Explore search filters and neighbour names", () => {
     expect((await api.graphStatus("rgm")).types.map(t => t.name)).toContain("Customer");
   });
 });
+
+
+describe("assistant (rest)", () => {
+  it("reads the server-sent events of a chat into events and the final answer", async () => {
+    const calls: string[] = [];
+    const body = ['data: {"type": "tool_call", "id": "c1", "name": "search_entities", "arguments": {"query": "x"}}', "", 'data: {"type": "tool_result", "id": "c1", "name": "search_entities", "result": "[]"}', "",
+      'data: {"type": "text", "text": "Nothing matches x."}', "", 'data: {"type": "done", "conversation_id": "conv-1", "answer": "Nothing matches x.", "tools": [{"id": "c1", "name": "search_entities", "arguments": {"query": "x"}, "result": "[]"}]}', ""].join("\n");
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      calls.push(`${init?.method ?? "GET"} ${url} ${init?.body ?? ""}`);
+      if (url.endsWith("/assistant/chat")) {
+        const bytes = new TextEncoder().encode(body); const half = Math.floor(bytes.length / 2);
+        const stream = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(bytes.slice(0, half)); c.enqueue(bytes.slice(half)); c.close(); } });   // two chunks: an event may be split
+        return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } });
+      }
+      return new Response(JSON.stringify({ mode: "header", header: "X-Actor", source: { kind: "postgres", catalog: null } }), { status: 200 });
+    }) as typeof fetch;
+    const api = new RestApi({ base: "/api" });
+    const events: string[] = [];
+    const r = await api.chat("x", { domain: "aw" }, null, e => events.push(e.type));
+    expect(events).toEqual(["tool_call", "tool_result", "text", "done"]);
+    expect(r).toEqual({ conversation_id: "conv-1", answer: "Nothing matches x.", tools: [{ id: "c1", name: "search_entities", arguments: { query: "x" }, result: "[]" }] });
+    expect(calls.some(c => c.startsWith("POST /api/assistant/chat") && c.includes('"context":{"domain":"aw"}'))).toBe(true);
+  });
+});

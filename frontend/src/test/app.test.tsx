@@ -32,12 +32,13 @@ describe("datagraph shell", () => {
     expect(await screen.findByText("finops has no version yet")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create a draft version" })).toBeInTheDocument();
   });
-  it("answers an Ask question inline", async () => {
-    renderAt("#/");
+  it("answers an Ask question at home through the assistant", async () => {
+    renderAt("#/", new MockApi({ sourceKind: "databricks", latency: 5 }));
     const user = userEvent.setup();
-    await screen.findByText("Revenue growth management");
-    await user.type(screen.getByLabelText("Ask a question"), "What is net revenue?{Enter}");
-    expect(await screen.findByText(/owned by marc/)).toBeInTheDocument();
+    await user.type(await screen.findByLabelText("Ask a question"), "What is net revenue?{Enter}");
+    const log = screen.getByRole("log", { name: "Conversation" });
+    expect(await within(log).findByText(/I found Carrefour/)).toBeInTheDocument();
+    expect(within(log).getByText(/Used 1 tool: search_entities/)).toBeInTheDocument();
   });
   it("renders the mapping designer with the SQL tab in the adapter dialect", async () => {
     renderAt("#/d/rgm/mapping?cls=Customer&panel=sql", new MockApi({ sourceKind: "postgres" }));
@@ -358,6 +359,43 @@ describe("Table screen", () => {
     await user.click(within(dlg).getByRole("button", { name: "Add term" }));
     expect(await screen.findByText("Term Onboarding date added")).toBeInTheDocument();
     expect(await screen.findByRole("heading", { level: 3, name: "Onboarding date" })).toBeInTheDocument();
+  });
+});
+
+
+describe("Spotlight and Ask", () => {
+  it("opens over any screen with the shortcut, answers through the tools and continues in Ask", async () => {
+    renderAt("#/d/rgm/metadata?v=3", new MockApi({ latency: 5 }));
+    const user = userEvent.setup();
+    await screen.findByRole("heading", { level: 1, name: "Metadata" });
+    expect(screen.queryByRole("dialog", { name: "Spotlight" })).toBeNull();
+    await user.keyboard("{Control>}k{/Control}");
+    const spot = await screen.findByRole("dialog", { name: "Spotlight" });
+    await user.type(within(spot).getByLabelText("Ask the assistant"), "onto");
+    expect(within(spot).getByRole("option", { name: /Ontology/ })).toBeInTheDocument();          // a screen to jump to
+    await user.clear(within(spot).getByLabelText("Ask the assistant"));
+    await user.type(within(spot).getByLabelText("Ask the assistant"), "Which rules are failing?{Enter}");
+    expect(await within(spot).findByText(/dim_customer scores 90%/)).toBeInTheDocument();
+    expect(within(spot).getByText("table_quality")).toBeInTheDocument();                           // the tool it called
+    await user.click(within(spot).getByRole("button", { name: "Continue in Ask" }));
+    expect(window.location.hash).toMatch(/#\/d\/rgm\/ask\?c=c-/);
+    expect(await screen.findByRole("log", { name: "Conversation" })).toHaveTextContent(/Which rules are failing\?/);
+    expect(screen.getByRole("log", { name: "Conversation" })).toHaveTextContent(/dim_customer scores 90%/);
+  });
+  it("holds a thread in Ask, shows the tool trace and keeps the list of conversations", async () => {
+    renderAt("#/d/rgm/ask?v=3", new MockApi({ latency: 5 }));
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText("Ask a question"), "Start a build{Enter}");
+    const log = screen.getByRole("log", { name: "Conversation" });
+    expect(await within(log).findByText(/Build started on rgm/)).toBeInTheDocument();
+    expect(within(log).getByText(/Used 1 tool: start_build/)).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Ask a question"), "Profile the customer table{Enter}");
+    expect(await within(log).findByText(/612 rows/)).toBeInTheDocument();
+    expect(within(log).getByText(/Build started on rgm/)).toBeInTheDocument();                       // the thread stays
+    const threads = screen.getByRole("complementary", { name: "Conversations" });
+    expect(within(threads).getByText("Start a build")).toBeInTheDocument();
+    await user.click(within(threads).getByRole("button", { name: "New conversation" }));
+    expect(within(log).queryByText(/Build started on rgm/)).toBeNull();
   });
 });
 

@@ -2,7 +2,7 @@
 // UI behaves like the real thing (lifecycle transitions, builds with live steps, comments).
 import * as D from "./mockData";
 import { compileClassSql, tableName } from "./types";
-import type { AiProgress, ColumnKind, ColumnProfile, ColumnRole, DqResult, DqRule, DqRun, DqStatus, FailingRows, GlossaryEntry, RuleInput, TableProfile, TermInput, DomainSource, DriftIssue, GraphSample, SearchOptions, RefreshChange, SnapshotTable, SourceFactsEntry, SourceInput,
+import type { AiProgress, AssistantContext, ChatEvent, ChatMessage, ChatResult, ColumnKind, ColumnProfile, ColumnRole, Conversation, DqResult, DqRule, DqRun, DqStatus, FailingRows, GlossaryEntry, RuleInput, TableProfile, TermInput, DomainSource, DriftIssue, GraphSample, SearchOptions, RefreshChange, SnapshotTable, SourceFactsEntry, SourceInput,
   Analytics, ApiKey, AuditEntry, BuildRun, BuildStep, CatalogTable, ChecklistItem, ClassMapping, Comment, Config, ConnResult, Constraint,
   DatagraphApi, DomainSummary, EntityDetail, GraphStatus, Lock, MappingKpis, Me, NewDomainInput, OntoCheck,
   OntoClass, Principal, Role, Rule, SearchHit, SourceKind, TableDetail, TablePreview, Task, TriplePage, TripleQuery,
@@ -394,6 +394,38 @@ export class MockApi implements DatagraphApi {
     for (const w of fresh) all.push({ id: `g-ai-${Date.now()}-${w.name.length}`, kind: w.kind, name: w.name, definition: w.definition ?? "", status: w.status ?? "draft", schema_name: schema, table_name: table, columns: w.columns ?? [], class_name: w.class_name ?? null, formula: w.formula ?? null, unit: w.unit ?? null, frequency: w.frequency ?? null, owner: null, updated_at: new Date().toISOString(), updated_by: "ai" });
     return { added: fresh.length, skipped: want.filter(w => !fresh.includes(w)).map(w => `${w.name} (already in the glossary)`) };
   }
+  // -- the assistant, scripted: one tool call, one answer, threads kept in memory ---------------------
+  private threads: (Conversation & { messages: ChatMessage[] })[] = [];
+  private msgId = 0;
+  async chat(message: string, ctx: AssistantContext, conversationId: string | null, onEvent?: (e: ChatEvent) => void): Promise<ChatResult> {
+    const ms = this.mockOpts.latency ?? 250;
+    let thread = conversationId ? this.threads.find(t => t.id === conversationId) : undefined;
+    if (!thread) { thread = { id: `c-${Date.now()}-${this.threads.length}`, domain: ctx.domain ?? null, title: message.slice(0, 80), context: ctx, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), messages: [] }; this.threads.unshift(thread); }
+    const push = (m: Omit<ChatMessage, "id" | "created_at">) => thread!.messages.push({ id: ++this.msgId, created_at: new Date().toISOString(), ...m });
+    push({ role: "user", content: message, tool_calls: null, tool_call_id: null, name: null });
+    const t = message.toLowerCase(); const domain = ctx.domain ?? "rgm";
+    const tool = /build/.test(t) ? { name: "start_build", arguments: { domain }, result: JSON.stringify({ id: "run-mock", status: "running" }) }
+      : /profile/.test(t) ? { name: "table_profile", arguments: { domain, table: ctx.table ?? "rgm.gold.dim_customer" }, result: JSON.stringify({ row_count: 612, missing_cells: 0.03, row_key: ["customer_id"] }) }
+      : /quality|rule/.test(t) ? { name: "table_quality", arguments: { domain, table: ctx.table ?? "rgm.gold.dim_customer" }, result: JSON.stringify({ score: 0.8975, summary: { passing: 2, warning: 1, failing: 1 } }) }
+      : { name: "search_entities", arguments: { query: message, domain }, result: JSON.stringify([{ iri: "http://polestar.ai/rgm/Customer/10482", label: "Carrefour", types: ["Customer"] }]) };
+    await this.wait(null, ms);
+    onEvent?.({ type: "tool_call", id: "call_1", name: tool.name, arguments: tool.arguments });
+    push({ role: "assistant", content: "", tool_calls: [{ id: "call_1", name: tool.name, arguments: tool.arguments }], tool_call_id: null, name: null });
+    await this.wait(null, ms);
+    onEvent?.({ type: "tool_result", id: "call_1", name: tool.name, result: tool.result });
+    push({ role: "tool", content: tool.result, tool_calls: null, tool_call_id: "call_1", name: tool.name });
+    const answer = tool.name === "start_build" ? `Build started on ${domain}; watch it on the Build screen.` : tool.name === "table_profile" ? "dim_customer has 612 rows, 3% empty cells and customer_id as its row key." : tool.name === "table_quality" ? "dim_customer scores 90%: two rules pass, one warns, one fails (credit limit within range)." : `I found Carrefour, a Customer in ${domain}.`;
+    await this.wait(null, ms);
+    onEvent?.({ type: "text", text: answer });
+    push({ role: "assistant", content: answer, tool_calls: null, tool_call_id: null, name: null });
+    thread.updated_at = new Date().toISOString();
+    const result: ChatResult = { conversation_id: thread.id, answer, tools: [{ id: "call_1", name: tool.name, arguments: tool.arguments, result: tool.result }] };
+    onEvent?.({ type: "done", ...result });
+    return result;
+  }
+  async conversations(domain?: string): Promise<Conversation[]> { return clone(this.threads.filter(t => !domain || t.domain === domain).map(({ messages: _m, ...c }) => c)); }
+  async conversation(id: string): Promise<Conversation & { messages: ChatMessage[] }> { const t = this.threads.find(x => x.id === id); if (!t) throw new Error(`Conversation ${id} not found`); return clone(t); }
+  async deleteConversation(id: string): Promise<void> { this.threads = this.threads.filter(t => t.id !== id); }
   private glossaryOf(domain: string): GlossaryEntry[] {
     if (!this.terms[domain]) {
       const when = (d: number) => new Date(Date.now() - d * 864e5).toISOString();

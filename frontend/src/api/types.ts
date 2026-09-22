@@ -98,6 +98,18 @@ export interface RuleInput { name: string; kind: DqKind; column?: string | null;
 export type GlossaryStatus = "draft" | "pending" | "approved" | "certified";
 export interface GlossaryEntry { id: string; kind: "term" | "metric"; name: string; definition: string; status: GlossaryStatus; schema_name: string | null; table_name: string | null; columns: string[]; class_name: string | null; formula: string | null; unit: string | null; frequency: string | null; owner: string | null; updated_at: string; updated_by: string | null }
 export interface TermInput { kind: "term" | "metric"; name: string; definition?: string; table?: string | null; columns?: string[]; status?: GlossaryStatus; owner?: string | null; class_name?: string | null; formula?: string | null; unit?: string | null; frequency?: string | null }
+// -- the assistant --------------------------------------------------------------------------------
+export interface AssistantContext { domain?: string; version?: number; screen?: string; table?: string; cls?: string; entity?: string }
+export interface ToolTrace { id: string; name: string; arguments: Record<string, unknown>; result: string }
+export type ChatEvent =
+  | { type: "tool_call"; id: string; name: string; arguments: Record<string, unknown> }
+  | { type: "tool_result"; id: string; name: string; result: string }
+  | { type: "text"; text: string }
+  | { type: "done"; conversation_id: string; answer: string; tools: ToolTrace[] }
+  | { type: "error"; error: string };
+export interface ChatResult { conversation_id: string; answer: string; tools: ToolTrace[] }
+export interface Conversation { id: string; domain: string | null; title: string; context: AssistantContext; created_at: string; updated_at: string }
+export interface ChatMessage { id: number; role: "user" | "assistant" | "tool"; content: string | null; tool_calls: { id: string; name: string; arguments: Record<string, unknown> }[] | null; tool_call_id: string | null; name: string | null; created_at: string }
 /** The Ask assistant's view of a glossary entry. */
 export interface GlossaryTerm { term: string; def: string; cls: string; cols: string[]; steward: string }
 export const askTerm = (e: GlossaryEntry): GlossaryTerm => ({ term: e.name, def: e.definition, cls: e.class_name ?? "", cols: e.columns.map(c => `${(e.table_name ?? "").split(".").pop() ?? ""}.${c}`), steward: e.owner ?? "" });
@@ -204,6 +216,10 @@ export interface DatagraphApi {
   autoSuggestRules(domain: string, version: number, table: string): Promise<{ added: number; skipped: string[] }>;             // rules read off the profile, no AI
   ruleFailures(ruleId: string, limit?: number): Promise<FailingRows>;                                                   // a sample of the source rows that break a row-level rule
   suggestTerms(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<{ added: number; skipped: string[] }>;
+  chat(message: string, ctx: AssistantContext, conversationId: string | null, onEvent?: (e: ChatEvent) => void): Promise<ChatResult>;   // the assistant answers through the MCP tools; events arrive as it works
+  conversations(domain?: string): Promise<Conversation[]>;
+  conversation(id: string): Promise<Conversation & { messages: ChatMessage[] }>;
+  deleteConversation(id: string): Promise<void>;
   glossary(domain: string, opts?: { kind?: "term" | "metric"; table?: string; q?: string }): Promise<GlossaryEntry[]>;
   addTerm(domain: string, term: TermInput): Promise<GlossaryEntry>;
   updateTerm(id: string, patch: Partial<TermInput>): Promise<GlossaryEntry>;
