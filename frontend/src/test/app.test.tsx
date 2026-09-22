@@ -32,8 +32,28 @@ describe("datagraph shell", () => {
     expect(await screen.findByText("finops has no version yet")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create a draft version" })).toBeInTheDocument();
   });
-  it("answers an Ask question at home through the assistant", async () => {
-    renderAt("#/", new MockApi({ sourceKind: "databricks", latency: 5 }));
+  it("shows domains only at home, as cards or a list, and filters them", async () => {
+    renderAt("#/", new MockApi({ sourceKind: "databricks" }));
+    const user = userEvent.setup();
+    expect(await screen.findByRole("heading", { level: 1, name: "Domains" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Ask a question")).toBeNull();                                  // the assistant lives in Ask and the Spotlight, not at home
+    expect((await screen.findAllByRole("button", { name: "Open" })).length).toBeGreaterThan(1);     // cards by default
+    await user.click(screen.getByRole("radio", { name: "List view" }));
+    const table = screen.getByRole("table", { name: "Domains" });
+    expect(within(table).getAllByRole("columnheader").map(h => h.textContent)).toEqual(["Domain", "Status", "Triples", "Last build", "Source", ""]);
+    const rgm = within(table).getByRole("row", { name: /rgm/ });
+    expect(rgm).toHaveTextContent(/v1 active/);
+    expect(rgm).toHaveTextContent(/succeeded/);
+    expect(within(rgm).getByRole("button", { name: "Ask rgm" })).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Filter domains"), "fin");
+    expect(within(table).queryByRole("row", { name: /rgm/ })).toBeNull();
+    expect(within(table).getByRole("row", { name: /finops/ })).toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: "Card view" }));
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.getAllByRole("button", { name: "Open" })).toHaveLength(1);                        // the filter applies to both views
+  });
+  it("answers an Ask question at the top-level Ask screen through the assistant", async () => {
+    renderAt("#/ask", new MockApi({ sourceKind: "databricks", latency: 5 }));
     const user = userEvent.setup();
     await user.type(await screen.findByLabelText("Ask a question"), "What is net revenue?{Enter}");
     const log = screen.getByRole("log", { name: "Conversation" });

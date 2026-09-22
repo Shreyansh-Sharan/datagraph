@@ -103,7 +103,7 @@ export function Ask({ inDomain, domain: domainProp }: { inDomain?: boolean; doma
           <input aria-label="Ask a question" placeholder={ctx.domain ? `Ask about ${ctx.domain}…` : "Ask about a domain…"} value={q} onChange={e => setQ(e.target.value)} disabled={busy} />
           <Button type="submit" variant="primary" disabled={busy || !q.trim()}>{busy ? <Spinner /> : null}Ask</Button>
         </form>
-        {ctx.domain && <p className="muted xs" style={{ margin: "6px 2px 0" }}>Context sent with each question: {ctx.domain}{ctx.version ? ` v${ctx.version}` : ""}{ctx.screen ? ` · ${ctx.screen}` : ""}{ctx.table ? ` · ${ctx.table}` : ""}. <a href="#" onClick={e => { e.preventDefault(); navigate("/"); }}>Ask across domains</a></p>}
+        {ctx.domain && <p className="muted xs" style={{ margin: "6px 2px 0" }}>Context sent with each question: {ctx.domain}{ctx.version ? ` v${ctx.version}` : ""}{ctx.screen ? ` · ${ctx.screen}` : ""}{ctx.table ? ` · ${ctx.table}` : ""}. <a href="#" onClick={e => { e.preventDefault(); navigate("/ask"); }}>Ask across domains</a></p>}
       </section>
     </div>
   );

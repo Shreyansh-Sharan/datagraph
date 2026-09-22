@@ -33,6 +33,7 @@ export function App({ api, connectionsUrl = CONNECTIONS_URL }: { api: DatagraphA
           <Route element={<AppShell />}>
             <Route element={<PlainMain />}>
               <Route index element={<Home />} />
+              <Route path="ask" element={<Ask />} />
               <Route path="tasks" element={<Tasks />} />
               <Route path="admin" element={<Admin />} />
             </Route>

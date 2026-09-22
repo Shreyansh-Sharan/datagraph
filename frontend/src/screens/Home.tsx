@@ -1,46 +1,81 @@
-import { useState } from "react";
+// Home: the domains, as cards or as a list, with a filter. The assistant lives in the Spotlight
+// (Cmd+K) and on the Ask screen, not here.
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { Icon } from "@/components/icons";
 import { Button, Card, Dialog, Dot, ErrorNotice, Label, Skeleton } from "@/components/ui";
 import { useApp, useLoad } from "@/state/app";
-import { Ask } from "./Ask";
 import type { DomainSummary } from "@/api";
+
+type View = "cards" | "list";
+const VIEW_KEY = "dg.home.view";
+const readView = (): View => { try { return localStorage.getItem(VIEW_KEY) === "list" ? "list" : "cards"; } catch { return "cards"; } };
 
 export function Home() {
   const { api, config, say } = useApp();
   const navigate = useNavigate();
   const { data, error, loading, reload } = useLoad(() => api.domains(), []);
   const [dialog, setDialog] = useState(false);
+  const [view, setView] = useState<View>(readView);
+  const [q, setQ] = useState("");
+  useEffect(() => { try { localStorage.setItem(VIEW_KEY, view); } catch { /* per-viewer convenience only */ } }, [view]);
   const dbx = config.sourceKind === "databricks";
   const open = (d: DomainSummary, screen = "") => navigate(`/d/${encodeURIComponent(d.name)}${screen ? `/${screen}` : ""}`);
+  const rows = useMemo(() => {
+    const t = q.trim().toLowerCase();
+    return (data ?? []).filter(d => !t || d.name.toLowerCase().includes(t) || (d.description ?? "").toLowerCase().includes(t) || d.catalog.toLowerCase().includes(t)).map(d => summarise(d, dbx));
+  }, [data, q, dbx]);
 
   return (
-    <>
-      <Ask domains={data ?? undefined} />
-      <div style={{ maxWidth: 960, margin: "0 auto" }}>
-        <div className="row between" style={{ alignItems: "flex-end", gap: 16, margin: "8px 0 12px" }}>
-          <div><h2 style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-.01em", marginBottom: 2 }}>Domains</h2><p className="muted" style={{ fontSize: 12.5 }}>One knowledge graph each, with its own source, versions, review quorum and MCP policy. Open one to work in it.</p></div>
-          <div className="row" style={{ flex: "none" }}><Button size="sm" style={{ height: 32 }} onClick={() => say("Choose a bundle file to import")}>Import bundle</Button><Button size="sm" variant="primary" style={{ height: 32 }} onClick={() => setDialog(true)}>New domain</Button></div>
+    <div className="home">
+      <div className="home-head">
+        <div><h1>Domains</h1><p className="muted">One knowledge graph each, with its own source, versions, review quorum and MCP policy. Open one to work in it.</p></div>
+        <div className="row" style={{ flex: "none", gap: 8 }}><Button onClick={() => say("Choose a bundle file to import")}>Import bundle</Button><Button variant="primary" onClick={() => setDialog(true)}>New domain</Button></div>
+      </div>
+      <div className="home-tools">
+        <label className="home-filter"><Icon name="search" size={14} /><input aria-label="Filter domains" placeholder="Filter domains" value={q} onChange={e => setQ(e.target.value)} /></label>
+        <div className="seg" role="radiogroup" aria-label="View">
+          <button type="button" role="radio" aria-checked={view === "cards"} aria-label="Card view" className={view === "cards" ? "on" : ""} onClick={() => setView("cards")}><Icon name="overview" size={14} />Cards</button>
+          <button type="button" role="radio" aria-checked={view === "list"} aria-label="List view" className={view === "list" ? "on" : ""} onClick={() => setView("list")}><Icon name="triples" size={14} />List</button>
         </div>
-        {error && <ErrorNotice error={error} action={<Button size="sm" onClick={reload}>Retry</Button>} />}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: 14 }}>
-          {loading && [0, 1, 2].map(i => <Card key={i}><Skeleton h={34} w={160} /><Skeleton h={16} style={{ marginTop: 14 }} /><Skeleton h={16} /><Skeleton h={16} /></Card>)}
-          {data?.map(d => {
-            const act = d.versions.find(v => v.active); const dr = d.versions.find(v => v.status === "draft");
-            const state = act ? `v${act.version} active` : dr ? `v${dr.version} draft` : "no version";
-            const dot = act ? "var(--blue)" : dr ? "var(--grey)" : "var(--grey-2)";
-            const more = d.sources.length > 1 ? ` +${d.sources.length - 1} source${d.sources.length > 2 ? "s" : ""}` : d.schemas.length > 1 ? ` +${d.schemas.length - 1}` : "";
-            const cfg = [["Source", dbx ? `databricks · ${d.catalog}.${d.schema}${more}` : `postgres · ${d.catalog}_${d.schema}${more}`], ["Base IRI", d.base_iri], ["Review quorum", String(d.quorum)], ["MCP", d.mcpExposed ? `exposed · ${d.disabledTools.length} tools off` : "hidden"]];
+      </div>
+      {error && <ErrorNotice error={error} action={<Button size="sm" onClick={reload}>Retry</Button>} />}
+      {loading && !data && (view === "list" ? <Skeleton h={160} /> : <div className="home-cards">{[0, 1, 2].map(i => <Card key={i}><Skeleton h={34} w={160} /><Skeleton h={16} style={{ marginTop: 14 }} /><Skeleton h={16} /><Skeleton h={16} /></Card>)}</div>)}
+      {data && rows.length === 0 && <p className="muted home-empty">{q ? `No domain matches “${q}”.` : "No domain yet. Create one to start."}</p>}
+      {rows.length > 0 && (view === "list" ? (
+        <table className="dom-table" aria-label="Domains">
+          <thead><tr><th>Domain</th><th>Status</th><th className="num">Triples</th><th>Last build</th><th>Source</th><th aria-label="Actions" /></tr></thead>
+          <tbody>
+            {rows.map(r => (
+              <tr key={r.d.name} onClick={() => open(r.d)} className="link">
+                <td><div className="dom-name"><span className="dom-avatar">{r.d.name[0].toUpperCase()}</span><div><a href="#" onClick={e => { e.preventDefault(); open(r.d); }}>{r.d.name}</a><div className="muted sub">{r.d.description || "No description"}</div></div></div></td>
+                <td><span className="pill"><Dot color={r.dot} />{r.state}</span></td>
+                <td className="num">{r.d.triples}</td>
+                <td><div className={`build ${r.buildTone}`}>{r.buildStatus}</div><div className="muted xs">{r.buildWhen || "—"}</div></td>
+                <td className="mono small src" title={r.source}>{r.source}</td>
+                <td className="acts" onClick={e => e.stopPropagation()}>
+                  <Button size="sm" onClick={() => open(r.d, "ask")} aria-label={`Ask ${r.d.name}`}><Icon name="ask" size={13} />Ask</Button>
+                  <Button size="sm" onClick={() => open(r.d, "settings")} aria-label={`Configure ${r.d.name}`} title="Configure"><Icon name="settings" size={13} /></Button>
+                </td>
+              </tr>))}
+          </tbody>
+        </table>
+      ) : (
+        <div className="home-cards">
+          {rows.map(r => {
+            const d = r.d;
+            const cfg = [["Source", r.source], ["Base IRI", d.base_iri], ["Review quorum", String(d.quorum)], ["MCP", d.mcpExposed ? `exposed · ${d.disabledTools.length} tools off` : "hidden"]];
             return (
               <Card key={d.name} style={{ borderRadius: 12, display: "flex", flexDirection: "column", gap: 12 }}>
                 <div className="row between" style={{ gap: 10 }}>
-                  <a href="#" onClick={e => { e.preventDefault(); open(d); }} style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--ink)", minWidth: 0 }}>
-                    <span style={{ width: 34, height: 34, borderRadius: 9, background: "var(--blue-soft)", color: "var(--blue)", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 900, flex: "none" }}>{d.name[0].toUpperCase()}</span>
-                    <span style={{ minWidth: 0 }}><span style={{ display: "block", fontSize: 16, fontWeight: 800, color: "var(--blue)" }}>{d.name}</span><span className="muted" style={{ display: "block", fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.description}</span></span>
+                  <a href="#" onClick={e => { e.preventDefault(); open(d); }} className="dom-name" style={{ color: "var(--ink)" }}>
+                    <span className="dom-avatar">{d.name[0].toUpperCase()}</span>
+                    <span style={{ minWidth: 0 }}><span style={{ display: "block", fontSize: 16, fontWeight: 800, color: "var(--blue)" }}>{d.name}</span><span className="muted sub" style={{ display: "block", fontSize: 12 }}>{d.description || "No description"}</span></span>
                   </a>
-                  <span className="pill lg" style={{ flex: "none" }}><Dot color={dot} />{state}</span>
+                  <span className="pill lg" style={{ flex: "none" }}><Dot color={r.dot} />{r.state}</span>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 8 }}>
-                  {[["Triples", d.triples], ["Versions", String(d.versions.length)], ["Last build", d.lastBuild]].map(([k, v]) => <div key={k}><div className="label-caps" style={{ fontSize: 10.5, color: "var(--muted-3)" }}>{k}</div><div style={{ fontSize: 16, fontWeight: 800, letterSpacing: "-.02em" }}>{v}</div></div>)}
+                  {[["Triples", d.triples], ["Versions", String(d.versions.length)], ["Last build", d.lastBuild]].map(([k, v]) => <div key={k}><div className="label-caps" style={{ fontSize: 10.5, color: "var(--muted-3)" }}>{k}</div><div style={{ fontSize: 16, fontWeight: 800, letterSpacing: "-.02em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v}</div></div>)}
                 </div>
                 <div style={{ borderTop: "1px solid var(--line-2)", paddingTop: 10, display: "grid", gap: 5 }}>
                   {cfg.map(([k, v]) => <div key={k} className="row between" style={{ fontSize: 12, gap: 10 }}><span className="muted-2">{k}</span><span className="mono" style={{ fontSize: 11.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v}</span></div>)}
@@ -54,10 +89,27 @@ export function Home() {
             );
           })}
         </div>
-      </div>
+      ))}
       <NewDomainDialog open={dialog} onClose={() => setDialog(false)} onCreated={d => { setDialog(false); say(`Domain ${d.name} created`); open(d); }} />
-    </>
+    </div>
   );
+}
+
+/** What both views show about a domain: its state, build and source, spelled once. */
+function summarise(d: DomainSummary, dbx: boolean) {
+  const act = d.versions.find(v => v.active); const dr = d.versions.find(v => v.status === "draft");
+  const more = d.sources.length > 1 ? ` +${d.sources.length - 1} source${d.sources.length > 2 ? "s" : ""}` : d.schemas.length > 1 ? ` +${d.schemas.length - 1}` : "";
+  const [first, ...rest] = d.lastBuild.split(" · ");
+  const known = ["succeeded", "failed", "running", "cancelled", "never"].includes(first);
+  const buildStatus = known ? first : "built", buildWhen = known ? rest.join(" · ") : d.lastBuild;
+  return {
+    d,
+    state: act ? `v${act.version} active` : dr ? `v${dr.version} draft` : "no version",
+    dot: act ? "var(--blue)" : dr ? "var(--grey)" : "var(--grey-2)",
+    source: dbx ? `databricks · ${d.catalog}.${d.schema}${more}` : `postgres · ${d.catalog}_${d.schema}${more}`,
+    buildStatus, buildWhen,
+    buildTone: buildStatus === "succeeded" ? "ok" : buildStatus === "failed" ? "bad" : buildStatus === "running" ? "run" : "none",
+  };
 }
 
 export function NewDomainDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (d: DomainSummary) => void }) {

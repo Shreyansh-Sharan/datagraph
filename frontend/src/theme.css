@@ -526,3 +526,38 @@ table.fail .hit { background: #FFF1E8; color: var(--orange-text); }
 .chat-compose { display: flex; gap: 8px; margin-top: 12px; background: #fff; border: 1px solid var(--grey-2); border-radius: 12px; padding: 8px 8px 8px 16px; align-items: center; }
 .chat-compose input { flex: 1; border: 0; outline: none; font: 400 14px var(--font); color: var(--ink); background: transparent; }
 @media (max-width: 900px) { .chat { grid-template-columns: 1fr; height: auto; } .chat-threads { max-height: 200px; } }
+
+/* Home: the domains as cards or a list */
+.home { max-width: 1120px; margin: 0 auto; }
+.home-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin: 12px 0 16px; }
+.home-head h1 { font-size: 28px; font-weight: 800; letter-spacing: -.02em; margin: 0 0 4px; }
+.home-head p { font-size: 13px; margin: 0; }
+.home-tools { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.home-filter { flex: 1; display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px; background: #fff; border: 1px solid var(--line); border-radius: 10px; color: var(--muted-3); }
+.home-filter input { flex: 1; border: 0; outline: none; background: transparent; font: 400 13.5px var(--font); color: var(--ink); }
+.home-filter:focus-within { border-color: var(--blue); }
+.seg { display: inline-flex; padding: 3px; background: var(--surface-3); border: 1px solid var(--line-2); border-radius: 9px; }
+.seg button { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font: 600 12.5px var(--font); cursor: pointer; }
+.seg button.on { background: #fff; color: var(--ink); box-shadow: 0 1px 2px rgba(15, 23, 42, .08); }
+.home-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.home-empty { padding: 32px 0; text-align: center; }
+.dom-name { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.dom-name .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }
+.dom-avatar { width: 34px; height: 34px; border-radius: 9px; background: var(--blue-soft); color: var(--blue); display: inline-flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 900; flex: none; }
+.dom-table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; font-size: 13px; }
+.dom-table th { padding: 10px 16px; background: var(--surface-3); text-align: left; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.dom-table td { padding: 12px 16px; border-top: 1px solid var(--line-2); vertical-align: middle; }
+.dom-table th.num, .dom-table td.num { text-align: right; }
+.dom-table td.num { font-weight: 800; letter-spacing: -.02em; font-size: 15px; }
+.dom-table td.src { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dom-table tr.link { cursor: pointer; }
+.dom-table tr.link:hover td { background: var(--surface-2); }
+.dom-table td a { font-weight: 800; color: var(--ink); }
+.dom-table .build { font-weight: 600; font-size: 12.5px; }
+.dom-table .build.ok { color: var(--green-text, #1a7f4b); }
+.dom-table .build.bad { color: var(--orange-text, #c2410c); }
+.dom-table .build.run { color: var(--blue); }
+.dom-table .build.none { color: var(--muted); }
+.dom-table td.acts { text-align: right; white-space: nowrap; }
+.dom-table td.acts .btn + .btn { margin-left: 6px; }
+@media (max-width: 860px) { .dom-table th:nth-child(5), .dom-table td:nth-child(5) { display: none; } .home-head { flex-direction: column; align-items: flex-start; } }

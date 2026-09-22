@@ -79,7 +79,7 @@ export function Spotlight() {
             {live && <div className="muted small row" style={{ gap: 8 }}><Spinner blue />{live}</div>}
             {error && <div className="notice error">{error}</div>}
             {answer && <div className="spot-a"><Markdown text={answer} /></div>}
-            {answer && conversation && <div className="spot-foot"><button type="button" className="btn sm" onClick={() => { navigate(ctx.domain ? `/d/${encodeURIComponent(ctx.domain)}/ask?c=${conversation}` : `/?c=${conversation}`); setOpen(false); }}>Continue in Ask</button><span className="muted small">Type to ask a follow-up</span></div>}
+            {answer && conversation && <div className="spot-foot"><button type="button" className="btn sm" onClick={() => { navigate(ctx.domain ? `/d/${encodeURIComponent(ctx.domain)}/ask?c=${conversation}` : `/ask?c=${conversation}`); setOpen(false); }}>Continue in Ask</button><span className="muted small">Type to ask a follow-up</span></div>}
           </div>
         )}
       </div>
