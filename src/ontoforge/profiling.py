@@ -185,6 +185,9 @@ class ProfileService:
                     want(n, "outliers", d.count_if(f"{qc} < {_lit(q1 - 1.5 * iqr)} OR {qc} > {_lit(q3 + 1.5 * iqr)}"))
             elif k == "string" and a.get("top") is not None:
                 want(n, "topn", d.count_if(f"{d.to_text(qc)} = {d.string_literal(str(a['top']))}"))
+            nn0, ad = _int(a.get("nn")) or 0, _int(a.get("distinct")) or 0
+            if k in ("numeric", "string") and nn0 and ad / nn0 >= 0.9:
+                want(n, "exact", f"count(DISTINCT {qc})")          # a key deserves an exact count, the approximation may miss a few rows
         if exprs:
             say("Measuring distributions")
             row = _row(src.query(f"SELECT {', '.join(exprs)} FROM {from_sql}", 1))
@@ -210,6 +213,8 @@ class ProfileService:
             nulls = int(round(null_rate * row_count))
             total_nulls += nulls
             distinct = None if a.get("distinct") is None else min(_int(a["distinct"]) or 0, nn)
+            if a.get("exact") is not None:
+                distinct = _int(a["exact"])
             values = [{"value": v, "n": cnt} for v, cnt in counted.get(n, [])]
             if values and distinct is not None and distinct <= VALUE_COUNT_LIMIT:
                 distinct = len(values)                                     # exact where the values were counted
@@ -247,7 +252,7 @@ class ProfileService:
             lo, hi = _float(a.get("min")), _float(a.get("max"))
             is_int = k == "numeric" and (lo is None or lo == int(lo)) and (hi is None or hi == int(hi))
             idlike = k == "numeric" or any(t in n.lower() for t in ("id", "key", "code", "guid", "uuid", "number", "no"))
-            role = "row key" if nn and nulls == 0 and distinct == nn and nn == total and k in ("numeric", "string") and idlike else "binary" if distinct == 2 else "feature"
+            role = "row key" if nn and nulls == 0 and distinct == nn and nn == total and k in ("numeric", "string") and idlike else "binary" if distinct == 2 and k != "temporal" else "feature"
             kind = "date" if k == "temporal" else "boolean" if k == "boolean" else "categorical" if k == "string" else "numeric id" if role == "row key" and is_int else "numeric"
             hints = _hints(role, kind, distinct, nn, stats, share)
             columns.append(ColumnProfile(n, c.get("type") or "", nulls, round(null_rate, 6), distinct, _text(a.get("min")), _text(a.get("max")), top, share,
@@ -299,19 +304,21 @@ def _entropy(counts: list[int]) -> float | None:
     total = sum(counts)
     if not total:
         return None
-    return round(-sum(c / total * math.log2(c / total) for c in counts if c), 4)
+    return abs(round(-sum(c / total * math.log2(c / total) for c in counts if c), 4))
 
 
 def _peaks(counts: list[int]) -> int:
     """Local maxima of a histogram, ignoring bins under 5% of the tallest."""
     if not counts:
         return 0
+    if len(counts) == 1:
+        return 1 if counts[0] > 0 else 0
     floor = 0.05 * max(counts)
     peaks = 0
     for i, c in enumerate(counts):
-        left = counts[i - 1] if i > 0 else -1
-        right = counts[i + 1] if i + 1 < len(counts) else -1
-        if c > floor and c >= left and c >= right and (c > left or c > right or len(counts) == 1):
+        left = counts[i - 1] if i > 0 else c          # an edge continues the plateau, it is not a drop
+        right = counts[i + 1] if i + 1 < len(counts) else c
+        if c > floor and c >= left and c >= right and (c > left or c > right):
             peaks += 1
     return peaks
 

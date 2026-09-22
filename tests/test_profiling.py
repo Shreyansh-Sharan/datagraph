@@ -81,3 +81,24 @@ def test_profile_samples_big_tables_and_speaks_databricks(db):
     assert any("percentile_approx(CAST(`sal` AS DOUBLE), 0.5)" in s for s in sqls)
     assert any("mode(`ename`)" in s for s in sqls)
     assert all(c.distinct is None or c.distinct <= c.non_null for c in p.columns)   # approximate counts never exceed the rows
+
+
+def test_databricks_counts_distinct_rows_through_a_struct_so_nulls_are_not_duplicates():
+    from ontoforge.dialects import DatabricksDialect, PostgresDialect
+    d = DatabricksDialect()
+    assert d.distinct_count(["`a`", "`b`"]) == "count(DISTINCT struct(`a`, `b`))"   # count(DISTINCT a, b) skips rows with a null
+    assert d.distinct_count(["`a`"]) == "count(DISTINCT `a`)"
+    assert PostgresDialect().distinct_count(['"a"', '"b"']) == 'count(DISTINCT ("a", "b"))'
+
+
+def test_entropy_of_a_constant_column_is_a_plain_zero():
+    from ontoforge.profiling import _entropy
+    assert _entropy([290]) == 0.0 and str(_entropy([290])) == "0.0"
+
+
+def test_peaks_ignore_flat_histograms_and_count_real_maxima():
+    from ontoforge.profiling import _peaks
+    assert _peaks([29] * 10) == 0            # uniform: no peak at all
+    assert _peaks([1, 5, 2, 7, 1]) == 2      # two hills
+    assert _peaks([1, 2, 3, 4]) == 1         # a ramp peaks at its end
+    assert _peaks([4, 3, 2, 1]) == 1 and _peaks([]) == 0 and _peaks([3]) == 1

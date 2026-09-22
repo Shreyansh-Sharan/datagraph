@@ -39,7 +39,8 @@ class DatabricksDialect(SqlDialect):
         return f"approx_count_distinct({expr})"
 
     def distinct_count(self, exprs: list[str]) -> str:
-        return f"count(DISTINCT {', '.join(exprs)})"
+        # count(DISTINCT a, b) drops every row with a null in it; a struct is never null.
+        return f"count(DISTINCT {exprs[0]})" if len(exprs) == 1 else f"count(DISTINCT struct({', '.join(exprs)}))"
 
     def regex_match(self, expr: str, pattern: str) -> str:
         return f"{expr} RLIKE {self.string_literal(pattern)}"
