@@ -71,6 +71,9 @@ def test_connect_factory_sets_session_catalog_and_schema(monkeypatch):
     monkeypatch.setattr(dbsql, "connect", lambda **kw: calls.append(kw) or "conn")
     connect = databricks_connect_factory("h", "/p", "t", catalog="finops_metadata", schema="gold")
     assert connect() == "conn"
-    assert calls[-1] == {"server_hostname": "h", "http_path": "/p", "access_token": "t", "catalog": "finops_metadata", "schema": "gold"}
+    assert calls[-1] == {"server_hostname": "h", "http_path": "/p", "access_token": "t", "catalog": "finops_metadata", "schema": "gold", "_socket_timeout": 600}
     databricks_connect_factory("h", "/p", "t")()
     assert "catalog" not in calls[-1] and "schema" not in calls[-1]
+    assert calls[-1]["_socket_timeout"] == 600       # a dropped connection must fail, never hang a job forever
+    databricks_connect_factory("h", "/p", "t", socket_timeout=30)()
+    assert calls[-1]["_socket_timeout"] == 30

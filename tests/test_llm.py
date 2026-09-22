@@ -361,3 +361,18 @@ def test_api_fill_relations(db):
         assert r.status_code == 200, r.text
         body = r.json()
         assert set(body) >= {"added", "declared", "by_name", "ai", "skipped", "unmappable"}
+
+
+def test_azure_client_is_built_with_a_bounded_timeout(monkeypatch):
+    """A hung provider must fail within minutes, not the SDK's default half hour of retries."""
+    import types, sys
+    seen = {}
+
+    class FakeAzure:
+        def __init__(self, **kw): seen.update(kw)
+    monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(AzureOpenAI=FakeAzure))
+    from ontoforge.llm.provider import AzureOpenAIProvider
+    AzureOpenAIProvider(deployment="gpt-5.1", api_key="k", endpoint="https://x", api_version="v")
+    assert seen["timeout"] == 180 and seen["max_retries"] == 1
+    AzureOpenAIProvider(deployment="gpt-5.1", api_key="k", endpoint="https://x", api_version="v", timeout=30)
+    assert seen["timeout"] == 30

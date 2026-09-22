@@ -319,8 +319,9 @@ class TableQuality:
             if column and snap.column(column) is None:
                 skipped.append(f"{s.get('name')} (unknown column {column})"); continue
             try:
+                params = {k: v for k, v in (s.get("params") or {}).items() if v is not None}
                 rule = self.add_rule(version_id, table, actor=actor, name=s.get("name") or f"{kind} on {column}", kind=kind, column=column,
-                                     params=s.get("params") or {}, threshold=float(s.get("threshold") or 0.95), origin="ai")
+                                     params=params, threshold=float(s.get("threshold") or 0.95), origin="ai")
                 added.append(rule.to_dict())
             except (DqError, ValueError) as exc:
                 skipped.append(f"{s.get('name')} ({exc})")

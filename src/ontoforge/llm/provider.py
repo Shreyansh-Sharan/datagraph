@@ -78,10 +78,11 @@ class AzureOpenAIProvider(LLMProvider):
     """An Azure OpenAI chat deployment (e.g. GPT-5.1) with strict JSON-schema output."""
 
     def __init__(self, client=None, deployment: str = "gpt-5.1", *, api_key: str | None = None,
-                 endpoint: str | None = None, api_version: str | None = None, max_tokens: int = 16000) -> None:
+                 endpoint: str | None = None, api_version: str | None = None, max_tokens: int = 16000, timeout: float = 180) -> None:
         if client is None:
             from openai import AzureOpenAI  # lazy: optional dependency
-            client = AzureOpenAI(api_key=api_key, azure_endpoint=endpoint, api_version=api_version)
+            # Bounded: the SDK's defaults (10 minutes per attempt, two retries) turn a hung request into a half-hour job.
+            client = AzureOpenAI(api_key=api_key, azure_endpoint=endpoint, api_version=api_version, timeout=timeout, max_retries=1)
         self.client, self.deployment, self.max_tokens = client, deployment, max_tokens
 
     def complete_json(self, system: str, user: str, schema: dict) -> dict:

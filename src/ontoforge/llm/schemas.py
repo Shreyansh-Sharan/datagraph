@@ -77,5 +77,9 @@ DQ_RULES_SCHEMA = {
     "properties": {"rules": {"type": "array", "items": {
         "type": "object", "additionalProperties": False,
         "required": ["name", "column", "kind", "params", "threshold", "rationale"],
-        "properties": {"name": _S, "column": _NS, "kind": _S, "params": {"type": "object"}, "threshold": {"type": "number"}, "rationale": _S}}}},
+        "properties": {"name": _S, "column": _NS, "kind": _S, "threshold": {"type": "number"}, "rationale": _S,
+                       "params": {"type": "object", "additionalProperties": False,   # strict providers want every object closed: unused keys are null
+                                  "required": ["values", "min", "max", "pattern", "hours", "ref_table", "ref_column"],
+                                  "properties": {"values": {"type": ["array", "null"], "items": _S}, "min": {"type": ["number", "null"]}, "max": {"type": ["number", "null"]},
+                                                 "pattern": _NS, "hours": {"type": ["integer", "null"]}, "ref_table": _NS, "ref_column": _NS}}}}}},
 }

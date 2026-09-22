@@ -90,7 +90,7 @@ class DatabricksSource(SourceEngine):
 
 
 def databricks_connect_factory(server_hostname: str, http_path: str, access_token: str,
-                               catalog: str | None = None, schema: str | None = None) -> ConnectionFactory:
+                               catalog: str | None = None, schema: str | None = None, socket_timeout: float = 600) -> ConnectionFactory:
     """Build a factory over ``databricks-sql-connector`` (optional dependency).
 
     ``catalog``/``schema`` become the session defaults, so mapping tables can be written as
@@ -98,7 +98,8 @@ def databricks_connect_factory(server_hostname: str, http_path: str, access_toke
     """
     def connect():
         from databricks import sql  # imported lazily: optional extra
-        kwargs = {"server_hostname": server_hostname, "http_path": http_path, "access_token": access_token}
+        # A socket without a timeout turns one dropped packet into a job that never ends.
+        kwargs = {"server_hostname": server_hostname, "http_path": http_path, "access_token": access_token, "_socket_timeout": socket_timeout}
         if catalog:
             kwargs["catalog"] = catalog
         if schema:

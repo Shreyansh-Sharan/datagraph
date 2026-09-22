@@ -134,6 +134,7 @@ class ProfileService:
         for c in cols:
             a, k = acc[c["name"]], kinds[c["name"]]
             nn = int(a["nn"] or 0)
+            distinct = None if a["distinct"] is None else min(int(a["distinct"]), nn)   # approximate counts can overshoot the rows
             null_rate = (max(0, total - nn) / total) if total else 0.0
             top, share = None, None
             if k == "boolean" and a["true"] is not None and nn:
@@ -141,7 +142,7 @@ class ProfileService:
                 top, share = ("true", t) if t >= 0.5 else ("false", 1 - t)
             elif k == "string":
                 top, share = _text(a["top"]), shares.get(c["name"])
-            columns.append(ColumnProfile(c["name"], c.get("type") or "", int(round(null_rate * row_count)), round(null_rate, 6), _int(a["distinct"]),
+            columns.append(ColumnProfile(c["name"], c.get("type") or "", int(round(null_rate * row_count)), round(null_rate, 6), distinct,
                                          _text(a["min"]), _text(a["max"]), top, round(share, 4) if share is not None else None))
 
         say("Reading table size and freshness")

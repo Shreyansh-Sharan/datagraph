@@ -119,6 +119,21 @@ removal is `DELETE /versions/{id}/metadata/{table}`; the list marks what the sna
 (`GET /versions/{id}/metadata`). "Refresh snapshot" re-reads the source and reports added, removed
 or retyped columns. Both need a draft whose lease you hold, like every other edit.
 
+### One table: profile, data quality, glossary
+
+The Table screen (`#/d/:domain/table?schema=&table=&tab=profile|dq|glossary`, reached from the
+Metadata screen's tiles) shows one snapshot table three ways. **Profile**
+(`POST`/`GET /versions/{id}/tables/{table}/profile`): one aggregate pass over the source, sampled
+past two million rows: rows, size and freshness from the warehouse, duplicates on the key, and per
+column nulls, distinct values, range or top value. **Data quality**
+(`GET .../dq`, `POST .../dq/run`, `.../dq/rules`, `.../dq/suggest`): rules of nine kinds (not null,
+unique, in a set, in a range, regex, referential, freshness, row count, custom predicate) compiled
+into one pass per table and scored; the table score with its run history, per-column scores (from
+rules, else the profile's completeness), and "Suggest rules with AI" through the domain's AI
+connection. **Glossary** (`/domains/{name}/glossary`): business terms (cards) and KPI metrics (a
+table with formula, unit, cadence, owner) named on the table, searched, added and approved. Long
+tasks run as jobs (`?background=true`) and the screen shows their progress.
+
 ### Build and mapping
 
 The Build screen starts a run (`POST /versions/{id}/builds`), polls `GET /builds/{run}` until it

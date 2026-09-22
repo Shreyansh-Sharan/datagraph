@@ -145,7 +145,7 @@ function ProfileView({ profile, loading, error, snap, dq, editable, onRun }: { p
                   <td className="type">{c.type}</td>
                   <td><span className="nulls"><span className="bar"><i style={{ width: `${Math.max(rate > 0 ? 1.5 : 0, rate * 100)}%`, background: tone }} /></span><span className="mono">{(rate * 100).toFixed(1)}%</span></span></td>
                   <td className="num">{fmtInt(c.distinct)}</td>
-                  <td className="range">{c.top != null ? <>{`"${c.top}"`} · top{c.top_share != null ? ` ${(c.top_share * 100).toFixed(0)}%` : ""}</> : c.min != null || c.max != null ? `${c.min ?? "—"} · ${c.max ?? "—"}` : <span className="muted-3">—</span>}</td>
+                  <td className="range">{c.top != null ? <>{`"${c.top}"`} · top{c.top_share != null ? ` ${c.top_share > 0 && c.top_share < 0.01 ? "<1" : (c.top_share * 100).toFixed(0)}%` : ""}</> : c.min != null || c.max != null ? `${c.min ?? "—"} · ${c.max ?? "—"}` : <span className="muted-3">—</span>}</td>
                   <td className="num" style={{ fontWeight: 700, color: scoreColor(s ?? null) }}>{s == null ? "—" : pct(s)}</td>
                 </tr>); })}
             </tbody>

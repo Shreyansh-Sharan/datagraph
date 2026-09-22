@@ -37,11 +37,13 @@ def test_profile_counts_rows_nulls_distinct_ranges_and_keys(db):
 def test_profile_samples_big_tables_and_speaks_databricks(db):
     reg, meta, _, v = _setup(db)
     # The fake answers every query with the same row: 5,000,000 rows, then aggregate values.
-    conn = FakeConnection([(5_000_000, 5_000_000, 3, 1, 5_000_000, 4_999_000, 4, "SMITH", 0.5, 1)])
+    conn = FakeConnection([(5_000_000, 5_000_000, 3, 1, 5_000_000, 100, 250, "SMITH", 0.5, 1)])   # ename: 100 non-null rows, "250" approx distinct
     dbx = DatabricksSource(lambda: conn, default_catalog="main", default_schema="hr")
     dbx.table_stats = lambda table: (17_000_000, None)   # DESCRIBE DETAIL, stubbed
     p = ProfileService(reg, meta, dbx, db, sample_rows=1_000_000).run(v.id, "employees", actor="alice")
     assert p.row_count == 5_000_000 and p.sample_pct == 20 and p.size_bytes == 17_000_000
+    by = {c.name: c for c in p.columns}
+    assert by["ename"].distinct == 100                     # approx_count_distinct can overshoot: never more than the non-null rows
     sqls = [sql for c in conn.cursors for sql, _ in c.executed]
     assert any("TABLESAMPLE (20 PERCENT)" in s for s in sqls)
     assert any("approx_count_distinct(`sal`)" in s for s in sqls)
