@@ -77,3 +77,24 @@ def test_glossary_endpoints(client):
     assert client.delete(f"/glossary/{t['id']}").status_code == 204
     assert [x["name"] for x in client.get("/domains/hr/glossary").json()] == ["Headcount"]
     assert client.get("/domains/nope/glossary").status_code == 404
+
+
+def test_failing_rows_and_glossary_suggestions_over_the_api(db):
+    seed_tables(db)
+    llm = FakeProvider([{"terms": [{"name": "Manager", "definition": "The employee a person reports to.", "columns": ["manager"], "class_name": None}],
+                         "metrics": [{"name": "Headcount", "definition": "Employees on payroll", "formula": "count(*)", "unit": "people", "frequency": "Monthly", "columns": []}]}])
+    app = create_app(db=db, source_db=db, settings=ADMIN, llm=llm)
+    with TestClient(app, headers={"X-Actor": "alice"}) as client:
+        vid = _version(client)
+        rule = client.post(f"/versions/{vid}/tables/employees/dq/rules", json={"name": "Salary present", "column": "sal", "kind": "not_null"}).json()
+        r = client.get(f"/dq/rules/{rule['id']}/failures", params={"limit": 5})
+        assert r.status_code == 200 and r.json()["columns"][:2] == ["empno", "ename"] and [row[1] for row in r.json()["rows"]] == ["ALLEN"]
+        table_rule = client.post(f"/versions/{vid}/tables/employees/dq/rules", json={"name": "Rows", "kind": "row_count", "params": {"min": 1}}).json()
+        assert client.get(f"/dq/rules/{table_rule['id']}/failures").status_code == 400
+        client.post(f"/versions/{vid}/tables/employees/dq/run")
+        st = client.get(f"/versions/{vid}/tables/employees/dq").json()
+        assert [h["pass_rate"] for h in st["rules"][0]["history"]] == [0.75]
+        sug = client.post(f"/versions/{vid}/tables/employees/glossary/suggest")
+        assert sug.status_code == 200 and sug.json()["added"] == 2, sug.text
+        names = {e["name"]: e for e in client.get("/domains/hr/glossary", params={"table": "employees"}).json()}
+        assert names["Manager"]["status"] == "draft" and names["Headcount"]["status"] == "pending"

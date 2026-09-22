@@ -6,7 +6,7 @@ import { Icon } from "@/components/icons";
 import { useApp, useLoad } from "@/state/app";
 import { useDomain, useGo, useParam, useSetParams } from "@/state/domain";
 import { relTime } from "@/api/format";
-import type { AiProgress, DqKind, DqRule, DqStatus, GlossaryEntry, RuleInput, SnapshotTable, TableProfile, TermInput } from "@/api";
+import type { AiProgress, DqKind, DqRule, DqStatus, FailingRows, GlossaryEntry, GlossaryStatus, RuleInput, SnapshotTable, TableProfile, TermInput } from "@/api";
 
 type Tab = "profile" | "dq" | "glossary";
 const BLUE = "#2249FF", ORANGE = "#FF7000", GREY = "#B3B3B7";
@@ -90,10 +90,12 @@ export function Table() {
         run={async report => { await api.runDq(domain.name, version!.version, full, report); dq.reload(); say(`Rules of ${table} run`); }}
         suggest={async report => { const r = await api.suggestRules(domain.name, version!.version, full, report); dq.reload(); say(r.added ? `AI added ${r.added} rule${r.added === 1 ? "" : "s"}${r.skipped.length ? ` · ${r.skipped.length} skipped` : ""}` : "The AI proposed nothing new"); }}
         add={async rule => { await api.addRule(domain.name, version!.version, full, rule); dq.reload(); say(`Rule ${rule.name} added`); }}
-        patch={async (id, p) => { await api.updateRule(id, p); dq.reload(); }} remove={async (r: DqRule) => { await api.deleteRule(r.id); dq.reload(); say(`Rule ${r.name} deleted`); }} />}
+        patch={async (id, p, note) => { await api.updateRule(id, p); dq.reload(); if (note) say(note); }} remove={async (r: DqRule) => { await api.deleteRule(r.id); dq.reload(); say(`Rule ${r.name} deleted`); }}
+        failures={id => api.ruleFailures(id, 20)} />}
       {snap && cur === "glossary" && <GlossaryView entries={glossary.data ?? []} loading={glossary.loading} table={full} snap={snap} cls={tcls.data ?? null}
         add={async t => { await api.addTerm(domain.name, { ...t, table: full }); glossary.reload(); say(`${t.kind === "metric" ? "Metric" : "Term"} ${t.name} added`); }}
-        patch={async (id, p) => { await api.updateTerm(id, p); glossary.reload(); }} remove={async e => { await api.deleteTerm(e.id); glossary.reload(); say(`${e.name} deleted`); }} />}
+        patch={async (id, p, note) => { await api.updateTerm(id, p); glossary.reload(); if (note) say(note); }} remove={async e => { await api.deleteTerm(e.id); glossary.reload(); say(`${e.name} deleted`); }}
+        suggest={async report => { const r = await api.suggestTerms(domain.name, version!.version, full, report); glossary.reload(); say(r.added ? `AI added ${r.added} glossary entr${r.added === 1 ? "y" : "ies"}${r.skipped.length ? ` · ${r.skipped.length} skipped` : ""}` : "The AI proposed nothing new"); }} />}
     </div>
   );
 }
@@ -221,16 +223,19 @@ function ColumnCard({ c }: { c: import("@/api").ColumnProfile }) {
 // -- Data quality -----------------------------------------------------------------------------------
 
 type Filter = "all" | "passing" | "warning" | "failing";
-function QualityView({ status, loading, error, snap, editable, reload, run, suggest, add, patch, remove }: {
+function QualityView({ status, loading, error, snap, editable, reload, run, suggest, add, patch, remove, failures }: {
   status: DqStatus | null; loading: boolean; error: string | null; snap: SnapshotTable; editable: boolean; reload: () => void;
   run: (report: (p: AiProgress) => void) => Promise<void>; suggest: (report: (p: AiProgress) => void) => Promise<void>;
-  add: (rule: RuleInput) => Promise<void>; patch: (id: string, p: Partial<RuleInput>) => Promise<void>; remove: (r: DqRule) => Promise<void>;
+  add: (rule: RuleInput) => Promise<void>; patch: (id: string, p: Partial<RuleInput>, note?: string) => Promise<void>; remove: (r: DqRule) => Promise<void>;
+  failures: (ruleId: string) => Promise<FailingRows>;
 }) {
   const { say } = useApp();
   const running = useTask(run, say);
   const asking = useTask(suggest, say);
   const [filter, setFilter] = useState<Filter>("all");
   const [dialog, setDialog] = useState(false);
+  const [editing, setEditing] = useState<DqRule | null>(null);
+  const [failing, setFailing] = useState<DqRule | null>(null);
   const rules = status?.rules ?? [];
   const shown = rules.filter(r => filter === "all" || r.last?.status === filter);
   const below = status ? status.summary.warning + status.summary.failing : 0;
@@ -273,8 +278,8 @@ function QualityView({ status, loading, error, snap, editable, reload, run, sugg
         {rules.length === 0 && !loading && <div className="tbl-empty"><strong>No rule on {short(snap.table)} yet.</strong><span className="muted">Add one, or let the AI propose rules from the columns{status?.columns.length ? " and the profile" : ""}.</span></div>}
         {rules.length > 0 && (
           <table className="rules" aria-label="Rules">
-            <colgroup><col /><col style={{ width: "18%" }} /><col style={{ width: "14%" }} /><col style={{ width: 70 }} /><col style={{ width: "14%" }} /><col style={{ width: 110 }} /><col style={{ width: 40 }} /></colgroup>
-            <thead><tr><th>Rule</th><th>Column</th><th>Dimension</th><th style={{ textAlign: "right" }}>Pass</th><th>Owner</th><th>Status</th><th /></tr></thead>
+            <colgroup><col /><col style={{ width: "16%" }} /><col style={{ width: "12%" }} /><col style={{ width: 70 }} /><col style={{ width: 84 }} /><col style={{ width: "12%" }} /><col style={{ width: 110 }} /><col style={{ width: 40 }} /></colgroup>
+            <thead><tr><th>Rule</th><th>Column</th><th>Dimension</th><th style={{ textAlign: "right" }}>Pass</th><th>Trend</th><th>Owner</th><th>Status</th><th /></tr></thead>
             <tbody>
               {shown.map(r => { const st = r.last?.status ?? (r.enabled ? "not run" : "disabled"); return (
                 <tr key={r.id} className={r.enabled ? "" : "off"}>
@@ -282,32 +287,84 @@ function QualityView({ status, loading, error, snap, editable, reload, run, sugg
                   <td className="mono small">{r.column_name ?? "—"}</td>
                   <td className="cap">{r.dimension}</td>
                   <td className="num" style={{ fontWeight: 700, color: r.last?.pass_rate == null ? "var(--muted-3)" : scoreColor(r.last.pass_rate) }}>{r.last?.pass_rate == null ? "—" : pct(r.last.pass_rate)}</td>
+                  <td><Sparkline points={r.history.map(h => h.pass_rate)} label={`Pass rate of ${r.name} over the last ${r.history.length} runs`} /></td>
                   <td className="muted">{r.owner ?? "—"}</td>
                   <td><span className={`status-pill ${st}`}><Dot color={STATUS_TONE[st] ?? GREY} />{st[0].toUpperCase() + st.slice(1)}</span></td>
-                  <td><RuleMenu rule={r} editable={editable} onToggle={() => patch(r.id, { enabled: !r.enabled })} onDelete={() => remove(r)} /></td>
+                  <td><RuleMenu rule={r} editable={editable} onEdit={() => setEditing(r)} onFailures={() => setFailing(r)} onToggle={() => patch(r.id, { enabled: !r.enabled }, `Rule ${r.name} ${r.enabled ? "disabled" : "enabled"}`)} onDelete={() => remove(r)} /></td>
                 </tr>); })}
-              {shown.length === 0 && <tr><td colSpan={7} className="muted" style={{ padding: 16 }}>No rule is {filter} right now.</td></tr>}
+              {shown.length === 0 && <tr><td colSpan={8} className="muted" style={{ padding: 16 }}>No rule is {filter} right now.</td></tr>}
             </tbody>
           </table>
         )}
       </section>
       <RuleDialog open={dialog} onClose={() => setDialog(false)} columns={snap.columnNames} onSave={async rule => { await add(rule); setDialog(false); reload(); }} />
+      <RuleDialog open={editing != null} initial={editing} onClose={() => setEditing(null)} columns={snap.columnNames} onSave={async rule => { await patch(editing!.id, rule, `Rule ${rule.name} updated`); setEditing(null); }} />
+      <FailuresDialog rule={failing} onClose={() => setFailing(null)} load={failures} />
     </>
   );
 }
 
-function RuleMenu({ rule, editable, onToggle, onDelete }: { rule: DqRule; editable: boolean; onToggle: () => void; onDelete: () => void }) {
+function Sparkline({ points, label }: { points: (number | null)[]; label: string }) {
+  const xs = points.filter((p): p is number => p != null);
+  if (xs.length < 2) return <span className="muted-3 small">—</span>;
+  const w = 64, h = 18;
+  const path = xs.map((v, i) => `${(i / (xs.length - 1)) * w},${h - 2 - v * (h - 4)}`).join(" ");
+  const last = xs[xs.length - 1];
+  return <svg className="spark" width={w} height={h} viewBox={`0 0 ${w} ${h}`} role="img" aria-label={label}><polyline points={path} fill="none" stroke={scoreColor(last)} strokeWidth={1.5} strokeLinejoin="round" /><circle cx={w} cy={h - 2 - last * (h - 4)} r={2} fill={scoreColor(last)} /></svg>;
+}
+
+function FailuresDialog({ rule, onClose, load }: { rule: DqRule | null; onClose: () => void; load: (ruleId: string) => Promise<FailingRows> }) {
+  const [data, setData] = useState<FailingRows | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { setData(null); setError(null); if (!rule) return; let alive = true; load(rule.id).then(d => { if (alive) setData(d); }).catch(e => { if (alive) setError(e instanceof Error ? e.message : String(e)); }); return () => { alive = false; }; }, [rule?.id]);   // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <Dialog title={`Failing rows · ${rule?.name ?? ""}`} open={rule != null} onClose={onClose} width={860} footer={<Button onClick={onClose}>Close</Button>}>
+      {rule && <p className="muted small" style={{ marginBottom: 10 }}>Rows of <span className="mono">{short(rule.table_name)}</span> that break <span className="mono">{describeRule(rule)}</span>{rule.last?.failed != null ? `: ${fmtInt(rule.last.failed)} in the last run, the first ${data?.rows.length ?? 20} shown.` : "."}</p>}
+      {error && <ErrorNotice error={error} />}
+      {!data && !error && <Skeleton h={80} />}
+      {data && data.rows.length === 0 && <p className="muted">No row breaks this rule right now.</p>}
+      {data && data.rows.length > 0 && (
+        <div className="fail-wrap">
+          <table className="fail" aria-label="Failing rows">
+            <thead><tr>{data.columns.map(c => <th key={c} className={c === rule?.column_name ? "hit" : ""}>{c}</th>)}</tr></thead>
+            <tbody>{data.rows.map((r, i) => <tr key={i}>{r.map((v, j) => <td key={j} className={data.columns[j] === rule?.column_name ? "hit" : ""}>{v == null ? <span className="muted-3">null</span> : String(v)}</td>)}</tr>)}</tbody>
+          </table>
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
+function RuleMenu({ rule, editable, onEdit, onFailures, onToggle, onDelete }: { rule: DqRule; editable: boolean; onEdit: () => void; onFailures: () => void; onToggle: () => void; onDelete: () => void }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { if (!open) return; const h = () => setOpen(false); window.addEventListener("click", h); return () => window.removeEventListener("click", h); }, [open]);
+  const rowLevel = rule.kind !== "freshness" && rule.kind !== "row_count";
   return (
     <span style={{ position: "relative" }}>
-      <button type="button" className="chip-act" aria-label={`Actions for ${rule.name}`} disabled={!editable} onClick={e => { e.stopPropagation(); setOpen(o => !o); }}>⋯</button>
-      {open && <span className="menu" role="menu"><button type="button" role="menuitem" onClick={onToggle}>{rule.enabled ? "Disable rule" : "Enable rule"}</button><button type="button" role="menuitem" className="danger" onClick={onDelete}>Delete rule</button></span>}
+      <button type="button" className="chip-act" aria-label={`Actions for ${rule.name}`} onClick={e => { e.stopPropagation(); setOpen(o => !o); }}>⋯</button>
+      {open && <span className="menu" role="menu">
+        <button type="button" role="menuitem" disabled={!rowLevel} title={rowLevel ? undefined : "This rule is about the whole table"} onClick={onFailures}>Show failing rows</button>
+        <button type="button" role="menuitem" disabled={!editable} onClick={onEdit}>Edit rule</button>
+        <button type="button" role="menuitem" disabled={!editable} onClick={onToggle}>{rule.enabled ? "Disable rule" : "Enable rule"}</button>
+        <button type="button" role="menuitem" disabled={!editable} className="danger" onClick={onDelete}>Delete rule</button></span>}
     </span>
   );
 }
 
-function RuleDialog({ open, onClose, columns, onSave }: { open: boolean; onClose: () => void; columns: string[]; onSave: (r: RuleInput) => Promise<void> }) {
+const paramsToText = (kind: DqKind, p: Record<string, unknown>): Record<string, string> => {
+  const t = (v: unknown) => (v == null ? "" : String(v));
+  switch (kind) {
+    case "in_set": return { values: ((p.values as unknown[] | undefined) ?? []).join(", ") };
+    case "range": case "row_count": return { min: t(p.min), max: t(p.max) };
+    case "regex": return { pattern: t(p.pattern) };
+    case "freshness": return { hours: t(p.hours) };
+    case "referential": return { ref_table: t(p.ref_table), ref_column: t(p.ref_column) };
+    case "custom": return { predicate: t(p.predicate) };
+    default: return {};
+  }
+};
+
+function RuleDialog({ open, initial, onClose, columns, onSave }: { open: boolean; initial?: DqRule | null; onClose: () => void; columns: string[]; onSave: (r: RuleInput) => Promise<void> }) {
   const { say } = useApp();
   const [name, setName] = useState("");
   const [kind, setKind] = useState<DqKind>("not_null");
@@ -316,6 +373,11 @@ function RuleDialog({ open, onClose, columns, onSave }: { open: boolean; onClose
   const [threshold, setThreshold] = useState("0.95");
   const [owner, setOwner] = useState("");
   const [busy, setBusy] = useState(false);
+  useEffect(() => {   // an edit starts from the rule as it is
+    if (!open) return;
+    setName(initial?.name ?? ""); setKind(initial?.kind ?? "not_null"); setColumn(initial?.column_name ?? columns[0] ?? "");
+    setP(initial ? paramsToText(initial.kind, initial.params) : {}); setThreshold(initial ? String(initial.threshold) : "0.95"); setOwner(initial?.owner ?? "");
+  }, [open, initial?.id]);   // eslint-disable-line react-hooks/exhaustive-deps
   const needsColumn = kind !== "row_count" && kind !== "custom";
   const params = (): Record<string, unknown> => {
     switch (kind) {
@@ -336,7 +398,7 @@ function RuleDialog({ open, onClose, columns, onSave }: { open: boolean; onClose
     finally { setBusy(false); }
   };
   return (
-    <Dialog title="New rule" open={open} onClose={onClose} width={520} footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" disabled={busy || (needsColumn && !column)} onClick={submit}>{busy && <Spinner />}Add rule</Button></>}>
+    <Dialog title={initial ? "Edit rule" : "New rule"} open={open} onClose={onClose} width={520} footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" disabled={busy || (needsColumn && !column)} onClick={submit}>{busy && <Spinner />}{initial ? "Save rule" : "Add rule"}</Button></>}>
       <div style={{ display: "grid", gap: 12 }}>
         <div><Label>Name</Label><input className="input full" aria-label="Rule name" placeholder="What the rule checks" value={name} onChange={e => setName(e.target.value)} /></div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -360,10 +422,14 @@ function RuleDialog({ open, onClose, columns, onSave }: { open: boolean; onClose
 
 // -- Glossary ---------------------------------------------------------------------------------------
 
-function GlossaryView({ entries, loading, table, snap, cls, add, patch, remove }: { entries: GlossaryEntry[]; loading: boolean; table: string; snap: SnapshotTable; cls: string | null; add: (t: TermInput) => Promise<void>; patch: (id: string, p: Partial<TermInput>) => Promise<void>; remove: (e: GlossaryEntry) => Promise<void> }) {
+function GlossaryView({ entries, loading, table, snap, cls, add, patch, remove, suggest }: { entries: GlossaryEntry[]; loading: boolean; table: string; snap: SnapshotTable; cls: string | null; add: (t: TermInput) => Promise<void>; patch: (id: string, p: Partial<TermInput>, note?: string) => Promise<void>; remove: (e: GlossaryEntry) => Promise<void>; suggest: (report: (p: AiProgress) => void) => Promise<void> }) {
+  const { say } = useApp();
+  const asking = useTask(suggest, say);
   const [kind, setKind] = useParam("kind", "terms");
   const [q, setQ] = useState("");
   const [dialog, setDialog] = useState<"term" | "metric" | null>(null);
+  const [editing, setEditing] = useState<GlossaryEntry | null>(null);
+  const move = (e: GlossaryEntry, status: GlossaryStatus) => patch(e.id, { status }, `${e.name} is now ${status}`);
   const isMetric = kind === "metrics";
   const t = q.trim().toLowerCase();
   const terms = entries.filter(e => e.kind === "term"), metrics = entries.filter(e => e.kind === "metric");
@@ -377,6 +443,8 @@ function GlossaryView({ entries, loading, table, snap, cls, add, patch, remove }
         </div>
         <div className="search-wrap" style={{ maxWidth: 420 }}><Icon name="search" stroke="#7A7A80" /><input aria-label={isMetric ? "Search metrics" : "Search terms"} className="input" placeholder={isMetric ? "Search metrics or formulas" : "Search terms, definitions, columns"} value={q} onChange={e => setQ(e.target.value)} /></div>
         <span className="spacer" />
+        {asking.progress && <span className="muted small">{asking.progress}</span>}
+        <Button variant="outline" pill disabled={asking.busy} onClick={asking.start}>{asking.busy ? <Spinner blue /> : <Icon name="ask" size={12} />}Suggest with AI</Button>
         <Button variant="outline" pill onClick={() => setDialog(isMetric ? "metric" : "term")}>{isMetric ? "+ New metric" : "+ New term"}</Button>
       </div>
       {loading && entries.length === 0 && <Skeleton h={120} />}
@@ -388,7 +456,7 @@ function GlossaryView({ entries, loading, table, snap, cls, add, patch, remove }
               <div className="row" style={{ gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}><h3>{e.name}</h3>{e.schema_name && <span className="pill blue">{e.schema_name}</span>}<span className={`pill mini st ${e.status}`} style={{ marginLeft: "auto" }}><Dot color={e.status === "draft" ? ORANGE : BLUE} />{e.status[0].toUpperCase() + e.status.slice(1)}</span></div>
               <p>{e.definition || <span className="muted-3">No definition yet.</span>}</p>
               <div className="chips">{e.columns.map(c => <span key={c} className="pill mono">{c}</span>)}{e.class_name && <span className="pill outline">class {e.class_name}</span>}</div>
-              <div className="foot"><span>Steward · {e.owner ?? "—"}</span><span>Updated {relTime(e.updated_at)}</span><EntryMenu entry={e} onApprove={() => patch(e.id, { status: e.status === "approved" ? "draft" : "approved" })} onDelete={() => remove(e)} /></div>
+              <div className="foot"><span>Steward · {e.owner ?? "—"}</span><span>Updated {relTime(e.updated_at)}</span><EntryMenu entry={e} onEdit={() => setEditing(e)} onMove={st => move(e, st)} onDelete={() => remove(e)} /></div>
             </article>))}
         </div>
       )}
@@ -406,34 +474,53 @@ function GlossaryView({ entries, loading, table, snap, cls, add, patch, remove }
                   <td className="muted">{e.frequency ?? "—"}</td>
                   <td className="muted">{e.owner ?? "—"}</td>
                   <td><span className={`status-pill st ${e.status}`}><Dot color={e.status === "certified" || e.status === "approved" ? BLUE : GREY} />{e.status[0].toUpperCase() + e.status.slice(1)}</span></td>
-                  <td><EntryMenu entry={e} onApprove={() => patch(e.id, { status: e.status === "certified" ? "pending" : "certified" })} onDelete={() => remove(e)} /></td>
+                  <td><EntryMenu entry={e} onEdit={() => setEditing(e)} onMove={st => move(e, st)} onDelete={() => remove(e)} /></td>
                 </tr>))}
             </tbody>
           </table>
         </section>
       )}
       <TermDialog kind={dialog} onClose={() => setDialog(null)} columns={snap.columnNames} cls={cls} onSave={async t => { await add(t); setDialog(null); }} />
+      <TermDialog kind={editing?.kind ?? null} initial={editing} onClose={() => setEditing(null)} columns={snap.columnNames} cls={cls} onSave={async t => { await patch(editing!.id, t, `${t.kind === "metric" ? "Metric" : "Term"} ${t.name} updated`); setEditing(null); }} />
     </>
   );
 }
 
-function EntryMenu({ entry, onApprove, onDelete }: { entry: GlossaryEntry; onApprove: () => void; onDelete: () => void }) {
+/** The steward's workflow: draft → pending → approved (a term) or certified (a metric), and back to draft. */
+function transitions(e: GlossaryEntry): [string, GlossaryStatus][] {
+  const final: GlossaryStatus = e.kind === "metric" ? "certified" : "approved";
+  const finalLabel = e.kind === "metric" ? "Certify" : "Approve";
+  switch (e.status) {
+    case "draft": return [["Submit for approval", "pending"], [finalLabel, final]];
+    case "pending": return [[finalLabel, final], ["Back to draft", "draft"]];
+    default: return [["Mark pending", "pending"], ["Back to draft", "draft"]];
+  }
+}
+
+function EntryMenu({ entry, onEdit, onMove, onDelete }: { entry: GlossaryEntry; onEdit: () => void; onMove: (status: GlossaryStatus) => void; onDelete: () => void }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { if (!open) return; const h = () => setOpen(false); window.addEventListener("click", h); return () => window.removeEventListener("click", h); }, [open]);
-  const next = entry.kind === "metric" ? (entry.status === "certified" ? "Mark pending" : "Certify") : (entry.status === "approved" ? "Back to draft" : "Approve");
   return (
     <span style={{ position: "relative", marginLeft: "auto" }}>
       <button type="button" className="chip-act" aria-label={`Actions for ${entry.name}`} onClick={e => { e.stopPropagation(); setOpen(o => !o); }}>⋯</button>
-      {open && <span className="menu" role="menu"><button type="button" role="menuitem" onClick={onApprove}>{next}</button><button type="button" role="menuitem" className="danger" onClick={onDelete}>Delete</button></span>}
+      {open && <span className="menu" role="menu">
+        <button type="button" role="menuitem" onClick={onEdit}>Edit</button>
+        {transitions(entry).map(([label, st]) => <button key={st} type="button" role="menuitem" onClick={() => onMove(st)}>{label}</button>)}
+        <button type="button" role="menuitem" className="danger" onClick={onDelete}>Delete</button></span>}
     </span>
   );
 }
 
-function TermDialog({ kind, onClose, columns, cls, onSave }: { kind: "term" | "metric" | null; onClose: () => void; columns: string[]; cls: string | null; onSave: (t: TermInput) => Promise<void> }) {
+function TermDialog({ kind, initial, onClose, columns, cls, onSave }: { kind: "term" | "metric" | null; initial?: GlossaryEntry | null; onClose: () => void; columns: string[]; cls: string | null; onSave: (t: TermInput) => Promise<void> }) {
   const { say } = useApp();
   const [f, setF] = useState<Record<string, string>>({});
   const [cols, setCols] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  useEffect(() => {   // an edit starts from the entry as it is
+    if (!kind) return;
+    setF(initial ? { name: initial.name, definition: initial.definition, formula: initial.formula ?? "", unit: initial.unit ?? "", frequency: initial.frequency ?? "", owner: initial.owner ?? "", status: initial.status, class_name: initial.class_name ?? "" } : {});
+    setCols(initial ? initial.columns : []);
+  }, [kind, initial?.id]);   // eslint-disable-line react-hooks/exhaustive-deps
   const v = (k: string) => f[k] ?? "";
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => setF(x => ({ ...x, [k]: e.target.value }));
   const submit = async () => {
@@ -449,8 +536,8 @@ function TermDialog({ kind, onClose, columns, cls, onSave }: { kind: "term" | "m
   };
   const input = (k: string, label: string, placeholder = "", mono = false) => <div><Label>{label}</Label><input className={`input full ${mono ? "mono" : ""}`} aria-label={label} placeholder={placeholder} value={v(k)} onChange={set(k)} /></div>;
   return (
-    <Dialog title={kind === "metric" ? "New KPI metric" : "New business term"} open={kind != null} onClose={onClose} width={560}
-      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" disabled={busy || !v("name").trim()} onClick={submit}>{busy && <Spinner />}{kind === "metric" ? "Add metric" : "Add term"}</Button></>}>
+    <Dialog title={initial ? (kind === "metric" ? "Edit KPI metric" : "Edit business term") : (kind === "metric" ? "New KPI metric" : "New business term")} open={kind != null} onClose={onClose} width={560}
+      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" disabled={busy || !v("name").trim()} onClick={submit}>{busy && <Spinner />}{initial ? (kind === "metric" ? "Save metric" : "Save term") : (kind === "metric" ? "Add metric" : "Add term")}</Button></>}>
       <div style={{ display: "grid", gap: 12 }}>
         {input("name", "Name", kind === "metric" ? "Headcount" : "Employee")}
         <div><Label>{kind === "metric" ? "Description" : "Definition"}</Label><textarea className="textarea full" aria-label={kind === "metric" ? "Description" : "Definition"} rows={3} placeholder={kind === "metric" ? "Active employees at period end" : "What this means to the business"} value={v("definition")} onChange={set("definition")} /></div>

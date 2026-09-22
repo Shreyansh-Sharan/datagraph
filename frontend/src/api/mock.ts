@@ -2,7 +2,7 @@
 // UI behaves like the real thing (lifecycle transitions, builds with live steps, comments).
 import * as D from "./mockData";
 import { compileClassSql, tableName } from "./types";
-import type { AiProgress, ColumnKind, ColumnProfile, ColumnRole, DqResult, DqRule, DqRun, DqStatus, GlossaryEntry, RuleInput, TableProfile, TermInput, DomainSource, DriftIssue, GraphSample, SearchOptions, RefreshChange, SnapshotTable, SourceFactsEntry, SourceInput,
+import type { AiProgress, ColumnKind, ColumnProfile, ColumnRole, DqResult, DqRule, DqRun, DqStatus, FailingRows, GlossaryEntry, RuleInput, TableProfile, TermInput, DomainSource, DriftIssue, GraphSample, SearchOptions, RefreshChange, SnapshotTable, SourceFactsEntry, SourceInput,
   Analytics, ApiKey, AuditEntry, BuildRun, BuildStep, CatalogTable, ChecklistItem, ClassMapping, Comment, Config, ConnResult, Constraint,
   DatagraphApi, DomainSummary, EntityDetail, GraphStatus, Lock, MappingKpis, Me, NewDomainInput, OntoCheck,
   OntoClass, Principal, Role, Rule, SearchHit, SourceKind, TableDetail, TablePreview, Task, TriplePage, TripleQuery,
@@ -299,9 +299,10 @@ export class MockApi implements DatagraphApi {
     const k = this.tkey(domain, version, table);
     if (!this.dqState[k]) {
       const name = table.split(".").pop() ?? table; const seeds = D.DQ_SEED[name] ?? []; const now = Date.now();
-      const rules: DqRule[] = seeds.map((x, i) => ({ id: `r-${name}-${i}`, table_name: table, name: x.name, column_name: x.column, kind: x.kind, dimension: x.dimension, params: x.params, threshold: x.threshold, owner: x.owner, origin: "manual", enabled: true, last: null }));
       const base = seeds.length ? seeds.reduce((a, x) => a + x.rate, 0) / seeds.length : 0;
       const runs = seeds.length ? Array.from({ length: 13 }, (_, i) => ({ id: `run-${name}-${i}`, started_at: new Date(now - (13 - i) * 864e5).toISOString(), score: Math.round((base + ((i * 7) % 5 - 2) / 100) * 1e4) / 1e4, status: "succeeded" })) : [];
+      const rules: DqRule[] = seeds.map((x, i) => ({ id: `r-${name}-${i}`, table_name: table, name: x.name, column_name: x.column, kind: x.kind, dimension: x.dimension, params: x.params, threshold: x.threshold, owner: x.owner, origin: "manual", enabled: true, last: null,
+        history: runs.map((run, k) => ({ pass_rate: Math.max(0, Math.min(1, Math.round((x.rate + ((k * 3 + i) % 5 - 2) / 100) * 1e4) / 1e4)), ran_at: run.started_at })) }));
       this.dqState[k] = { rules, runs };
       if (rules.length) this.runDqNow(k, table);
     }
@@ -310,7 +311,7 @@ export class MockApi implements DatagraphApi {
   private runDqNow(k: string, table: string): DqRun {
     const st = this.dqState[k]; const seeds = D.DQ_SEED[table.split(".").pop() ?? table] ?? []; const ranAt = new Date().toISOString();
     st.rules = st.rules.map(r => { if (!r.enabled) return r; const rate = seeds.find(x => x.name === r.name)?.rate ?? 0.97; const status: DqRule["last"] extends infer _ ? DqResult["status"] : never = rate >= r.threshold ? "passing" : rate >= r.threshold - 0.15 ? "warning" : "failing";
-      return { ...r, last: { pass_rate: rate, passed: Math.round(rate * 612), failed: Math.round((1 - rate) * 612), total: 612, status, error: null, ran_at: ranAt } }; });
+      return { ...r, last: { pass_rate: rate, passed: Math.round(rate * 612), failed: Math.round((1 - rate) * 612), total: 612, status, error: null, ran_at: ranAt }, history: [...(r.history ?? []), { pass_rate: rate, ran_at: ranAt }].slice(-14) }; });
     const rates = st.rules.filter(r => r.enabled && r.last?.pass_rate != null).map(r => r.last!.pass_rate!);
     const score = rates.length ? Math.round(rates.reduce((a, b) => a + b, 0) / rates.length * 1e4) / 1e4 : null;
     const run = { id: `run-${Date.now()}-${st.runs.length}`, started_at: ranAt, score, status: "succeeded" };
@@ -339,7 +340,7 @@ export class MockApi implements DatagraphApi {
     const name = table.split(".").pop() ?? table; const cols = (D.COLUMNS[name] || D.GENERIC_COLS).cols.map(c => c[0]);
     if (rule.column && !cols.includes(rule.column)) throw new Error(`Unknown column '${rule.column}' on ${table}`);
     const dims: Record<string, string> = { not_null: "completeness", unique: "uniqueness", in_set: "validity", range: "validity", regex: "validity", referential: "consistency", freshness: "timeliness", row_count: "volume", custom: "validity" };
-    const r: DqRule = { id: `r-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, table_name: table, name: rule.name, column_name: rule.column ?? null, kind: rule.kind, dimension: rule.dimension ?? dims[rule.kind], params: rule.params ?? {}, threshold: rule.threshold ?? 0.95, owner: rule.owner ?? null, origin: "manual", enabled: rule.enabled ?? true, last: null };
+    const r: DqRule = { id: `r-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, table_name: table, name: rule.name, column_name: rule.column ?? null, kind: rule.kind, dimension: rule.dimension ?? dims[rule.kind], params: rule.params ?? {}, threshold: rule.threshold ?? 0.95, owner: rule.owner ?? null, origin: "manual", enabled: rule.enabled ?? true, last: null, history: [] };
     this.dq(domain, version, table).rules.push(r); return clone(r);
   }
   private findRule(ruleId: string) { for (const st of Object.values(this.dqState)) { const r = st.rules.find(x => x.id === ruleId); if (r) return { st, r }; } throw new Error(`Rule ${ruleId} not found`); }
@@ -355,8 +356,25 @@ export class MockApi implements DatagraphApi {
     const st = this.dq(domain, version, table); const cols = (D.COLUMNS[table.split(".").pop() ?? table] || D.GENERIC_COLS).cols;
     const want = [{ name: `${cols[0][0]} present`, column: cols[0][0], kind: "not_null" as const, dimension: "completeness" }, ...(cols[1] ? [{ name: `${cols[1][0]} present`, column: cols[1][0], kind: "not_null" as const, dimension: "completeness" }] : [])];
     const fresh = want.filter(w => !st.rules.some(r => r.kind === w.kind && r.column_name === w.column));
-    for (const w of fresh) st.rules.push({ id: `r-ai-${Date.now()}-${w.column}`, table_name: table, name: w.name, column_name: w.column, kind: w.kind, dimension: w.dimension, params: {}, threshold: 0.95, owner: null, origin: "ai", enabled: true, last: null });
+    for (const w of fresh) st.rules.push({ id: `r-ai-${Date.now()}-${w.column}`, table_name: table, name: w.name, column_name: w.column, kind: w.kind, dimension: w.dimension, params: {}, threshold: 0.95, owner: null, origin: "ai", enabled: true, last: null, history: [] });
     return { added: fresh.length, skipped: want.length === fresh.length ? [] : [`${want.length - fresh.length} already defined`] };
+  }
+  async ruleFailures(ruleId: string, limit = 20): Promise<FailingRows> {
+    const { r } = this.findRule(ruleId);
+    if (r.kind === "freshness" || r.kind === "row_count") throw new Error(`A ${r.kind.replace("_", " ")} rule is about the whole table: it has no failing rows`);
+    const name = r.table_name.split(".").pop() ?? r.table_name; const cols = (D.COLUMNS[name] || D.GENERIC_COLS).cols.map(c => c[0]);
+    const rows = Array.from({ length: Math.min(limit, 3) }, (_, i) => cols.map(c => c === r.column_name ? (r.kind === "not_null" ? null : `bad-${i + 1}`) : c.endsWith("_id") || c === "id" ? 1000 + i : `${c}-${i + 1}`));
+    return { columns: cols, rows };
+  }
+  async suggestTerms(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<{ added: number; skipped: string[] }> {
+    this.editableVersion(domain, version);
+    await this.stages(onProgress, [`Asking the AI provider for terms and metrics on ${table.split(".").pop()}`], this.mockOpts.latency ?? 600);
+    const all = this.glossaryOf(domain); const parts = table.split("."); const schema = parts.length >= 2 ? parts[parts.length - 2] : null;
+    const want: TermInput[] = [{ kind: "term", name: "Customer segment", definition: "The commercial grouping a customer is sold through.", columns: ["segment_code"], status: "draft", class_name: "Customer" },
+      { kind: "metric", name: "Customer count", definition: "Customers on file at period end", formula: "count(distinct customer_id)", unit: "customers", frequency: "Monthly", status: "pending", columns: ["customer_id"] }];
+    const fresh = want.filter(w => !all.some(e => e.kind === w.kind && e.name.toLowerCase() === w.name.toLowerCase()));
+    for (const w of fresh) all.push({ id: `g-ai-${Date.now()}-${w.name.length}`, kind: w.kind, name: w.name, definition: w.definition ?? "", status: w.status ?? "draft", schema_name: schema, table_name: table, columns: w.columns ?? [], class_name: w.class_name ?? null, formula: w.formula ?? null, unit: w.unit ?? null, frequency: w.frequency ?? null, owner: null, updated_at: new Date().toISOString(), updated_by: "ai" });
+    return { added: fresh.length, skipped: want.filter(w => !fresh.includes(w)).map(w => `${w.name} (already in the glossary)`) };
   }
   private glossaryOf(domain: string): GlossaryEntry[] {
     if (!this.terms[domain]) {

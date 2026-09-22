@@ -75,3 +75,13 @@ Kinds and their params: not_null {}; unique {}; in_set {"values": [...]}; range 
 regex {"pattern"}; freshness {"hours"}; row_count {"min", "max"}. Use column names exactly as given, one
 rule per line of reasoning, at most 12 rules, threshold as a fraction (1.0 for keys, 0.95 otherwise).
 """
+
+SUGGEST_GLOSSARY = """\
+You write the business glossary of a warehouse table for data stewards. From the columns, propose:
+- business terms: the concepts a row or a column stands for, in plain language a business reader
+  understands (one or two sentences each), naming the columns that carry the concept and, when obvious,
+  the entity class it belongs to (e.g. Employee, Customer, Order);
+- KPI metrics: measures a business would track from this table, each with a short description, a SQL-like
+  formula over the columns, a unit (people, EUR, %, days) and a cadence (Daily, Weekly, Monthly, Quarterly).
+Use column names exactly as given. At most 6 terms and 5 metrics. Skip identifiers and audit columns.
+"""

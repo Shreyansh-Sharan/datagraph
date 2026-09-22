@@ -109,6 +109,30 @@ def rule_sql(rule: dict, d: SqlDialect) -> tuple[str, str | None]:
     return f"{d.to_double(d.count_if(pred))} / nullif(count(*), 0)", f"count(*) - {d.count_if(pred)}"
 
 
+def failing_predicate(rule: dict, d: SqlDialect, table_sql: str) -> str:
+    """A WHERE clause selecting the rows that break a row-level rule; ValueError for table-level rules."""
+    kind, col, p = rule["kind"], rule.get("column_name"), rule.get("params") or {}
+    q = d.quote_identifier(col) if col else None
+    if kind == "unique":
+        return f"{q} IN (SELECT {q} FROM {table_sql} WHERE {q} IS NOT NULL GROUP BY {q} HAVING count(*) > 1)"
+    if kind in ("freshness", "row_count"):
+        raise DqError(f"A {kind.replace('_', ' ')} rule is about the whole table: it has no failing rows")
+    pass_expr, _ = rule_sql(rule, d)
+    # every other kind is count_if(<pred>): the failing rows are NOT (<pred>)
+    pred = pass_expr[pass_expr.index("count_if(") + len("count_if(") if "count_if(" in pass_expr else 0:]
+    if "count_if(" not in pass_expr:   # the Postgres spelling: count(*) FILTER (WHERE <pred>)
+        marker = "FILTER (WHERE "
+        pred = pass_expr[pass_expr.index(marker) + len(marker):]
+    depth, end = 0, None
+    for i, ch in enumerate(pred):
+        depth += ch == "("
+        if ch == ")":
+            if depth == 0:
+                end = i; break
+            depth -= 1
+    return f"NOT ({pred[:end]})"
+
+
 def status_of(pass_rate: float | None, threshold: float) -> str:
     if pass_rate is None:
         return "error"
@@ -200,6 +224,15 @@ class TableQuality:
             raise DqError("The threshold is a fraction between 0 and 1")
         return {"name": name.strip(), "kind": kind, "column": column, "params": params, "dimension": dimension, "threshold": float(threshold)}
 
+    def failures(self, rule_id: UUID, limit: int = 20) -> tuple[list[str], list[tuple]]:
+        """A sample of the source rows that break the rule: (column names, rows)."""
+        rule = self.get_rule(rule_id)
+        src = self.source_for(rule.domain_version_id)
+        d = src.dialect
+        tq = d.quote_table(rule.table_name)
+        where = failing_predicate(rule.to_dict(), d, tq)
+        return src.query(f"SELECT * FROM {tq} WHERE {where}", max(1, min(int(limit), 200)))
+
     # -- running ---------------------------------------------------------------------------------
 
     def run(self, version_id: UUID, table: str, *, actor: str | None = None, on_progress: Callable[[str], None] | None = None) -> Run:
@@ -264,13 +297,17 @@ class TableQuality:
             latest = {r["rule_id"]: r for r in cur.execute(
                 "SELECT DISTINCT ON (rule_id) * FROM dq_results WHERE rule_id = ANY(%s) ORDER BY rule_id, ran_at DESC, id DESC", ([r.id for r in rules],)).fetchall()}
             prof = cur.execute("SELECT columns FROM table_profiles WHERE domain_version_id = %s AND table_name = %s", (version_id, table)).fetchone()
+            history: dict = {}
+            for h in cur.execute("SELECT rule_id, pass_rate, ran_at FROM (SELECT rule_id, pass_rate, ran_at, row_number() OVER (PARTITION BY rule_id ORDER BY ran_at DESC, id DESC) AS rn "
+                                 "FROM dq_results WHERE rule_id = ANY(%s)) x WHERE rn <= 14 ORDER BY ran_at", ([r.id for r in rules],)).fetchall():
+                history.setdefault(h["rule_id"], []).append({"pass_rate": _f(h["pass_rate"]), "ran_at": h["ran_at"].isoformat()})
         last_run = next((r for r in reversed(runs) if r.status != "running"), None)
         out_rules = []
         for r in rules:
             x = latest.get(r.id)
             last = None if x is None else {"pass_rate": _f(x["pass_rate"]), "passed": x["passed"], "failed": x["failed"], "total": x["total"], "status": x["status"],
                                            "error": x["error"], "ran_at": x["ran_at"].isoformat()}
-            out_rules.append({**r.to_dict(), "last": last})
+            out_rules.append({**r.to_dict(), "last": last, "history": history.get(r.id, [])})
         by_col: dict[str, list[float]] = {}
         for r in out_rules:
             if r["enabled"] and r["column_name"] and r["last"] and r["last"]["pass_rate"] is not None:

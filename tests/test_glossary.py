@@ -26,3 +26,28 @@ def test_terms_and_metrics_crud_filters_and_search(db):
         assert False, "duplicate names must be refused"
     except ValueError as e:
         assert "Employee" in str(e)
+
+
+def test_ai_suggests_terms_and_metrics_from_a_table_as_drafts(db):
+    from ontoforge.build import PostgresSource
+    from ontoforge.llm import FakeProvider
+    from ontoforge.metadata import MetadataService
+    from tests.hr_fixture import seed_tables
+    seed_tables(db)
+    reg = Registry(db)
+    d = reg.create_domain("hr", base_iri=BASE)
+    v = reg.create_version(d.id, actor="alice")
+    meta = MetadataService(reg, PostgresSource(db).catalog, db)
+    meta.import_tables(v.id, ["employees"], actor="alice")
+    g = GlossaryService(reg, db)
+    g.add(d.id, actor="alice", kind="term", name="Employee", definition="already here", table="employees")
+    llm = FakeProvider([{"terms": [
+        {"name": "Employee", "definition": "dup", "columns": ["empno"], "class_name": "Employee"},
+        {"name": "Manager", "definition": "The employee a person reports to.", "columns": ["manager"], "class_name": None},
+        {"name": "Ghost", "definition": "bad column", "columns": ["nope"], "class_name": None}],
+        "metrics": [{"name": "Headcount", "definition": "Employees on payroll", "formula": "count(*)", "unit": "people", "frequency": "Monthly", "columns": ["empno"]}]}])
+    report = g.suggest(d.id, v.id, "employees", meta, llm, actor="alice")
+    assert report["added"] == 2 and report["skipped"] == ["Employee (already in the glossary)", "Ghost (unknown column nope)"]
+    entries = {e.name: e for e in g.list(d.id, table="employees")}
+    assert entries["Manager"].status == "draft" and entries["Manager"].columns == ["manager"] and entries["Manager"].schema_name is None
+    assert entries["Headcount"].kind == "metric" and entries["Headcount"].status == "pending" and entries["Headcount"].formula == "count(*)"

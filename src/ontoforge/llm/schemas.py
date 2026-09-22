@@ -83,3 +83,12 @@ DQ_RULES_SCHEMA = {
                                   "properties": {"values": {"type": ["array", "null"], "items": _S}, "min": {"type": ["number", "null"]}, "max": {"type": ["number", "null"]},
                                                  "pattern": _NS, "hours": {"type": ["integer", "null"]}, "ref_table": _NS, "ref_column": _NS}}}}}},
 }
+
+GLOSSARY_SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["terms", "metrics"],
+    "properties": {
+        "terms": {"type": "array", "items": {"type": "object", "additionalProperties": False, "required": ["name", "definition", "columns", "class_name"],
+                                             "properties": {"name": _S, "definition": _S, "columns": _ARR_S, "class_name": _NS}}},
+        "metrics": {"type": "array", "items": {"type": "object", "additionalProperties": False, "required": ["name", "definition", "formula", "unit", "frequency", "columns"],
+                                               "properties": {"name": _S, "definition": _S, "formula": _S, "unit": _NS, "frequency": _NS, "columns": _ARR_S}}}},
+}

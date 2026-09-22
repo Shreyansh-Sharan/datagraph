@@ -1508,6 +1508,25 @@ def table_dq_suggest(version_id: UUID, table: str, request: Request, response: R
                    lambda llm, report: st.tabledq.suggest(version_id, table, llm, actor=me.name, on_progress=report))
 
 
+@router.get("/dq/rules/{rule_id}/failures")
+def dq_rule_failures(rule_id: UUID, request: Request, limit: int = Query(default=20, ge=1, le=200)):
+    columns, rows = _st(request).tabledq.failures(rule_id, limit)
+    return {"columns": columns, "rows": [[_json_cell(v) for v in r] for r in rows]}
+
+
+def _json_cell(v):
+    return v if v is None or isinstance(v, (str, int, float, bool)) else str(v)
+
+
+@router.post("/versions/{version_id}/tables/{table}/glossary/suggest")
+def glossary_suggest(version_id: UUID, table: str, request: Request, response: Response, me: Principal = Depends(builder),
+                     background: bool = Query(default=False)):
+    st = _st(request)
+    version = st.registry.get_version(version_id)
+    return _run_ai(request, version_id, "glossary-suggest", background, response, me.name,
+                   lambda llm, report: st.glossary.suggest(version.domain_id, version_id, table, st.metadata, llm, actor=me.name, on_progress=report))
+
+
 @router.get("/domains/{name}/glossary")
 def glossary_list(name: str, request: Request, kind: str | None = None, table: str | None = None, q: str | None = None):
     st = _st(request)

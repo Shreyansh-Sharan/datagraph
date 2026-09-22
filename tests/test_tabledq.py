@@ -92,3 +92,46 @@ def test_rule_sql_in_databricks_flavour():
     assert "RLIKE" in p and "count_if(" in p and f is not None
     p, _ = rule_sql({"kind": "freshness", "column_name": "ts", "params": {"hours": 24}}, d)
     assert "INTERVAL 24 HOURS" in p and "max(`ts`)" in p
+
+
+def test_failing_rows_can_be_shown_for_a_rule(db):
+    reg, meta, src, v = _setup(db)
+    dq = TableQuality(reg, meta, src, db)
+    r_null = dq.add_rule(v.id, "employees", actor="alice", name="Salary present", column="sal", kind="not_null")
+    r_uniq = dq.add_rule(v.id, "employees", actor="alice", name="Dept unique", column="deptno", kind="unique")
+    r_rows = dq.add_rule(v.id, "employees", actor="alice", name="Rows", kind="row_count", params={"min": 1})
+    cols, rows = dq.failures(r_null.id, limit=10)
+    assert "ename" in cols and [r[cols.index("ename")] for r in rows] == ["ALLEN"]          # the one row with a null salary
+    cols, rows = dq.failures(r_uniq.id, limit=10)
+    assert sorted(r[cols.index("ename")] for r in rows) == []                                # every department appears once
+    with db.transaction() as cur:
+        cur.execute("UPDATE employees SET deptno = 10 WHERE empno = 2")
+    cols, rows = dq.failures(r_uniq.id, limit=10)
+    assert sorted(r[cols.index("ename")] for r in rows) == ["ALLEN", "SMITH"]                # both share department 10
+    try:
+        dq.failures(r_rows.id)
+        assert False, "a table-level rule has no failing rows"
+    except ValueError as e:
+        assert "row" in str(e).lower()
+
+
+def test_status_carries_each_rules_recent_history(db):
+    reg, meta, src, v = _setup(db)
+    dq = TableQuality(reg, meta, src, db)
+    r = dq.add_rule(v.id, "employees", actor="alice", name="Salary present", column="sal", kind="not_null")
+    dq.run(v.id, "employees", actor="alice")
+    with db.transaction() as cur:
+        cur.execute("UPDATE employees SET sal = 700 WHERE sal IS NULL")
+    dq.run(v.id, "employees", actor="alice")
+    rule = next(x for x in dq.status(v.id, "employees")["rules"] if x["id"] == str(r.id))
+    assert [h["pass_rate"] for h in rule["history"]] == [0.75, 1.0] and all("ran_at" in h for h in rule["history"])
+
+
+def test_failing_predicate_in_databricks_flavour():
+    from ontoforge.tabledq import failing_predicate
+    d = DatabricksDialect()
+    w = failing_predicate({"kind": "regex", "column_name": "ename", "params": {"pattern": "^[A-Z]+$"}}, d, "`hr`.`employees`")
+    assert w == "NOT (`ename` IS NULL OR CAST(`ename` AS STRING) RLIKE '^[A-Z]+$')"
+    w = failing_predicate({"kind": "in_set", "column_name": "g", "params": {"values": ["M", "F"]}}, d, "`t`")
+    assert w == "NOT (`g` IS NULL OR CAST(`g` AS STRING) IN ('M', 'F'))"
+    assert failing_predicate({"kind": "unique", "column_name": "id", "params": {}}, d, "`t`").startswith("`id` IN (SELECT `id` FROM `t`")

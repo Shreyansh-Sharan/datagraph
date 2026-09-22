@@ -102,6 +102,36 @@ class GlossaryService:
             raise ValueError(f"A {f['kind']} named {f['name']!r} already exists in this glossary") from None
         return _term(row)
 
+    def suggest(self, domain_id: UUID, version_id: UUID, table: str, metadata, llm, *, actor: str, on_progress=None) -> dict:
+        """Ask the AI provider for business terms and KPI metrics that this table supports; they land as
+        drafts (terms) and pending metrics for a steward to approve."""
+        from ontoforge.llm.prompts import SUGGEST_GLOSSARY
+        from ontoforge.llm.schemas import GLOSSARY_SCHEMA
+        say = on_progress or (lambda _m: None)
+        snap = metadata.get(version_id, table)
+        names = {c["name"].lower(): c["name"] for c in snap.columns}
+        existing = {(e.kind, e.name.lower()) for e in self.list(domain_id)}
+        lines = [f"- {c['name']} {c.get('type') or ''}{': ' + c['comment'] if c.get('comment') else ''}" for c in snap.columns]
+        say(f"Asking the AI provider for terms and metrics on {table}")
+        data = llm.complete_json(SUGGEST_GLOSSARY, f"Table {table}\nColumns:\n" + "\n".join(lines), GLOSSARY_SCHEMA)
+        added, skipped = [], []
+        for kind, key in (("term", "terms"), ("metric", "metrics")):
+            for x in data.get(key, []):
+                name = (x.get("name") or "").strip()
+                if not name:
+                    continue
+                if (kind, name.lower()) in existing:
+                    skipped.append(f"{name} (already in the glossary)"); continue
+                unknown = [c for c in (x.get("columns") or []) if c.lower() not in names]
+                if unknown:
+                    skipped.append(f"{name} (unknown column {unknown[0]})"); continue
+                entry = self.add(domain_id, actor=actor, kind=kind, name=name, definition=x.get("definition") or "", table=table,
+                                 columns=[names[c.lower()] for c in (x.get("columns") or [])], status="draft" if kind == "term" else "pending",
+                                 class_name=x.get("class_name"), formula=x.get("formula"), unit=x.get("unit"), frequency=x.get("frequency"))
+                existing.add((kind, name.lower()))
+                added.append(entry.to_dict())
+        return {"added": len(added), "skipped": skipped, "entries": added}
+
     def delete(self, term_id: UUID, *, actor: str) -> None:
         self.get(term_id)
         with self.db.rows() as cur:

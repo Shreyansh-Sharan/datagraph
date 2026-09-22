@@ -285,6 +285,44 @@ describe("Table screen", () => {
     await user.click(screen.getByRole("button", { name: "Run all rules" }));
     expect(await screen.findByText("Rules of dim_customer run")).toBeInTheDocument();
   });
+  it("edits a rule and shows the rows that break it", async () => {
+    renderAt(at("dq"), new MockApi({ latency: 10 }));
+    const user = userEvent.setup();
+    const rules = await screen.findByRole("table", { name: "Rules" });
+    expect(within(rules).getAllByRole("img", { name: /Pass rate of/ }).length).toBeGreaterThan(0);   // the trend sparkline
+    await user.click(within(rules).getByRole("button", { name: "Actions for Country is ISO-2" }));
+    await user.click(screen.getByRole("menuitem", { name: "Edit rule" }));
+    const dlg = screen.getByRole("dialog", { name: "Edit rule" });
+    expect(within(dlg).getByLabelText("Rule name")).toHaveValue("Country is ISO-2");
+    expect(within(dlg).getByLabelText("Pattern (regular expression)")).toHaveValue("^[A-Z]{2}$");
+    await user.clear(within(dlg).getByLabelText("Threshold")); await user.type(within(dlg).getByLabelText("Threshold"), "0.9");
+    await user.click(within(dlg).getByRole("button", { name: "Save rule" }));
+    expect(await screen.findByText("Rule Country is ISO-2 updated")).toBeInTheDocument();
+    await user.click(within(rules).getByRole("button", { name: "Actions for Country is ISO-2" }));
+    await user.click(screen.getByRole("menuitem", { name: "Show failing rows" }));
+    const fails = await screen.findByRole("dialog", { name: "Failing rows · Country is ISO-2" });
+    expect(await within(fails).findByRole("table", { name: "Failing rows" })).toBeInTheDocument();
+    expect(within(fails).getAllByText(/bad-/).length).toBe(3);
+  });
+  it("edits a term, moves it through approval and asks the AI for more", async () => {
+    renderAt(at("glossary"), new MockApi({ latency: 10 }));
+    const user = userEvent.setup();
+    await screen.findByRole("heading", { level: 3, name: "Trade customer" });
+    await user.click(screen.getByRole("button", { name: "Actions for Trade customer" }));
+    await user.click(screen.getByRole("menuitem", { name: "Edit" }));
+    const dlg = screen.getByRole("dialog", { name: "Edit business term" });
+    expect(within(dlg).getByLabelText("Name")).toHaveValue("Trade customer");
+    await user.clear(within(dlg).getByLabelText("Definition")); await user.type(within(dlg).getByLabelText("Definition"), "A reseller.");
+    await user.click(within(dlg).getByRole("button", { name: "Save term" }));
+    expect(await screen.findByText("Term Trade customer updated")).toBeInTheDocument();
+    expect(await screen.findByText("A reseller.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Actions for Trade customer" }));
+    await user.click(screen.getByRole("menuitem", { name: "Back to draft" }));
+    expect(await screen.findByText("Trade customer is now draft")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Suggest with AI" }));
+    expect(await screen.findByText("AI added 2 glossary entries")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 3, name: "Customer segment" })).toBeInTheDocument();
+  });
   it("lists the business terms and KPI metrics of the table, searches them and adds a term", async () => {
     renderAt(at("glossary"));
     const user = userEvent.setup();

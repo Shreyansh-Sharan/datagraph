@@ -2,7 +2,7 @@
 // Methods with a settled contract call the API; the rest fall through to the mock so the
 // app stays usable while integration proceeds. Replace fallbacks method by method.
 import { MockApi } from "./mock";
-import type { DqRule, DqRun, DqStatus, GlossaryEntry, RuleInput, TableProfile, TermInput, AiProgress, AuditEntry, BuildRun, GraphSample, SearchOptions, BuildStep, CatalogTable, ChecklistItem, DriftIssue, MappingKpis, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, RefreshChange, SnapshotTable, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus } from "./types";
+import type { DqRule, DqRun, DqStatus, FailingRows, GlossaryEntry, RuleInput, TableProfile, TermInput, AiProgress, AuditEntry, BuildRun, GraphSample, SearchOptions, BuildStep, CatalogTable, ChecklistItem, DriftIssue, MappingKpis, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, RefreshChange, SnapshotTable, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus } from "./types";
 import { tableName } from "./types";
 import { humanAction, relTime } from "./format";
 
@@ -216,13 +216,18 @@ export class RestApi extends MockApi {
     return this.aiJob<DqRun>(`${this.tpath(domain, version, table)}/dq/run`, undefined, onProgress);
   }
   override async addRule(domain: string, version: number, table: string, rule: RuleInput): Promise<DqRule> {
-    const r = await this.req<Omit<DqRule, "last">>("POST", `${this.tpath(domain, version, table)}/dq/rules`, rule);
-    return { ...r, last: null };
+    const r = await this.req<Omit<DqRule, "last" | "history">>("POST", `${this.tpath(domain, version, table)}/dq/rules`, rule);
+    return { ...r, last: null, history: [] };
   }
-  override async updateRule(ruleId: string, patch: Partial<RuleInput>): Promise<DqRule> { const r = await this.req<Omit<DqRule, "last">>("PUT", `/dq/rules/${ruleId}`, patch); return { ...r, last: null }; }
+  override async updateRule(ruleId: string, patch: Partial<RuleInput>): Promise<DqRule> { const r = await this.req<Omit<DqRule, "last" | "history">>("PUT", `/dq/rules/${ruleId}`, patch); return { ...r, last: null, history: [] }; }
   override async deleteRule(ruleId: string): Promise<void> { await this.req<void>("DELETE", `/dq/rules/${ruleId}`); }
   override async suggestRules(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<{ added: number; skipped: string[] }> {
     const r = await this.aiJob<{ added: number; skipped?: string[] }>(`${this.tpath(domain, version, table)}/dq/suggest`, undefined, onProgress);
+    return { added: r.added, skipped: r.skipped ?? [] };
+  }
+  override async ruleFailures(ruleId: string, limit = 20): Promise<FailingRows> { return this.req<FailingRows>("GET", `/dq/rules/${ruleId}/failures?limit=${limit}`); }
+  override async suggestTerms(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<{ added: number; skipped: string[] }> {
+    const r = await this.aiJob<{ added: number; skipped?: string[] }>(`${this.tpath(domain, version, table)}/glossary/suggest`, undefined, onProgress);
     return { added: r.added, skipped: r.skipped ?? [] };
   }
   override async glossary(domain: string, opts?: { kind?: "term" | "metric"; table?: string; q?: string }): Promise<GlossaryEntry[]> {
