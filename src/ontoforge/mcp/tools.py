@@ -1200,8 +1200,13 @@ class GraphTools:
             known = set(o.object_properties) | set(o.datatype_properties)
             for st in ([m] if m else []) + gpath + [st for f in fl for st in (f["path"] or [])]:
                 if st.lstrip("^") not in known:
-                    return {"error": f"{st.lstrip('^')!r} is not a property of the ontology, so the graph holds nothing behind it. "
-                                     "Use the steps ontology_paths returns; when it returns no path, the relationship is missing: add_relationship adds it."}
+                    import difflib
+                    want = o.local_name(st.lstrip("^")).lower()
+                    names = {o.local_name(i): i for i in known}
+                    close = [n for n in names if want and (want in n.lower() or n.lower() in want)] or difflib.get_close_matches(o.local_name(st.lstrip("^")), list(names), n=4, cutoff=0.5)
+                    hint = f" Did you mean {', '.join(dict.fromkeys(close[:4]))}?" if close else ""
+                    return {"error": f"{o.local_name(st.lstrip('^'))!r} is not a property of the ontology, so the graph holds nothing behind it.{hint} "
+                                     "class_schema lists a class's attributes and relationships; use the steps ontology_paths returns, and when it returns no path the relationship is missing: add_relationship adds it."}
         resolved: dict[str, str] = {}
         for f in fl:   # a plain value at a relationship's end names an entity: find it by label or key in the range class
             last = (f["path"] or [None])[-1]

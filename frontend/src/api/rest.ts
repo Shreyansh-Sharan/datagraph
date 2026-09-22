@@ -2,6 +2,7 @@
 // Methods with a settled contract call the API; the rest fall through to the mock so the
 // app stays usable while integration proceeds. Replace fallbacks method by method.
 import { MockApi } from "./mock";
+import { forget, memo } from "./cache";
 import type { AssistantContext, ChatEvent, ChatMessage, ChatResult, Conversation, DqRule, DqRun, DqStatus, FailingRows, GlossaryEntry, RuleInput, TableProfile, TermInput, AiProgress, AuditEntry, BuildRun, GraphSample, SearchOptions, BuildStep, CatalogTable, ChecklistItem, DriftIssue, MappingKpis, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, RefreshChange, SnapshotTable, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus, DqKindInfo, DqOverview } from "./types";
 import { tableName } from "./types";
 import { humanAction, relTime } from "./format";
@@ -51,6 +52,7 @@ export class RestApi extends MockApi {
       try { const j = await res.json(); detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail ?? j); } catch { /* keep statusText */ }
       throw new ApiError(res.status, detail);
     }
+    if (method !== "GET") forget(this, "read:");   // a write may change what the remembered reads said
     if (res.status === 204) return undefined as T;
     return (text ? await res.text() : await res.json()) as T;
   }
@@ -82,10 +84,10 @@ export class RestApi extends MockApi {
       changes };
   }
   private async toDomain(d: BackendDomain, card?: BackendCard): Promise<DomainSummary> {
-    const vs = (await this.req<BackendSummary[]>("GET", `/domains/${encodeURIComponent(d.name)}/versions/summary`)).sort((a, b) => b.version - a.version);
+    const vs = (await memo(this, `read:summary:${d.name}`, () => this.req<BackendSummary[]>("GET", `/domains/${encodeURIComponent(d.name)}/versions/summary`), 8000)).sort((a, b) => b.version - a.version);
     const cfg = this.cfg ?? await this.config();
     const versions = vs.map((v, i) => this.toVersion(d, v, vs[i + 1]));
-    const c = card ?? (await this.req<BackendCard[]>("GET", "/domains/cards")).find(x => x.name === d.name);
+    const c = card ?? (await memo(this, "read:cards", () => this.req<BackendCard[]>("GET", "/domains/cards"), 8000)).find(x => x.name === d.name);
     this.materializations[d.name] = d.materialization ?? cfg.materialization;
     return { name: d.name, description: d.description ?? "", base_iri: d.base_iri, quorum: d.review_quorum, schema: d.schemas?.[0] ?? c?.source.schema ?? d.default_schema ?? "", schemas: d.schemas ?? (d.default_schema ? [d.default_schema] : []), sources: (d.sources ?? []).map(x => ({ connectionId: x.connection_id ?? null, catalog: x.catalog ?? null, schemas: [...(x.schemas ?? [])] })), catalog: c?.source.catalog ?? d.default_catalog ?? cfg.catalog ?? d.name,
       materialization: d.materialization ?? cfg.materialization, target: d.target_schema ?? "", mcpExposed: c?.mcp.exposed ?? d.mcp_policy?.exposed ?? true, disabledTools: c?.mcp.disabled_tools ?? d.mcp_policy?.disabled_tools ?? [],
@@ -102,7 +104,9 @@ export class RestApi extends MockApi {
   override async connections(): Promise<ConnectionRec[]> { return this.req<ConnectionRec[]>("GET", "/connections"); }
   override async testConnectionById(id: string): Promise<ConnResult> { return this.req<ConnResult>("POST", `/connections/${id}/test`); }
   override async detachConnection(id: string): Promise<void> { await this.req("DELETE", `/connections/${id}/references`); }
-  override async domain(name: string): Promise<DomainSummary> { return this.toDomain(await this.req<BackendDomain>("GET", `/domains/${encodeURIComponent(name)}`)); }
+  // Remembered for a few seconds and dropped by any write: one screen load asks for the domain from several hooks, and the
+  // version summary and the domain cards are the slow reads behind it.
+  override async domain(name: string): Promise<DomainSummary> { return this.toDomain(await memo(this, `read:domain:${name}`, () => this.req<BackendDomain>("GET", `/domains/${encodeURIComponent(name)}`), 8000)); }
   override async createDomain(input: NewDomainInput): Promise<DomainSummary> {
     const body: Record<string, unknown> = { name: input.name, description: input.description, base_iri: input.base_iri, review_quorum: input.quorum };
     if (input.ai_connection_id) body.ai_connection_id = input.ai_connection_id;

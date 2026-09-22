@@ -66,3 +66,10 @@ def test_aggregate_resolves_a_filter_value_at_a_relationship_end_by_label(db):
     assert out["rows"][0]["sum"] == 800 and out["resolved"] == {"SALES": BASE + "Department/10"}
     out = tools.graph_aggregate("hr", "Employee", measure="salary", filters=[{"path": ["works in"], "value": "Nowhere"}])
     assert "Nowhere" in out["error"] and "Department" in out["error"] and "SALES" in out["error"]
+
+
+def test_unknown_property_names_the_closest_properties(db):
+    reg, store, v = built_domain(db)
+    tools = GraphTools(reg, store)
+    err = tools.graph_aggregate("hr", "Employee", measure="salary", group_by="worksin_dept")["error"]
+    assert "worksin_dept" in err and "worksIn" in err and "did you mean" in err.lower()
