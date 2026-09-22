@@ -39,7 +39,10 @@ odd period or peer down by the next relationship (products, customers, people); 
 last period a decline or a peer an outlier, check the data behind it: the source table's date range
 and freshness from table_profile and its rule results from table_quality, because a partial period
 or a failing rule explains many "inconsistencies"; 5) answer with the finding, the numbers behind
-it, the likely cause, and what you could not see.
+it, the likely cause, and what you could not see. Measure the class that carries the events (orders,
+transactions, records) linked to the subject, not the subject's own summary attributes. Do not start
+profiles, rule runs or builds while answering a question; only act when the user asks you to act.
+Answer as soon as the numbers answer the question: at most six tool calls for a why.
 """
 RESULT_LIMIT = 6000      # characters of a tool result the model gets to read
 PREVIEW_LIMIT = 1200     # characters of a tool result the screen shows
@@ -47,7 +50,7 @@ Event = Callable[[dict], Any]
 
 
 class Assistant:
-    def __init__(self, server, llm: LLMProvider | None, db: Database, max_steps: int = 8) -> None:
+    def __init__(self, server, llm: LLMProvider | None, db: Database, max_steps: int = 10) -> None:
         self.server, self.llm, self.db, self.max_steps = server, llm, db, max_steps
 
     # -- the conversation loop ------------------------------------------------------------------------
@@ -85,7 +88,10 @@ class Assistant:
                     trace.append({"id": tc.id, "name": tc.name, "arguments": tc.arguments, "result": result[:PREVIEW_LIMIT]})
                     msgs.append({"role": "tool", "tool_call_id": tc.id, "name": tc.name, "content": result[:RESULT_LIMIT]})
                     self._save(conv_id, "tool", result[:RESULT_LIMIT], tool_call_id=tc.id, name=tc.name)
-            answer = "I stopped after too many steps without a final answer; try a narrower question."
+            # The budget is spent: one closing turn without tools, answered from what was gathered.
+            nudge = "Answer now from what you have gathered, in a few sentences: the finding, the numbers behind it, and what you could not check."
+            closing = await asyncio.to_thread(self.llm.chat, system, msgs + [{"role": "user", "content": nudge}], [])
+            answer = closing.text.strip() or "I ran out of steps before reaching an answer; try a narrower question."
             emit({"type": "text", "text": answer})
             self._save(conv_id, "assistant", answer)
             self._touch(conv_id)

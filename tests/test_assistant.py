@@ -102,3 +102,15 @@ def test_tools_resolve_table_names_the_way_people_type_them(db):
     assert tools.table_quality("hr", "hr.employees")["table"] == "employees"                  # a longer spelling still finds it
     missing = tools.table_quality("hr", "employeez")
     assert "employeez" in missing["error"] and "departments, employees" in missing["error"]  # the real names are offered
+
+
+def test_a_used_up_step_budget_still_ends_in_an_answer_from_what_was_gathered(db):
+    reg, store, v = built_domain(db)
+    server = create_mcp_server(GraphTools(reg, store))
+    turns = [{"tool_calls": [{"name": "list_domains", "arguments": {}}]}] * 3 + [{"text": "Two employees report to SMITH."}]
+    llm = FakeProvider([], turns=turns)
+    a = Assistant(server, llm, db, max_steps=3)
+    result = asyncio.run(a.chat(actor="alice", message="why?", context={"domain": "hr"}))
+    assert result["answer"] == "Two employees report to SMITH." and len(result["tools"]) == 3
+    assert llm.calls[-1]["tools"] == [] and "Answer now" in llm.calls[-1]["messages"][-1]["content"]   # the closing turn: no tools, a nudge
+    assert "run_profile" not in llm.calls[0]["system"] or "Do not start" in llm.calls[0]["system"]
