@@ -419,7 +419,7 @@ describe("build (rest)", () => {
     const a = api(running); await a.domain("aw");
     const r = (await a.builds("aw", 1))[0];
     expect(r.id).toBe(rid); expect(r.label).toBe("#5e25"); expect(r.status).toBe("running");
-    expect(r.steps.map(s => [s.name, s.state])).toEqual([["compile", "done"], ["drift", "running"], ["prepare", "queued"], ["plan", "queued"], ["load", "queued"], ["finalize", "queued"]]);
+    expect(r.steps.map(s => [s.name, s.state])).toEqual([["compile", "done"], ["drift", "running"], ["load", "queued"], ["finalize", "queued"]]);   // an older run's drift came second: only what follows the furthest step is queued
     expect(r.steps[0].detail).toBe("3 selects"); expect(r.stepIndex).toBe(1);
     await a.buildStatus(r.id);
     expect(calls).toContain(`GET /api/builds/${rid}`);
@@ -428,7 +428,7 @@ describe("build (rest)", () => {
     const loading = { ...running, steps: [{ name: "compile", seconds: 0.41, detail: { selects: 3 } }, { name: "prepare", seconds: 0 }, { name: "plan", seconds: 0.2, detail: { mode: "incremental", reason: "signatures compared", changed: ["sales.customer"], unchanged: 67 } }, { name: "load", seconds: null, detail: { rows: 123456 } }] };
     const a = api(loading); await a.domain("aw");
     const r = (await a.builds("aw", 1))[0];
-    expect(r.steps.map(s => [s.name, s.state])).toEqual([["compile", "done"], ["prepare", "done"], ["plan", "done"], ["load", "running"], ["finalize", "queued"]]);
+    expect(r.steps.map(s => [s.name, s.state])).toEqual([["compile", "done"], ["prepare", "done"], ["plan", "done"], ["load", "running"], ["finalize", "queued"]]);   // drift was skipped: it is not queued behind the load
     expect(r.steps[2].detail).toBe("incremental: 1 table to read, 67 unchanged");
     expect(r.steps[3].detail).toBe("123,456 rows so far");
     const skipped = { ...running, status: "succeeded", finished_at: "2026-09-21T12:00:03Z", triple_count: 5, steps: [{ name: "load", seconds: 0, detail: { triples: 0, skipped: true } }] };
@@ -436,7 +436,7 @@ describe("build (rest)", () => {
     expect((await b.builds("aw", 1))[0].steps[0].detail).toBe("nothing changed: no rows read");
   });
   it("points at the next queued step and shows elapsed time when an older API reports no running step", async () => {
-    const between = { ...running, started_at: new Date(Date.now() - 95_000).toISOString(), steps: [{ name: "compile", seconds: 0.41 }, { name: "drift", seconds: 1 }, { name: "prepare", seconds: 0 }] };
+    const between = { ...running, started_at: new Date(Date.now() - 95_000).toISOString(), steps: [{ name: "compile", seconds: 0.41 }, { name: "prepare", seconds: 1 }, { name: "plan", seconds: 0 }] };
     const a = api(between); await a.domain("aw");
     const r = (await a.builds("aw", 1))[0];
     expect(r.steps.map(s => s.state)).toEqual(["done", "done", "done", "queued", "queued", "queued"]);

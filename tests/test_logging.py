@@ -76,4 +76,4 @@ def test_build_lifecycle_is_logged(db, caplog):
     events = [(x.event, getattr(x, "run_id", None)) for x in caplog.records if x.name == "ontoforge.build"]
     assert ("build.started", run["id"]) in events and ("build.succeeded", run["id"]) in events
     steps = [x.step for x in caplog.records if x.name == "ontoforge.build" and x.event == "build.step"]
-    assert steps == ["compile", "drift", "prepare", "plan", "load", "finalize"]
+    assert steps == ["compile", "prepare", "plan", "drift", "load", "finalize"]

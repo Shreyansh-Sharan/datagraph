@@ -396,7 +396,7 @@ export class RestApi extends MockApi {
   /** The pipeline's step order, so a running build shows what is still to come. */
   private pipeline(domain: string): string[] {
     const publish = (this.materializations[domain] ?? "none") !== "none";
-    return ["compile", "drift", "prepare", "plan", ...(publish ? ["publish"] : []), "load", "finalize"];
+    return ["compile", "prepare", "plan", "drift", ...(publish ? ["publish"] : []), "load", "finalize"];
   }
   private toRun(r: { id: string; status: BuildRun["status"]; actor: string | null; started_at: string; finished_at: string | null; triple_count: number | null; error: string | null; steps: { name: string; seconds: number | null; detail?: Record<string, unknown> }[] }, domain?: string): BuildRun {
     const secs = r.finished_at ? (new Date(r.finished_at).getTime() - new Date(r.started_at).getTime()) / 1000 : null;

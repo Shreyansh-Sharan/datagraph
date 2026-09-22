@@ -118,3 +118,45 @@ def test_postgres_signature_changes_with_the_data():
         with db.transaction() as cur:
             cur.execute(f'DROP SCHEMA "{schema}" CASCADE')
         db.close()
+
+
+def test_table_signatures_are_read_in_parallel(db):
+    import time
+    reg, store, _, v = _env(db)
+
+    class SlowSignatures(PostgresSource):
+        def table_signature(self, table):
+            time.sleep(0.4)
+            return super().table_signature(table)
+
+    pipeline = BuildPipeline(reg, store, SlowSignatures(db))
+    run = pipeline.run(v.id, actor="alice")
+    plan = next(s for s in run.steps if s["name"] == "plan")
+    assert run.status == "succeeded" and len(plan["detail"]["changed"]) == 3
+    assert plan["seconds"] < 1.0                     # three 0.4 s reads side by side, not one after another
+
+
+def test_compile_reads_column_types_from_the_snapshot_and_drift_looks_only_at_changed_tables(db):
+    from ontoforge.metadata import MetadataService
+    reg, store, _, v = _env(db)
+    src = PostgresSource(db)
+    meta = MetadataService(reg, src.catalog, db)
+    meta.import_tables(v.id, ["employees", "departments", "collaborations"], actor="alice")
+    calls = {"types": 0, "details": 0}
+    real_types, real_details = src.catalog.column_types, src.catalog.column_details
+    src.catalog.column_types = lambda t: calls.__setitem__("types", calls["types"] + 1) or real_types(t)
+    src.catalog.column_details = lambda t: calls.__setitem__("details", calls["details"] + 1) or real_details(t)
+    pipeline = BuildPipeline(reg, store, src, metadata=meta)
+    first = pipeline.run(v.id, actor="alice")
+    assert first.status == "succeeded", first.error
+    assert [s["name"] for s in first.steps] == ["compile", "prepare", "plan", "drift", "load", "finalize"]
+    assert calls["types"] == 0                                        # the snapshot knows every mapped column's type
+    assert next(s for s in first.steps if s["name"] == "drift")["detail"] == {"issues": [], "tables": 3}
+    calls["details"] = 0
+    second = pipeline.run(v.id, actor="alice")
+    assert next(s for s in second.steps if s["name"] == "drift")["detail"] == {"issues": [], "tables": 0}
+    assert calls["details"] == 0                                      # nothing changed: the catalog was not asked at all
+    with db.transaction() as cur:
+        cur.execute("UPDATE departments SET dname = 'MARKETING' WHERE deptno = 10")
+    third = pipeline.run(v.id, actor="alice")
+    assert next(s for s in third.steps if s["name"] == "drift")["detail"]["tables"] == 1 and _plan(third)["changed"] == ["departments"]

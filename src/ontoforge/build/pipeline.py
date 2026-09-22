@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 import re
 import time
 from dataclasses import dataclass
@@ -93,24 +94,25 @@ class BuildPipeline:
                 version = self.registry.get_version(version_id)
                 r2rml = self._r2rml(version)
                 self.source = self.source_for(version_id)   # the domain's own connection, or the deployment's source
-                compiled = compile_mapping(r2rml, self.source.dialect, column_types=self.source.catalog.resolver())
+                compiled = compile_mapping(r2rml, self.source.dialect, column_types=self._column_types(version_id))
                 ttl = serialize_r2rml(r2rml)
                 self.registry.store_r2rml(version_id, ttl)
                 # The spec, canonically serialized: the Turtle carries fresh blank-node ids every time.
                 mapping_hash = hashlib.sha256((json.dumps(version.mapping, sort_keys=True) if version.mapping else (version.r2rml_ttl or "")).encode()).hexdigest()
                 steps[-1]["detail"] = {"selects": len(compiled.selects)}
-            if self.metadata is not None:
-                with step("drift"):
-                    from dataclasses import asdict
-                    issues = [asdict(i) for i in self.metadata.drift(version_id)]
-                    steps[-1]["detail"] = {"issues": issues}
-                    if issues:
-                        log.warning("schema drift: %d issue(s)", len(issues), extra={"event": "build.drift", "issues": issues, **ctx})
             with step("prepare"):
                 self._prepare()
             with step("plan"):
                 plan = self._plan(version_id, compiled, mapping_hash, full=full or bool(self.publish))
                 steps[-1]["detail"] = {"mode": plan.mode, "reason": plan.reason, "changed": plan.changed, "unchanged": len(plan.unchanged)}
+            if self.metadata is not None:
+                with step("drift"):
+                    from dataclasses import asdict
+                    watched = None if plan.mode == "full" else plan.changed     # a table that did not move cannot have drifted
+                    issues = [asdict(i) for i in (self.metadata.drift(version_id, watched) if watched != [] else [])]
+                    steps[-1]["detail"] = {"issues": issues, "tables": len(plan.changed)}
+                    if issues:
+                        log.warning("schema drift: %d issue(s)", len(issues), extra={"event": "build.drift", "issues": issues, **ctx})
             if self.publish:
                 with step("publish"):
                     published = self._publish(version, compiled.sql)
@@ -142,6 +144,20 @@ class BuildPipeline:
 
     # -- incremental planning and loading ----------------------------------------
 
+    def _column_types(self, version_id: UUID):
+        """Column types for the compiler: from the version's snapshot when it holds the table (no
+        warehouse round trip), from the catalog otherwise."""
+        live = self.source.catalog.resolver()
+        if self.metadata is None:
+            return live
+        snaps = {s.table.lower(): {c["name"].lower(): c.get("type") for c in s.columns} for s in self.metadata.list(version_id)}
+
+        def resolve(lt, column: str) -> str | None:
+            if lt.table_name is not None and lt.table_name.lower() in snaps:
+                return snaps[lt.table_name.lower()].get(column.lower())
+            return live(lt, column)
+        return resolve
+
     def _plan(self, version_id: UUID, compiled, mapping_hash: str, *, full: bool) -> "BuildPlan":
         """Which source tables must be read: all of them, or only those whose signature moved since the
         last successful load of this version with this mapping."""
@@ -151,7 +167,8 @@ class BuildPipeline:
             if sel.source_table:
                 deps[sel.source_table].update(sel.tables)
         every = sorted({t for ts in deps.values() for t in ts})
-        signatures = {t: self.source.table_signature(t) for t in every}
+        with ThreadPoolExecutor(max_workers=min(8, max(1, len(every)))) as pool:   # one statement per table: side by side, not in a row
+            signatures = dict(zip(every, pool.map(self.source.table_signature, every)))
         state = self.registry.build_state(version_id)
         if full:
             mode, reason = "full", "requested" if not self.publish else "published view"

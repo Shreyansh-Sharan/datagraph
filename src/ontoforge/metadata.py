@@ -7,7 +7,7 @@ build breaks.
 """
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Iterable
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -144,11 +144,14 @@ class MetadataService:
 
     # -- drift ---------------------------------------------------------------
 
-    def drift(self, version_id: UUID) -> list[DriftIssue]:
+    def drift(self, version_id: UUID, tables: "Iterable[str] | None" = None) -> list[DriftIssue]:
+        """Columns the mapping reads that the source no longer has, or has with another type. With
+        ``tables``, only those source tables are compared (the others did not change)."""
         version = self.registry.get_version(version_id)
         if not version.mapping:
             return []
         spec = MappingSpec.from_dict(version.mapping)
+        only = None if tables is None else {t.lower() for t in tables}
         catalog = self.catalog_for(version_id)
         snapshots = {s.table.lower(): s for s in self.list(version_id)}
         issues: list[DriftIssue] = []
@@ -164,6 +167,8 @@ class MetadataService:
             return live_cache[key]
 
         for table, ref, columns in _mapping_columns(spec):
+            if only is not None and table.lower() not in only:
+                continue
             cols = live(table)
             if cols is None:
                 issues.append(DriftIssue("missing-table", table, None, f"Table {table} is not in the catalog", ref))
