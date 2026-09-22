@@ -20,7 +20,7 @@ export function Home() {
   const [q, setQ] = useState("");
   useEffect(() => { try { localStorage.setItem(VIEW_KEY, view); } catch { /* per-viewer convenience only */ } }, [view]);
   const dbx = config.sourceKind === "databricks";
-  const open = (d: DomainSummary, screen = "") => navigate(`/d/${encodeURIComponent(d.name)}${screen === "settings" ? "/overview?tab=domain" : screen ? `/${screen}` : ""}`);
+  const open = (d: DomainSummary, screen = "") => navigate(`/d/${encodeURIComponent(d.name)}${screen === "settings" ? "/overview?tab=connections" : screen ? `/${screen}` : ""}`);
   const rows = useMemo(() => {
     const t = q.trim().toLowerCase();
     return (data ?? []).filter(d => !t || d.name.toLowerCase().includes(t) || (d.description ?? "").toLowerCase().includes(t) || d.catalog.toLowerCase().includes(t)).map(d => summarise(d, dbx));

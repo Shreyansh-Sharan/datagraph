@@ -147,16 +147,29 @@ function SectionBar() {
   const d = useDomainOptional();
   const go = useGo();
   const screen = useScreen();
-  const [sp] = useSearchParams();
+  const [sp, setSp] = useSearchParams();
   const section = SECTIONS.find(s => s.id === sectionOf(screen))!;
   if (section.id === "ask") return null;
+  if (screen === "table") {   // one table of the snapshot: back to Metadata, its name, and its three views as a capsule
+    const views: [string, string][] = [["profile", "Profile"], ["dq", "Data quality"], ["glossary", "Glossary"]];
+    const cur = sp.get("tab") === "dq" || sp.get("tab") === "glossary" ? sp.get("tab") : "profile";
+    return (
+      <div className="secbar">
+        <a href="#" className="sec-back" onClick={e => { e.preventDefault(); go("metadata", { schema: sp.get("schema") ?? "", table: sp.get("table") ?? "" }); }}><Icon name="back" size={14} />Metadata</a>
+        <span className="sec-title mono">{sp.get("table") || "Table"}</span>
+        <nav className="seg-tabs" role="tablist" aria-label="Views">
+          {views.map(([id, label]) => <a href="#" key={id} role="tab" aria-selected={cur === id} onClick={e => { e.preventDefault(); setSp(prev => { const n = new URLSearchParams(prev); n.set("tab", id); return n; }); }}>{label}</a>)}
+        </nav>
+      </div>
+    );
+  }
   const version = d?.version;
   const counts: Record<string, string | number | false> = {
     ontology: version?.stats.classes || false, mapping: version?.mappingPct != null ? `${version.mappingPct}%` : false,
     rules: version?.stats.rules || false, quality: version?.stats.constraints || false,
   };
   const active = (t: { screen: Screen; tab?: string }) => {
-    const here = screen === "table" ? "metadata" : screen === "settings" ? "overview" : screen;
+    const here = screen === "settings" ? "overview" : screen;
     return here === t.screen && (sp.get("tab") ?? "") === (t.tab ?? "");
   };
   return (

@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { Button, Card, Glyph, Pill, Skeleton } from "@/components/ui";
+import { Button, Glyph, Pill, Skeleton, Spinner } from "@/components/ui";
+import { Markdown } from "@/components/Markdown";
 import { Icon } from "@/components/icons";
 import { Stage, colorFor, type StageEdge, type StageGroup, type StageNode } from "@/components/Stage";
 import type { EntityDetail } from "@/api";
 import { useApp, useLoad } from "@/state/app";
 import { useDomain, useParam } from "@/state/domain";
 
-const BLUE = "#2249FF", DARK = "#1636E0";
+const DARK = "#1636E0";
 
 export interface ExploreGraph { nodes: Record<string, { id: string; label: string; type: string }>; edges: { from: string; to: string; label: string }[] }
 const EMPTY: ExploreGraph = { nodes: {}, edges: [] };
@@ -66,48 +67,82 @@ export function Explore() {
 
 
   const e = ent.data;
+  // The explanation: the assistant reads the entity through the MCP tools and says what it is, what it links to, and what stands out.
+  const [explain, setExplain] = useState<{ id: string; text: string; busy: boolean; error: string | null } | null>(null);
+  const explainEntity = async () => {
+    if (!e || explain?.busy) return;
+    setExplain({ id: e.id, text: "", busy: true, error: null });
+    try {
+      const r = await api.chat(`Explain ${e.label} (${e.type}): what it is, what it connects to, and what stands out about it. Keep it short.`,
+        { domain: domain.name, entity: e.iri, cls: e.type, screen: "explore" }, null, ev => { if (ev.type === "text") setExplain({ id: e.id, text: ev.text, busy: true, error: null }); });
+      setExplain({ id: e.id, text: r.answer, busy: false, error: null });
+    } catch (err) { setExplain({ id: e.id, text: "", busy: false, error: err instanceof Error ? err.message : String(err) }); }
+  };
   const types = useMemo(() => [...new Set(Object.values(graph.nodes).map(n => n.type || "entity"))].sort(), [graph]);
   const groups: StageGroup[] = types.map(t => ({ id: t, label: t, color: colorFor(t) }));
-  const nodes: StageNode[] = Object.values(graph.nodes).map(n => ({ id: n.id, label: n.label.length > 30 ? n.label.slice(0, 28) + "…" : n.label, glyph: (n.type || n.label || "?")[0].toUpperCase(), x: 0, y: 0, fill: colorFor(n.type || "entity"), border: n.id === entityId ? BLUE : undefined, selected: n.id === entityId, group: n.type || "entity", title: expanded.has(n.id) ? "expanded" : "double-click to expand" }));
+  const nodes: StageNode[] = Object.values(graph.nodes).map(n => ({ id: n.id, label: n.label.length > 30 ? n.label.slice(0, 28) + "…" : n.label, glyph: (n.type || n.label || "?")[0].toUpperCase(), x: 0, y: 0, fill: colorFor(n.type || "entity"), group: n.type || "entity", selected: n.id === entityId }));
   const edges: StageEdge[] = graph.edges.map(x => ({ from: x.from, to: x.to, label: x.label }));
+  const shownExplain = explain && explain.id === e?.id ? explain : null;
 
   return (
-    <>
-      <div className="row" style={{ gap: 12, marginBottom: 16 }}>
-        <h1 style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-.02em", lineHeight: 1.15, flex: "none" }}>Explore</h1>
-        <div className="row" style={{ flex: 1, maxWidth: 760, marginLeft: 16 }}>
+    <div className={`xp ${entityId ? "with-panel" : ""}`}>
+      <Stage nodes={nodes} edges={edges} height="100%" groups={groups} onSelect={id => setEntity(id)} onExpand={id => expand(id)}
+        tools={<><Button size="sm" style={{ height: 28 }} onClick={() => { setGraph(overview.data ? mergeSample(EMPTY, overview.data) : EMPTY); setExpanded(new Set()); }}>Overview</Button><Button size="sm" style={{ height: 28 }} disabled={!e} onClick={() => { setGraph(EMPTY); setExpanded(new Set()); if (e) { setGraph(mergeNeighbourhood(EMPTY, e)); setExpanded(new Set([e.id])); } }}>Just this</Button></>}
+        status={busy ? `Expanding ${graph.nodes[busy]?.label ?? busy}…` : overview.loading ? "Sampling the graph…" : `${expanded.size} expanded · click to select, double-click to expand`} />
+      <div className="xp-bar">
+        <div className="row">
+          <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-.02em", lineHeight: 1.15, flex: "none", marginRight: 6 }}>Explore</h1>
           <div className="search-wrap"><Icon name="search" stroke="#7A7A80" /><input id="explore-q" aria-label="Find an entity" className="input" placeholder="Find an entity by label or IRI" value={q} onChange={ev => setQ(ev.target.value)} /></div>
           <select aria-label="Entity type" className="select" value={typeIri} onChange={ev => setTypeIri(ev.target.value)}><option value="">Any type</option>{(status.data?.types ?? []).map(t => <option key={t.iri} value={t.iri}>{t.name} · {t.count.toLocaleString()}</option>)}</select>
           <select aria-label="Match" className="select" value={match} onChange={ev => setMatch(ev.target.value)}><option value="contains">contains</option><option value="exact">exact</option><option value="starts_with">starts with</option></select>
         </div>
-        <span className="mono muted small" style={{ marginLeft: "auto" }}>{status.data ? `${status.data.triples} triples · ${status.data.entities} entities` : ""}</span>
+        {(results.data?.length || results.data?.length === 0) ? (
+          <div className="xp-hits">
+            {(results.data ?? []).map(r => <Button key={r.id} size="sm" pill active={r.id === entityId} style={{ height: 26, padding: "0 10px 0 4px", gap: 6 }} onClick={() => { setEntity(r.id); }}><Glyph size={18} fontSize={9}>{r.type[0]}</Glyph>{r.label}<span className="muted-2" style={{ fontWeight: 500 }}>{r.type}</span></Button>)}
+            {results.data?.length === 0 && <span className="muted small">No entity matches “{q}”.</span>}
+          </div>
+        ) : null}
       </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12, minHeight: 26 }}>
-        {(results.data ?? []).map(r => <Button key={r.id} size="sm" pill active={r.id === entityId} style={{ height: 26, padding: "0 10px 0 4px", gap: 6 }} onClick={() => { setEntity(r.id); }}><Glyph size={18} fontSize={9}>{r.type[0]}</Glyph>{r.label}<span className="muted-2" style={{ fontWeight: 500 }}>{r.type}</span></Button>)}
-        {results.data?.length === 0 && <span className="muted small">No entity matches “{q}”.</span>}
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 360px", gap: 20, alignItems: "start" }}>
-        <Stage nodes={nodes} edges={edges} height={640} groups={groups} onSelect={id => setEntity(id)} onExpand={id => expand(id)}
-          tools={<><Button size="sm" style={{ height: 28 }} onClick={() => { setGraph(overview.data ? mergeSample(EMPTY, overview.data) : EMPTY); setExpanded(new Set()); }}>Overview</Button><Button size="sm" style={{ height: 28 }} onClick={() => { setGraph(EMPTY); setExpanded(new Set()); if (e) { setGraph(mergeNeighbourhood(EMPTY, e)); setExpanded(new Set([e.id])); } }}>Just this</Button></>}
-          status={busy ? `Expanding ${graph.nodes[busy]?.label ?? busy}…` : overview.loading ? "Sampling the graph…" : `${expanded.size} expanded · click to select, double-click to expand`} />
-        <Card style={{ maxHeight: 560, overflow: "auto" }}>
-          {ent.loading && !e && <><Skeleton h={30} w={200} /><Skeleton h={14} style={{ marginTop: 10 }} /><Skeleton h={14} /></>}
-          {e && (
-            <>
-              <div className="row" style={{ gap: 10 }}><Glyph size={30} fontSize={12}>{e.type[0]}</Glyph><div><div style={{ fontSize: 15, fontWeight: 800, lineHeight: 1.2 }}>{e.label}</div><div className="muted" style={{ fontSize: 11.5, fontWeight: 600 }}>{e.type}</div></div></div>
-              <div className="mono" style={{ margin: "10px 0 14px", fontSize: 11, color: "var(--muted-2)", wordBreak: "break-all", display: "flex", gap: 6, alignItems: "flex-start" }}><span style={{ flex: 1 }}>{e.iri}</span><button type="button" title="Copy IRI" aria-label="Copy IRI" style={{ border: 0, background: "transparent", color: "var(--muted-2)", cursor: "pointer", padding: 0 }} onClick={() => { navigator.clipboard?.writeText(e.iri).catch(() => {}); say("IRI copied"); }}><Icon name="copy" size={14} /></button></div>
-              <div className="row" style={{ gap: 6, marginBottom: 16 }}><Button size="sm" variant="primary" style={{ flex: 1, height: 30 }} disabled={!!busy} onClick={expandAround}>Expand one more hop</Button><Button size="sm" style={{ height: 30 }} disabled={!!busy || expanded.has(e.id)} onClick={() => expand(e.id)}>{expanded.has(e.id) ? "Expanded" : "Expand"}</Button></div>
-              <h3 className="label-caps" style={{ marginBottom: 4 }}>Attributes</h3>
-              {e.attrs.map(a => <div key={a.k} style={{ display: "grid", gridTemplateColumns: "1fr 1.3fr", gap: 10, padding: "7px 0", borderTop: "1px solid var(--line-2)", fontSize: 12.5 }}><span className="muted">{a.k}</span><span className="row" style={{ gap: 6, minWidth: 0 }}><span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.v}</span><span className="mono muted-3" style={{ fontSize: 10, flex: "none" }}>{a.dt}</span>{a.inferred && <Pill tone="warn" style={{ height: 16, padding: "0 6px", fontSize: 9.5, fontWeight: 700 }}>inferred</Pill>}</span></div>)}
-              <h3 className="label-caps" style={{ margin: "16px 0 4px" }}>Outgoing</h3>
-              {e.out.map(o => <div key={o.pred} style={{ padding: "7px 0", borderTop: "1px solid var(--line-2)", fontSize: 12.5 }}><div style={{ fontWeight: 600, color: DARK, fontSize: 11.5 }}>{o.pred}</div>{o.targets.map(t => <a key={t.id} href="#" style={{ display: "block", padding: "2px 0", color: "var(--ink)" }} onClick={ev => { ev.preventDefault(); setEntity(t.id); }}>{t.label} <span className="muted-2" style={{ fontSize: 11.5 }}>{t.type}</span></a>)}</div>)}
-              {e.out.length === 0 && <p className="muted-2 small" style={{ padding: "7px 0" }}>No outgoing relationships.</p>}
-              <h3 className="label-caps" style={{ margin: "16px 0 4px" }}>Incoming</h3>
-              {e.inc.map(o => <div key={o.pred} style={{ padding: "7px 0", borderTop: "1px solid var(--line-2)", fontSize: 12.5 }}><div className="row between" style={{ fontSize: 11.5 }}><span style={{ fontWeight: 600, color: DARK }}>{o.pred}</span><span className="muted-2">{o.count}</span></div>{o.targets.map(t => <a key={t.id} href="#" style={{ display: "block", padding: "2px 0", color: "var(--ink)" }} onClick={ev => { ev.preventDefault(); setEntity(t.id); }}>{t.label} <span className="muted-2" style={{ fontSize: 11.5 }}>{t.type}</span></a>)}<a href="#" className="small" style={{ display: "inline-block", marginTop: 4, fontWeight: 600 }} onClick={ev => { ev.preventDefault(); say("Loading 20 more…"); }}>Show 20 more</a></div>)}
-            </>
-          )}
-        </Card>
-      </div>
-    </>
+      {status.data && <span className="xp-stats mono">{status.data.triples} triples · {status.data.entities} entities</span>}
+      {entityId && (
+        <aside className="xp-panel" aria-label="Selected entity">
+          <div className="xp-panel-head">
+            {e ? <><Glyph size={30} fontSize={12}>{e.type[0]}</Glyph><div style={{ minWidth: 0 }}><div style={{ fontSize: 15, fontWeight: 800, lineHeight: 1.2 }}>{e.label}</div><div className="muted" style={{ fontSize: 11.5, fontWeight: 600 }}>{e.type}</div></div></>
+              : <div style={{ flex: 1 }}><Skeleton h={30} w={200} /></div>}
+            <button type="button" className="xp-close" aria-label="Close the panel" title="Deselect" onClick={() => setEntity("")}>×</button>
+          </div>
+          <div className="xp-panel-body">
+            {ent.loading && !e && <><Skeleton h={14} /><Skeleton h={14} /><Skeleton h={14} /></>}
+            {ent.error && !e && <div className="notice error">{ent.error}</div>}
+            {e && (
+              <>
+                <div className="mono" style={{ margin: "0 0 12px", fontSize: 11, color: "var(--muted-2)", wordBreak: "break-all", display: "flex", gap: 6, alignItems: "flex-start" }}><span style={{ flex: 1 }}>{e.iri}</span><button type="button" title="Copy IRI" aria-label="Copy IRI" style={{ border: 0, background: "transparent", color: "var(--muted-2)", cursor: "pointer", padding: 0 }} onClick={() => { navigator.clipboard?.writeText(e.iri).catch(() => {}); say("IRI copied"); }}><Icon name="copy" size={14} /></button></div>
+                <div className="row" style={{ gap: 6, marginBottom: 14 }}>
+                  <Button size="sm" variant="primary" style={{ flex: 1, height: 30 }} disabled={!!busy} onClick={expandAround}>Expand one more hop</Button>
+                  <Button size="sm" style={{ height: 30 }} disabled={!!busy || expanded.has(e.id)} onClick={() => expand(e.id)}>{expanded.has(e.id) ? "Expanded" : "Expand"}</Button>
+                  <Button size="sm" style={{ height: 30 }} disabled={!!shownExplain?.busy} onClick={explainEntity}><Icon name="ask" size={13} />Explain</Button>
+                </div>
+                {shownExplain && (
+                  <div className="xp-explain" aria-live="polite">
+                    <h3 className="label-caps" style={{ marginBottom: 6 }}>Explanation</h3>
+                    {shownExplain.busy && !shownExplain.text && <div className="muted small row" style={{ gap: 8 }}><Spinner blue />Reading the graph…</div>}
+                    {shownExplain.error && <div className="notice error">{shownExplain.error}</div>}
+                    {shownExplain.text && <Markdown text={shownExplain.text} />}
+                  </div>
+                )}
+                <h3 className="label-caps" style={{ margin: "14px 0 4px" }}>Attributes</h3>
+                {e.attrs.map(a => <div key={a.k} style={{ display: "grid", gridTemplateColumns: "1fr 1.3fr", gap: 10, padding: "7px 0", borderTop: "1px solid var(--line-2)", fontSize: 12.5 }}><span className="muted">{a.k}</span><span className="row" style={{ gap: 6, minWidth: 0 }}><span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.v}</span><span className="mono muted-3" style={{ fontSize: 10, flex: "none" }}>{a.dt}</span>{a.inferred && <Pill tone="warn" style={{ height: 16, padding: "0 6px", fontSize: 9.5, fontWeight: 700 }}>inferred</Pill>}</span></div>)}
+                <h3 className="label-caps" style={{ margin: "16px 0 4px" }}>Outgoing</h3>
+                {e.out.map(o => <div key={o.pred} style={{ padding: "7px 0", borderTop: "1px solid var(--line-2)", fontSize: 12.5 }}><div style={{ fontWeight: 600, color: DARK, fontSize: 11.5 }}>{o.pred}</div>{o.targets.map(t => <a key={t.id} href="#" style={{ display: "block", padding: "2px 0", color: "var(--ink)" }} onClick={ev => { ev.preventDefault(); setEntity(t.id); }}>{t.label} <span className="muted-2" style={{ fontSize: 11.5 }}>{t.type}</span></a>)}</div>)}
+                {e.out.length === 0 && <p className="muted-2 small" style={{ padding: "7px 0" }}>No outgoing relationships.</p>}
+                <h3 className="label-caps" style={{ margin: "16px 0 4px" }}>Incoming</h3>
+                {e.inc.map(o => <div key={o.pred} style={{ padding: "7px 0", borderTop: "1px solid var(--line-2)", fontSize: 12.5 }}><div className="row between" style={{ fontSize: 11.5 }}><span style={{ fontWeight: 600, color: DARK }}>{o.pred}</span><span className="muted-2">{o.count}</span></div>{o.targets.map(t => <a key={t.id} href="#" style={{ display: "block", padding: "2px 0", color: "var(--ink)" }} onClick={ev => { ev.preventDefault(); setEntity(t.id); }}>{t.label} <span className="muted-2" style={{ fontSize: 11.5 }}>{t.type}</span></a>)}<a href="#" className="small" style={{ display: "inline-block", marginTop: 4, fontWeight: 600 }} onClick={ev => { ev.preventDefault(); say("Loading 20 more…"); }}>Show 20 more</a></div>)}
+                {e.inc.length === 0 && <p className="muted-2 small" style={{ padding: "7px 0" }}>No incoming relationships.</p>}
+              </>
+            )}
+          </div>
+        </aside>
+      )}
+    </div>
   );
 }

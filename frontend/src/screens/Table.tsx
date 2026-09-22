@@ -46,7 +46,7 @@ export function Table() {
   const go = useGo();
   const [schema] = useParam("schema", "");
   const [table] = useParam("table", "");
-  const [tab, setTab] = useParam("tab", "profile");
+  const [tab] = useParam("tab", "profile");
   const setParams = useSetParams();
   const snapshot = useLoad(() => version ? api.snapshot(domain.name, version.version) : Promise.resolve([] as SnapshotTable[]), [domain.name, version?.version]);
   const full = schema ? `${schema}.${table}` : table;
@@ -68,11 +68,6 @@ export function Table() {
             {tcls.data && <a href="#" className="pill blue lg" onClick={e => { e.preventDefault(); go("ontology", { cls: tcls.data!, view: "map" }); }}>{tcls.data}</a>}
           </div>
           <p className="muted">{schemaOf(full) ? `${schemaOf(full)} schema · ` : ""}{snap ? `${snap.columns} columns · in snapshot` : snapshot.loading ? "reading the snapshot…" : "not in the snapshot"}</p>
-        </div>
-        <div className="tbl-tabs" role="tablist" aria-label="Views">
-          <button type="button" role="tab" className="tbl-tab" aria-selected={cur === "profile"} onClick={() => setTab("profile")}>Profile<span className="n">{snap ? `${snap.columns} cols` : "—"}</span></button>
-          <button type="button" role="tab" className="tbl-tab" aria-selected={cur === "dq"} onClick={() => setTab("dq")}>Data quality<span className="n warn">{dq.data?.score != null ? pct(dq.data.score) : "—"}</span></button>
-          <button type="button" role="tab" className="tbl-tab" aria-selected={cur === "glossary"} onClick={() => setTab("glossary")}>Glossary<span className="n">{glossary.data?.length ?? "—"}</span></button>
         </div>
         <label className="tbl-pick"><span className="muted small">Table</span>
           <select className="select" aria-label="Table" value={snap?.table ?? ""} onChange={e => pickTable(e.target.value)}>

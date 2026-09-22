@@ -41,7 +41,7 @@ export function App({ api, connectionsUrl = CONNECTIONS_URL }: { api: DatagraphA
               <Route path="overview" element={<Overview />} />
               <Route path="versions" element={<Versions />} />
               <Route path="ask" element={<Ask inDomain />} />
-              <Route path="settings" element={<Overview />} />
+              <Route path="settings" element={<Overview defaultTab="connections" />} />
               <Route path="metadata" element={<NeedsVersion><Metadata /></NeedsVersion>} />
               <Route path="table" element={<NeedsVersion><Table /></NeedsVersion>} />
               <Route path="ontology" element={<NeedsVersion><Ontology /></NeedsVersion>} />

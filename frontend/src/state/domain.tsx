@@ -12,8 +12,8 @@ export interface SectionTab { id: string; label: string; screen: Screen; tab?: s
 export const SECTIONS: { id: Section; label: string; icon: string; home: Screen; tabs: SectionTab[] }[] = [
   { id: "ask", label: "Ask", icon: "ask", home: "ask", tabs: [] },
   { id: "overview", label: "Overview", icon: "overview", home: "overview", tabs: [
-    { id: "summary", label: "Summary", screen: "overview" }, { id: "source", label: "Source", screen: "overview", tab: "source" },
-    { id: "connections", label: "Connections", screen: "overview", tab: "connections" }, { id: "domain", label: "Domain", screen: "overview", tab: "domain" },
+    { id: "summary", label: "Summary", screen: "overview" }, { id: "connections", label: "Connections", screen: "overview", tab: "connections" },
+    { id: "domain", label: "Domain", screen: "overview", tab: "domain" },
     { id: "mcp", label: "MCP policy", screen: "overview", tab: "mcp" }] },
   { id: "design", label: "Design", icon: "design", home: "metadata", tabs: [
     { id: "metadata", label: "Metadata", screen: "metadata" }, { id: "ontology", label: "Ontology", screen: "ontology" }, { id: "mapping", label: "Mapping", screen: "mapping" },

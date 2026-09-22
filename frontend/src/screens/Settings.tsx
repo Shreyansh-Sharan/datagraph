@@ -3,18 +3,19 @@ import { ConnectionForm, TestReportView, ValidationError, useConnectionTypes, us
 import { Button, Card, Dialog, Dot, ErrorNotice, KV, Label, Pill, Skeleton, Spinner, Toggle } from "@/components/ui";
 import { Icon } from "@/components/icons";
 import { useApp, useLoad } from "@/state/app";
-import { useDomain } from "@/state/domain";
+import { useDomain, useGo } from "@/state/domain";
 import { CONNECTIONS_URL } from "@/config";
 import type { ConnResult, DomainSource } from "@/api";
 
 const KIND_LABEL: Record<string, string> = { postgres: "Postgres", databricks: "Databricks", sqlserver: "SQL Server", mssql: "SQL Server", azure_openai: "Azure OpenAI", azureopenai: "Azure OpenAI" };
 const isAiKind = (kind: string, types?: ConnectorSummary[]) => (types?.find(t => t.type === kind)?.category ?? (kind.includes("openai") ? "ai" : "source")) === "ai";
 
-export type SettingsCard = "all" | "source" | "connections" | "domain" | "mcp";
+export type SettingsCard = "all" | "connections" | "domain" | "mcp";
 
 /** The domain's settings cards. Standalone it is the old Settings page; embedded (Overview) it renders one card or all of them, with extra cards on the right. */
 export function Settings({ embedded = false, only = "all", right }: { embedded?: boolean; only?: SettingsCard; right?: ReactNode } = {}) {
-  const show = (c: SettingsCard) => only === "all" || only === c;
+  const show = (c: SettingsCard) => only === c;
+  const go = useGo();
   const { api, config, say, can } = useApp();
   const { domain, patch } = useDomain();
   const facts = useLoad(() => api.sourceFacts(domain.name), [domain.name]);
@@ -65,9 +66,35 @@ export function Settings({ embedded = false, only = "all", right }: { embedded?:
   return (
     <>
       {!embedded && <div className="page-head"><div><h1>Settings</h1><p>Domain description, what MCP exposes, the source warehouse and AI provider this domain uses, and the connections behind them.</p></div></div>}
-      <div className={only === "all" ? "grid two" : "grid"}>
+      {only === "all" && (
+        <div className="grid two">
+          <div className="grid">
+            <Card>
+              <div className="row between" style={{ marginBottom: 6 }}><h2 className="h2">Source</h2><a href="#" className="small" style={{ fontWeight: 600 }} onClick={e => { e.preventDefault(); go("overview", { tab: "connections" }); }}>Configure →</a></div>
+              {facts.loading && <Skeleton h={80} />}
+              {facts.error && <ErrorNotice error={facts.error} />}
+              {sourceRows.map(([k, v]) => <KV key={k} k={k} v={v} />)}
+              {f?.missing_connection_id && <div className="notice error" style={{ marginTop: 10 }}>This domain's connection no longer exists; choose another one under Connections.</div>}
+            </Card>
+            <Card>
+              <div className="row between" style={{ marginBottom: 6 }}><h2 className="h2">Domain</h2><a href="#" className="small" style={{ fontWeight: 600 }} onClick={e => { e.preventDefault(); go("overview", { tab: "domain" }); }}>Edit →</a></div>
+              <KV k="Description" v={domain.description || "—"} mono={false} /><KV k="Review quorum" v={String(domain.quorum)} /><KV k="Base IRI" v={domain.base_iri} />
+              <KV k="Versions" v={`${domain.versions.length} · ${domain.versions.find(v => v.active) ? `v${domain.versions.find(v => v.active)!.version} active` : "none active"}`} />
+            </Card>
+          </div>
+          <div className="grid">
+            <Card>
+              <div className="row between" style={{ marginBottom: 6 }}><h2 className="h2">MCP policy</h2><a href="#" className="small" style={{ fontWeight: 600 }} onClick={e => { e.preventDefault(); go("overview", { tab: "mcp" }); }}>Edit →</a></div>
+              <KV k="Agents" v={domain.mcpExposed ? "exposed · active version answers over MCP and GraphQL" : "hidden from agents"} mono={false} />
+              <KV k="Disabled tools" v={domain.disabledTools.length ? domain.disabledTools.join(", ") : "none"} />
+            </Card>
+            {right}
+          </div>
+        </div>
+      )}
+      {only !== "all" && <div className="grid">
         <div className="grid">
-          {show("source") && <Card>
+          {show("connections") && <Card>
             <div className="row between" style={{ marginBottom: 10 }}><h2 className="h2">Source</h2><Button size="sm" variant="outline" style={{ height: 30 }} onClick={test}>{testing && <Spinner blue />}Test connection</Button></div>
             {facts.loading && <Skeleton h={120} />}
             {facts.error && <ErrorNotice error={facts.error} />}
@@ -115,9 +142,8 @@ export function Settings({ embedded = false, only = "all", right }: { embedded?:
             <div className="muted small" style={{ paddingTop: 8, borderTop: "1px solid var(--line-2)" }}>Disabled tools</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>{domain.disabledTools.map(t => <span key={t} className="pill mono" style={{ height: 24, padding: "0 10px", border: "1px solid var(--grey-2)", background: "#fff", fontSize: 12 }}>{t}</span>)}<Button dashed onClick={() => say("Pick a tool to disable")}>+ Disable a tool</Button></div>
           </Card>}
-          {right}
         </div>
-      </div>
+      </div>}
     </>
   );
 }

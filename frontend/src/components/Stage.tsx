@@ -162,7 +162,8 @@ function StageInner({ nodes: givenNodes, edges: givenEdges, height, dotted, onSe
     ? { nodes: allNodes.filter(n => neighbours.has(n.id)), edges: allEdges.filter(e => neighbours.has(e.from) && neighbours.has(e.to)) }
     : { nodes: allNodes, edges: allEdges }, [allNodes, allEdges, focusOn, neighbours]);
   const deg = useMemo(() => degrees(nodes, edges), [nodes, edges]);
-  const positions = useMemo(() => layoutNodes(nodes, edges, chosen.layout, chosen.direction, height), [nodes, edges, chosen.layout, chosen.direction, height]);
+  const layoutHeight = typeof height === "number" ? height : 640;
+  const positions = useMemo(() => layoutNodes(nodes, edges, chosen.layout, chosen.direction, layoutHeight), [nodes, edges, chosen.layout, chosen.direction, layoutHeight]);
   const nameCut = useMemo(() => { const rs = nodes.map(n => radiusFor(n, deg[n.id] ?? 0)).sort((a, b) => b - a); return nodes.length > 100 ? Math.max(26, rs[Math.floor(rs.length * 0.15)] ?? 0) : nodes.length > 40 ? (rs[Math.floor(rs.length * 0.4)] ?? 0) : 0; }, [nodes, deg]);   // busy maps: names only on the hubs
   const showAllLabels = edges.length <= 60;
   const wanted = useMemo<Node<BubbleData>[]>(() => nodes.map(n => { const r = radiusFor(n, deg[n.id] ?? 0); const p = positions[n.id] ?? { x: 0, y: 0 }; const inSpot = spotId === undefined || neighbours.has(n.id);
@@ -206,7 +207,7 @@ function StageInner({ nodes: givenNodes, edges: givenEdges, height, dotted, onSe
   );
 }
 
-export interface StageProps { nodes: StageNode[]; edges: StageEdge[]; height: number; dotted?: boolean; onSelect?: (id: string) => void; onExpand?: (id: string) => void; legend?: ReactNode; groups?: StageGroup[]; tools?: ReactNode; status?: ReactNode; children?: ReactNode; layout?: StageLayout; spotlight?: boolean }
+export interface StageProps { nodes: StageNode[]; edges: StageEdge[]; height: number | string; dotted?: boolean; onSelect?: (id: string) => void; onExpand?: (id: string) => void; legend?: ReactNode; groups?: StageGroup[]; tools?: ReactNode; status?: ReactNode; children?: ReactNode; layout?: StageLayout; spotlight?: boolean }
 
 export function Stage(props: StageProps) {
   return <ReactFlowProvider><StageInner {...props} /></ReactFlowProvider>;

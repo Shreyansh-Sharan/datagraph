@@ -66,7 +66,7 @@ src/
   state/      app.tsx (config, identity, toast, useLoad), domain.tsx (domain/version context, useGo/useParam navigation)
   layout/     Shell.tsx (top bar: Domains › domain · version picker + source chip; inside a domain an icon rail of five sections, Ask · Overview · Design · Graph · Versions, and the section's tab bar across the top)
   components/ ui.tsx (buttons, cards, pills, tabs, dialog, toast, skeletons), icons.tsx, Stage.tsx (node-link map on React Flow + dagre), lifecycle.tsx (version actions)
-  screens/    Home (domains as cards or a list, filtered), Overview (summary + the settings cards: Source, Connections, Domain, MCP policy), Versions, Metadata, Ontology, Mapping, Rules, Quality, Build, Explore, Triples, Analytics, Tasks, Admin
+  screens/    Home (domains as cards or a list, filtered), Overview (Summary reads; Connections, Domain and MCP policy tabs edit), Versions, Metadata, Ontology, Mapping, Rules, Quality, Build, Explore, Triples, Analytics, Tasks, Admin
   theme.css   design tokens and primitives
 ```
 
@@ -182,6 +182,8 @@ build that loads it. Each answer shows the tools it used. Answers are Markdown, 
 `components/Markdown.tsx` (marked + DOMPurify); a fenced ```chart block holding
 `{"type": "bar" | "line", "title", "unit", "series": [{"name", "points": [{"x", "y"}]}]}` is drawn
 by `components/Chart.tsx` as an SVG chart, so "chart sales by year" gets a chart under the text.
+On Explore the graph fills the screen; selecting a node opens a panel with its attributes and
+relationships and an Explain button that asks the same assistant about that entity.
 Threads live in `conversations` and `messages` per user.
 
 ### The version mechanism

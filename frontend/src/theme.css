@@ -583,3 +583,28 @@ table.fail .hit { background: #FFF1E8; color: var(--orange-text); }
 .crumb-wrap { position: relative; display: inline-flex; }
 .crumb-wrap .ver-menu { top: 32px; left: 4px; right: auto; min-width: 260px; }
 @media (max-width: 760px) { .rail { width: 60px; } .rail a span { display: none; } .secbar { padding: 0 16px; gap: 10px; overflow: auto; } }
+
+.sec-back { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; font-weight: 600; }
+.sec-back:hover { color: var(--blue); text-decoration: none; }
+.secbar .sec-title.mono { font-size: 14px; }
+
+/* Explore: the graph fills the screen; the toolbar floats over it; the panel appears with a selection */
+.xp { position: relative; height: calc(100vh - 104px); margin: -28px -32px -48px; }
+.xp .stage { border: 0; border-radius: 0; height: 100%; }
+.xp-bar { position: absolute; left: 16px; top: 14px; z-index: 6; display: flex; flex-direction: column; gap: 8px; width: min(640px, calc(100% - 560px)); }
+.xp-bar .select { max-width: 170px; }
+.xp .stage-legend { max-width: calc(100% - 360px); overflow-x: auto; flex-wrap: nowrap; white-space: nowrap; }
+.xp.with-panel .stage-tools, .xp.with-panel .stage-status, .xp.with-panel .react-flow__minimap { right: 412px !important; }
+.xp.with-panel .stage-tools { top: 62px; }
+.xp-bar .row { gap: 8px; }
+.xp-bar .search-wrap .input, .xp-bar .select { background: #fff; box-shadow: 0 1px 3px rgba(15, 23, 42, .08); }
+.xp-hits { display: flex; flex-wrap: wrap; gap: 6px; }
+.xp-stats { position: absolute; left: 16px; bottom: 52px; z-index: 6; font-size: 11px; color: var(--muted-2); background: #fff; padding: 4px 8px; border-radius: 5px; border: 1px solid var(--line); }
+.xp-panel { position: absolute; top: 14px; right: 16px; bottom: 16px; width: 380px; z-index: 7; display: flex; flex-direction: column; background: #fff; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 32px rgba(15, 23, 42, .12); }
+.xp-panel-head { display: flex; align-items: flex-start; gap: 10px; padding: 14px 14px 10px; border-bottom: 1px solid var(--line-2); }
+.xp-panel-body { flex: 1; min-height: 0; overflow: auto; padding: 12px 14px 16px; }
+.xp-close { margin-left: auto; width: 26px; height: 26px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 16px; cursor: pointer; }
+.xp-close:hover { background: var(--surface-3); color: var(--ink); }
+.xp-explain { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line-2); }
+.xp-explain .md { font-size: 12.5px; }
+@media (max-width: 900px) { .xp-panel { width: calc(100% - 32px); } .xp-bar { width: calc(100% - 32px); } }

@@ -10,13 +10,13 @@ import { useDomain, useGo } from "@/state/domain";
 import { Settings, type SettingsCard } from "./Settings";
 import { STATUS_COLOR } from "@/api";
 
-export function Overview() {
+export function Overview({ defaultTab = "all" }: { defaultTab?: SettingsCard } = {}) {
   const { api, can } = useApp();
   const { domain, versions, version } = useDomain();
   const go = useGo();
   const life = useLifecycle();
   const [sp] = useSearchParams();
-  const tab = (sp.get("tab") || "all") as SettingsCard;
+  const tab = (sp.get("tab") || defaultTab) as SettingsCard;
   const [rejecting, setRejecting] = useState<number | null>(null);
   const inReview = versions.find(v => v.status === "in_review") ?? null;
   const comments = useLoad(() => api.comments(domain.name), [domain.name]);

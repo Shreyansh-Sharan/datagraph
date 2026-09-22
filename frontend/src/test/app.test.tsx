@@ -27,9 +27,15 @@ describe("datagraph shell", () => {
     expect(within(rail).getAllByRole("link").map(a => a.textContent)).toEqual(["Ask", "Overview", "Design", "Graph", "Versions", "Domains"]);
     expect(within(rail).getByRole("link", { name: "Overview" })).toHaveAttribute("aria-current", "page");
     const tabs = screen.getByRole("tablist", { name: "Overview" });
-    expect(within(tabs).getAllByRole("tab").map(t => t.textContent)).toEqual(["Summary", "Source", "Connections", "Domain", "MCP policy"]);
+    expect(within(tabs).getAllByRole("tab").map(t => t.textContent)).toEqual(["Summary", "Connections", "Domain", "MCP policy"]);
     expect(screen.getByRole("button", { name: "Version" })).toHaveTextContent("v3 draft");            // the picker lives in the breadcrumb
-    expect(screen.getByLabelText("Source connection 1")).toBeInTheDocument();                         // the settings cards sit on the summary
+    expect(screen.queryByLabelText("Source connection 1")).toBeNull();                                // the summary reads; the forms live in their tabs
+    expect(screen.getByRole("link", { name: "Configure →" })).toBeInTheDocument();
+    await user.click(within(tabs).getByRole("tab", { name: "Connections" }));
+    expect(await screen.findByLabelText("Source connection 1")).toHaveValue("c-warehouse");
+    expect(screen.queryByRole("heading", { level: 2, name: /Readiness/ })).toBeNull();
+    await user.click(within(tabs).getByRole("tab", { name: "Summary" }));
+    expect(await screen.findByRole("heading", { level: 2, name: /Readiness · v3/ })).toBeInTheDocument();
     expect(screen.getByTitle("Source warehouse")).toHaveTextContent("warehouse · rgm");               // inside a domain: its primary source, not the deployment default
     await user.click(within(rail).getByRole("link", { name: "Design" }));
     const design = await screen.findByRole("tablist", { name: "Design" });
@@ -292,6 +298,18 @@ describe("Table screen", () => {
     expect(within(cards).getByText(/Primary-key candidate/)).toBeInTheDocument();
     expect(within(cards).getAllByText(/Encode: one-hot/).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Re-run profile" })).toBeInTheDocument();
+  });
+  it("switches its views from the capsule in the section bar and goes back to Metadata", async () => {
+    renderAt(at("dq"), new MockApi({ latency: 10 }));
+    const user = userEvent.setup();
+    const views = await screen.findByRole("tablist", { name: "Views" });
+    expect(within(views).getAllByRole("tab").map(t => t.textContent)).toEqual(["Profile", "Data quality", "Glossary"]);
+    expect(within(views).getByRole("tab", { name: "Data quality" })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByLabelText("Table score")).toBeInTheDocument();
+    await user.click(within(views).getByRole("tab", { name: "Profile" }));
+    expect(await screen.findByRole("button", { name: /Run profile|Re-run profile/ })).toBeInTheDocument();
+    await user.click(screen.getByRole("link", { name: "Metadata" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Metadata" })).toBeInTheDocument();
   });
   it("shows the rules with their scores, filters them, adds one and runs them", async () => {
     renderAt(at("dq"), new MockApi({ latency: 10 }));
