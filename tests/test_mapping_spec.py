@@ -106,3 +106,13 @@ def test_r2rml_from_spec_round_trips_through_turtle():
     s = spec()
     r2rml = s.to_r2rml()
     assert parse_r2rml(serialize_r2rml(r2rml)).triples_maps.keys() == r2rml.triples_maps.keys()
+
+
+def test_relation_on_the_source_table_keeps_the_class_key_as_subject_even_when_source_key_names_the_fk():
+    # The AI and older UIs saved own-table relations with the FK column as both keys. The row is a
+    # source instance, so its subject is the class key; the FK only identifies the target.
+    s = MappingSpec(base_iri=BASE, classes=spec().classes, relations=(
+        RelationMapping(EX + "worksIn", EX + "Employee", EX + "Department", source_key=("deptno",), target_key=("deptno",)),))
+    tm = s.to_r2rml().triples_maps[BASE + "mapping/rel/worksIn/0"]
+    assert tm.subject.template == BASE + "Employee/{empno}"
+    assert (BASE + "Employee/1", EX + "worksIn", BASE + "Department/10", "iri", None, None) in run(s)

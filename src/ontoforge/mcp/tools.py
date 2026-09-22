@@ -545,6 +545,11 @@ class GraphTools:
             xs = [x] if isinstance(x, str) else list(x)
             return [("^" + res(st[1:])) if st.startswith("^") else res(st) for st in xs]
         m = res(measure) if measure else None
+        gpath = steps(group_by) or []
+        for st in gpath[:-1]:   # every step but the last must be a relationship: a literal has nothing behind it
+            if o is not None and st.lstrip("^") in o.datatype_properties:
+                return {"error": f"group_by is a path of steps, not a list of dimensions: {o.local_name(st.lstrip('^'))!r} is an attribute, so nothing follows it. "
+                                 "Group by one dimension per call (group_by='<date attribute>' with group_kind='year', or group_by='<relationship>'); to combine two, filter on one and group by the other."}
         fl = [{"path": steps(f.get("path") or ([f["predicate"]] if f.get("predicate") else [])), "value": f.get("value")} for f in (filters or []) if f.get("value") is not None]
         rows = self.store.aggregate(v.id, iri, measure=m, group_by=steps(group_by), group_kind=group_kind, filters=fl, limit=limit)
         return {"class": iri, "measure": m, "group_by": steps(group_by), "group_kind": group_kind, "rows": rows,

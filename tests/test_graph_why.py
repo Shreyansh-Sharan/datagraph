@@ -32,3 +32,12 @@ def test_class_schema_and_paths_between_classes(db):
     assert tools.ontology_paths("hr", "Department", "Nope")["error"].startswith("Unknown class")
     agg = tools.graph_aggregate("hr", "Employee", measure="salary", group_by="works in")
     assert {r["label"]: r["sum"] for r in agg["rows"]}["SALES"] == 800 and agg["measure"] == EX + "salary"
+
+
+def test_group_by_is_a_path_and_says_so_when_given_two_dimensions(db):
+    reg, store, v = built_domain(db)
+    tools = GraphTools(reg, store)
+    out = tools.graph_aggregate("hr", "Employee", group_by=["hired", "works in"], group_kind="year")
+    assert "one dimension" in out["error"] and "hired" in out["error"]
+    ok = tools.graph_aggregate("hr", "Employee", group_by=["works in", "name"])          # a real path: department, then its name
+    assert {r["group"] for r in ok["rows"]} == {"SALES", "RESEARCH", None}

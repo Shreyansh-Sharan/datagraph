@@ -51,7 +51,7 @@ class RelationMapping:
     property_iri: str
     source_class: str
     target_class: str
-    source_key: tuple[str, ...] | None = None  # columns in the relation's logical table identifying the source row
+    source_key: tuple[str, ...] | None = None  # columns in the relation's logical table identifying the source row (ignored on the source's own table: its key)
     target_key: tuple[str, ...] | None = None  # ... and the target row
     table: str | None = None                   # defaults to the source class's logical table
     sql_query: str | None = None
@@ -92,7 +92,9 @@ class MappingSpec:
                 raise MappingSpecError(f"{r.property_iri}: target class {r.target_class} has no mapping")
             own_table = r.table is None and r.sql_query is None
             table, query = (src.table, src.sql_query) if own_table else (r.table, r.sql_query)
-            source_key = r.source_key or (self._key_columns(src) if own_table else None)
+            # On the source class's own table every row is a source instance, so the subject is the class
+            # key whatever source_key says (the AI and older UIs put the FK column there); the FK identifies the target.
+            source_key = self._key_columns(src) if own_table else r.source_key
             target_key = r.target_key or (self._key_columns(tgt) if (not own_table and r.table == tgt.table) else None)
             if source_key is None or target_key is None:
                 raise MappingSpecError(f"{r.property_iri}: source_key and target_key are required on a link table")
