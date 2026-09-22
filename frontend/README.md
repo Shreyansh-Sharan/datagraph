@@ -167,6 +167,18 @@ showing the selected class and its neighbours (the ◎ tool shows everything); e
 for the selected class's edges when there are more than 40. Explore keeps its own star layout
 (`layout="given"`) around the chosen entity.
 
+### The assistant
+
+`Cmd+K` (or `Ctrl+K`) opens a translucent palette over any screen: type a screen name to jump
+there, or a question. The Ask screen holds the same assistant as a conversation with threads.
+Questions go to `POST /assistant/chat` with the screen's context (domain, version, screen,
+table); the answer streams back as server-sent events (`tool_call`, `tool_result`, `text`,
+`done`). On the server the model only sees the MCP tool catalogue and calls the tools through the
+same server that `/mcp` exposes, as the signed-in caller, so it can read the graph, the profile,
+data quality, the glossary and builds, and act: profile a table, run or add rules, start a build,
+preview a SELECT. Each answer shows the tools it used. Threads live in `conversations` and
+`messages` per user.
+
 ### The version mechanism
 
 `GET /domains/{name}/versions/summary` is the one call behind the Versions and Overview screens: per

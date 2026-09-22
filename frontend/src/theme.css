@@ -487,9 +487,9 @@ table.fail .hit { background: #FFF1E8; color: var(--orange-text); }
 .chat-sugg { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
 .msg { display: grid; gap: 8px; max-width: 78ch; }
 .msg.user { justify-self: end; }
-.msg.user .bubble { background: var(--blue); color: #fff; border-radius: 14px 14px 4px 14px; }
-.msg.assistant .bubble { background: var(--surface-2); border: 1px solid var(--line-2); border-radius: 14px 14px 14px 4px; }
-.bubble { padding: 10px 14px; font-size: 13.5px; line-height: 1.55; white-space: pre-wrap; }
+.msg.user .chat-bubble { background: var(--blue); color: #fff; border-radius: 14px 14px 4px 14px; }
+.msg.assistant .chat-bubble { background: var(--surface-2); color: var(--ink); border: 1px solid var(--line-2); border-radius: 14px 14px 14px 4px; }
+.chat-bubble { padding: 10px 14px; font-size: 13.5px; line-height: 1.55; white-space: pre-wrap; }
 .msg .tools { font-size: 12px; color: var(--muted); }
 .msg .tools summary { cursor: pointer; }
 .msg .tool { margin-top: 8px; }

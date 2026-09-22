@@ -94,7 +94,7 @@ export function Ask({ inDomain, domain: domainProp }: { inDomain?: boolean; doma
                 </details>)}
               {t.live && <div className="muted small row" style={{ gap: 8 }}><Spinner blue />{t.live}</div>}
               {t.error && <div className="notice error">{t.error}</div>}
-              {t.text && <div className="bubble">{t.text}</div>}
+              {t.text && <div className="chat-bubble">{t.text}</div>}
             </div>))}
           <div ref={bottom} />
         </div>
