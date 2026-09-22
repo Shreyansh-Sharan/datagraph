@@ -56,6 +56,36 @@ class GraphTools:
             return None, None
         return d, (self.registry.latest_version(d.id, Status.DRAFT) or self.registry.served_version(d.id))
 
+    def _table(self, version, table: str) -> tuple[str | None, str | None]:
+        """The snapshot's spelling of a table named the way people type it: exact, any case, or by
+        its short name / a longer dotted form. (name, None) or (None, error naming what exists)."""
+        if self.metadata is None:
+            return table, None
+        names = [s.table for s in self.metadata.list(version.id)]
+        want = table.strip().lower()
+        exact = [n for n in names if n.lower() == want]
+        if exact:
+            return exact[0], None
+        short = want.split(".")[-1]
+        loose = [n for n in names if n.lower().endswith("." + short) or n.lower() == short or want.endswith("." + n.lower())]
+        if len(loose) == 1:
+            return loose[0], None
+        listed = ", ".join(sorted(names)) or "none: import tables on the Metadata screen first"
+        hint = f"; several match {short!r}: {', '.join(sorted(loose))}" if len(loose) > 1 else ""
+        return None, f"No table {table!r} in the snapshot of {version.version}{hint}. Tables in the snapshot: {listed}"
+
+    def list_tables(self, domain: str | None = None) -> list[dict]:
+        d, v = self._working(domain)
+        if v is None or self.metadata is None:
+            return [{"error": self._unknown(domain)}]
+        dq = getattr(self.services, "tabledq", None) if self.services is not None else None
+        profiles = getattr(self.services, "profiles", None) if self.services is not None else None
+        out = []
+        for snap in self.metadata.list(v.id):
+            out.append({"table": snap.table, "columns": len(snap.columns), "primary_key": list(snap.primary_key),
+                        "profiled": bool(profiles and profiles.get(v.id, snap.table)), "rules": len(dq.list_rules(v.id, snap.table)) if dq else 0})
+        return out
+
     @staticmethod
     def _actor() -> str:
         actor = ACTOR.get()
@@ -75,6 +105,9 @@ class GraphTools:
         d, v = self._working(domain)
         if v is None:
             return {"error": self._unknown(domain)}
+        table, err = self._table(v, table)
+        if err:
+            return {"error": err}
         prof = self._need("profiles").get(v.id, table)
         if prof is None:
             return {"error": f"{table} has no profile yet; call run_profile to compute one"}
@@ -87,6 +120,9 @@ class GraphTools:
         d, v = self._working(domain)
         if v is None:
             return {"error": self._unknown(domain)}
+        table, err = self._table(v, table)
+        if err:
+            return {"error": err}
         prof = self._need("profiles").run(v.id, table, actor=self._actor())
         return {"table": table, "row_count": prof.row_count, "columns": len(prof.columns), "row_key": prof.row_key, "missing_cells": prof.missing_cells}
 
@@ -94,6 +130,9 @@ class GraphTools:
         d, v = self._working(domain)
         if v is None:
             return {"error": self._unknown(domain)}
+        table, err = self._table(v, table)
+        if err:
+            return {"error": err}
         st = self._need("tabledq").status(v.id, table)
         return {"table": table, "score": st["score"], "summary": st["summary"], "last_run": st["last_run"],
                 "rules": [{"id": r["id"], "name": r["name"], "kind": r["kind"], "column": r["column_name"], "params": r["params"], "threshold": r["threshold"], "enabled": r["enabled"],
@@ -104,6 +143,9 @@ class GraphTools:
         d, v = self._working(domain)
         if v is None:
             return {"error": self._unknown(domain)}
+        table, err = self._table(v, table)
+        if err:
+            return {"error": err}
         run = self._need("tabledq").run(v.id, table, actor=self._actor())
         return {"run": _plain(run.to_dict()), "quality": self.table_quality(domain, table)}
 
@@ -112,6 +154,9 @@ class GraphTools:
         d, v = self._working(domain)
         if v is None:
             return {"error": self._unknown(domain)}
+        table, err = self._table(v, table)
+        if err:
+            return {"error": err}
         rule = self._need("tabledq").add_rule(v.id, table, actor=self._actor(), name=name, kind=kind, column=column, params=params or {}, threshold=threshold)
         return _plain(rule.to_dict())
 
@@ -119,6 +164,9 @@ class GraphTools:
         d, v = self._working(domain)
         if v is None:
             return {"error": self._unknown(domain)}
+        table, err = self._table(v, table)
+        if err:
+            return {"error": err}
         return _plain(self._need("tabledq").auto_suggest(v.id, table, actor=self._actor()))
 
     def failing_rows(self, rule_id: str, limit: int = 10) -> dict:

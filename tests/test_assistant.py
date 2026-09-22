@@ -80,3 +80,25 @@ def test_assistant_acts_under_the_callers_identity_and_survives_a_tool_error(db)
 def test_assistant_needs_a_provider(db):
     with TestClient(create_app(db=db, source_db=db, settings=ADMIN), headers={"X-Actor": "alice"}) as c:
         assert c.post("/assistant/chat", params={"stream": "false"}, json={"message": "hi", "context": {}}).status_code == 503
+
+
+def test_tools_resolve_table_names_the_way_people_type_them(db):
+    from ontoforge.build import PostgresSource
+    from ontoforge.metadata import MetadataService
+    from ontoforge.registry import Registry
+    from ontoforge.store import TripleStore
+    from types import SimpleNamespace
+    seed_tables(db)
+    reg = Registry(db)
+    v = reg.create_version(reg.create_domain("hr", base_iri=BASE).id, actor="alice")
+    src = PostgresSource(db)
+    meta = MetadataService(reg, src.catalog, db)
+    meta.import_tables(v.id, ["employees", "departments"], actor="alice")
+    from ontoforge.tabledq import TableQuality
+    tools = GraphTools(reg, TripleStore(db), meta, services=SimpleNamespace(tabledq=TableQuality(reg, meta, src, db), profiles=None))
+    listed = tools.list_tables("hr")
+    assert [t["table"] for t in listed] == ["departments", "employees"] and listed[1]["columns"] == 6 and listed[1]["rules"] == 0
+    assert tools.table_quality("hr", "EMPLOYEES")["table"] == "employees"                     # case does not matter
+    assert tools.table_quality("hr", "hr.employees")["table"] == "employees"                  # a longer spelling still finds it
+    missing = tools.table_quality("hr", "employeez")
+    assert "employeez" in missing["error"] and "departments, employees" in missing["error"]  # the real names are offered

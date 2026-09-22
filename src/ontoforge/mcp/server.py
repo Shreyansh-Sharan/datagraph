@@ -72,6 +72,10 @@ def create_mcp_server(tools: GraphTools, name: str = "ontoforge") -> MCPServer:
     def query_graphql(query: str, domain: str | None = None, variables: dict | None = None) -> str:
         return tools.query_graphql(domain, query, variables)
 
+    @server.tool(description="Tables in the domain's snapshot (the ones every table tool accepts), with column count, key, whether profiled, and how many rules each has. Call this before naming a table.")
+    def list_tables(domain: str | None = None) -> list[dict]:
+        return tools.list_tables(domain)
+
     @server.tool(description="Profile of a table in the domain's working version: rows, missing cells, row key, per-column nulls, distinct values, ranges, top values, hints. Call run_profile first if there is none.")
     def table_profile(table: str, domain: str | None = None) -> dict:
         return tools.table_profile(domain, table)

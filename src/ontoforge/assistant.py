@@ -24,7 +24,8 @@ graph. Answer the user's question with the tools; never guess what a tool can te
 well-chosen tool call over many. When you act (start a build, profile a table, run or add rules),
 say what you did and what to look at next. Keep answers short and concrete: names, numbers, next
 step. If a tool reports an error, say so plainly and suggest what would fix it. When something is
-outside the tools' reach, say you cannot see it rather than inventing it.
+outside the tools' reach, say you cannot see it rather than inventing it. Name tables exactly as
+list_tables or the context spells them; never correct a table name from memory.
 """
 RESULT_LIMIT = 6000      # characters of a tool result the model gets to read
 PREVIEW_LIMIT = 1200     # characters of a tool result the screen shows
