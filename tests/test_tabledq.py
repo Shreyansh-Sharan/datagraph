@@ -135,3 +135,26 @@ def test_failing_predicate_in_databricks_flavour():
     w = failing_predicate({"kind": "in_set", "column_name": "g", "params": {"values": ["M", "F"]}}, d, "`t`")
     assert w == "NOT (`g` IS NULL OR CAST(`g` AS STRING) IN ('M', 'F'))"
     assert failing_predicate({"kind": "unique", "column_name": "id", "params": {}}, d, "`t`").startswith("`id` IN (SELECT `id` FROM `t`")
+
+
+def test_rules_are_derived_from_the_profile_without_the_ai(db):
+    reg, meta, src, v = _setup(db)
+    dq = TableQuality(reg, meta, src, db)
+    try:
+        dq.auto_suggest(v.id, "employees", actor="alice")
+        assert False, "no profile yet"
+    except ValueError as e:
+        assert "profile" in str(e).lower()
+    ProfileService(reg, meta, src, db).run(v.id, "employees", actor="alice")
+    report = dq.auto_suggest(v.id, "employees", actor="alice")
+    rules = {(r["kind"], r["column_name"]): r for r in dq.status(v.id, "employees")["rules"]}
+    assert report["added"] == len(rules) and all(r["origin"] == "auto" for r in rules.values())
+    assert rules[("unique", "empno")]["threshold"] == 1.0 and rules[("not_null", "empno")]["threshold"] == 1.0   # the key
+    assert rules[("not_null", "ename")]["threshold"] == 0.99                                                    # never null so far
+    assert ("in_set", "ename") not in rules                                                                    # four names in four rows: not a code set
+    assert rules[("range", "sal")]["params"] == {"min": 425, "max": 1325}                                       # observed 500..1250, widened by a tenth
+    assert rules[("range", "deptno")]["params"] == {"min": 1.1, "max": 107.9}                                  # observed 10..99, a tenth either way
+    assert rules[("row_count", None)]["params"] == {"min": 3, "max": 5}                                         # four rows, a fifth either way
+    assert ("freshness", "hired") not in rules                                                                  # last hire years ago: no freshness promise
+    again = dq.auto_suggest(v.id, "employees", actor="alice")
+    assert again["added"] == 0 and len(again["skipped"]) == len(rules)                                         # nothing twice

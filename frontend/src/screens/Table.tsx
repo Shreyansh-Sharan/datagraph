@@ -91,7 +91,8 @@ export function Table() {
         suggest={async report => { const r = await api.suggestRules(domain.name, version!.version, full, report); dq.reload(); say(r.added ? `AI added ${r.added} rule${r.added === 1 ? "" : "s"}${r.skipped.length ? ` · ${r.skipped.length} skipped` : ""}` : "The AI proposed nothing new"); }}
         add={async rule => { await api.addRule(domain.name, version!.version, full, rule); dq.reload(); say(`Rule ${rule.name} added`); }}
         patch={async (id, p, note) => { await api.updateRule(id, p); dq.reload(); if (note) say(note); }} remove={async (r: DqRule) => { await api.deleteRule(r.id); dq.reload(); say(`Rule ${r.name} deleted`); }}
-        failures={id => api.ruleFailures(id, 20)} />}
+        failures={id => api.ruleFailures(id, 20)}
+        auto={async () => { const r = await api.autoSuggestRules(domain.name, version!.version, full); dq.reload(); say(r.added ? `${r.added} rule${r.added === 1 ? "" : "s"} read off the profile${r.skipped.length ? ` · ${r.skipped.length} already defined` : ""}` : "The profile suggests nothing new"); }} />}
       {snap && cur === "glossary" && <GlossaryView entries={glossary.data ?? []} loading={glossary.loading} table={full} snap={snap} cls={tcls.data ?? null}
         add={async t => { await api.addTerm(domain.name, { ...t, table: full }); glossary.reload(); say(`${t.kind === "metric" ? "Metric" : "Term"} ${t.name} added`); }}
         patch={async (id, p, note) => { await api.updateTerm(id, p); glossary.reload(); if (note) say(note); }} remove={async e => { await api.deleteTerm(e.id); glossary.reload(); say(`${e.name} deleted`); }}
@@ -223,15 +224,16 @@ function ColumnCard({ c }: { c: import("@/api").ColumnProfile }) {
 // -- Data quality -----------------------------------------------------------------------------------
 
 type Filter = "all" | "passing" | "warning" | "failing";
-function QualityView({ status, loading, error, snap, editable, reload, run, suggest, add, patch, remove, failures }: {
+function QualityView({ status, loading, error, snap, editable, reload, run, suggest, add, patch, remove, failures, auto }: {
   status: DqStatus | null; loading: boolean; error: string | null; snap: SnapshotTable; editable: boolean; reload: () => void;
   run: (report: (p: AiProgress) => void) => Promise<void>; suggest: (report: (p: AiProgress) => void) => Promise<void>;
   add: (rule: RuleInput) => Promise<void>; patch: (id: string, p: Partial<RuleInput>, note?: string) => Promise<void>; remove: (r: DqRule) => Promise<void>;
-  failures: (ruleId: string) => Promise<FailingRows>;
+  failures: (ruleId: string) => Promise<FailingRows>; auto: () => Promise<void>;
 }) {
   const { say } = useApp();
   const running = useTask(run, say);
   const asking = useTask(suggest, say);
+  const deriving = useTask(auto, say);
   const [filter, setFilter] = useState<Filter>("all");
   const [dialog, setDialog] = useState(false);
   const [editing, setEditing] = useState<DqRule | null>(null);
@@ -270,6 +272,7 @@ function QualityView({ status, loading, error, snap, editable, reload, run, sugg
           </div>
           <div className="row">
             {(running.progress || asking.progress) && <span className="muted small">{running.progress ?? asking.progress}</span>}
+            <Button variant="outline" pill disabled={!editable || deriving.busy} title="Rules the profile justifies: keys, never-null columns, code sets, numeric ranges, a row-count band" onClick={deriving.start}>{deriving.busy && <Spinner blue />}Auto-suggest from profile</Button>
             <Button variant="outline" pill disabled={!editable || asking.busy} onClick={asking.start}>{asking.busy ? <Spinner blue /> : <Icon name="ask" size={12} />}Suggest rules with AI</Button>
             <Button variant="outline" pill disabled={!editable} onClick={() => setDialog(true)}>+ New rule</Button>
             <Button variant="primary" pill disabled={!editable || running.busy || rules.every(r => !r.enabled)} onClick={running.start}>{running.busy && <Spinner />}Run all rules</Button>
@@ -283,7 +286,7 @@ function QualityView({ status, loading, error, snap, editable, reload, run, sugg
             <tbody>
               {shown.map(r => { const st = r.last?.status ?? (r.enabled ? "not run" : "disabled"); return (
                 <tr key={r.id} className={r.enabled ? "" : "off"}>
-                  <td><div className="rname">{r.name}{r.origin === "ai" && <span className="pill mini" title="Proposed by the AI">AI</span>}</div><div className="rdesc mono" title={r.last?.error ?? undefined}>{r.last?.error ? r.last.error : describeRule(r)}</div></td>
+                  <td><div className="rname">{r.name}{r.origin === "ai" && <span className="pill mini" title="Proposed by the AI">AI</span>}{r.origin === "auto" && <span className="pill mini" title="Read off the profile">auto</span>}</div><div className="rdesc mono" title={r.last?.error ?? undefined}>{r.last?.error ? r.last.error : describeRule(r)}</div></td>
                   <td className="mono small">{r.column_name ?? "—"}</td>
                   <td className="cap">{r.dimension}</td>
                   <td className="num" style={{ fontWeight: 700, color: r.last?.pass_rate == null ? "var(--muted-3)" : scoreColor(r.last.pass_rate) }}>{r.last?.pass_rate == null ? "—" : pct(r.last.pass_rate)}</td>

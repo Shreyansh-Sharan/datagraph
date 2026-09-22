@@ -1500,6 +1500,12 @@ def dq_delete_rule(rule_id: UUID, request: Request, me: Principal = Depends(buil
     return Response(status_code=204)
 
 
+@router.post("/versions/{version_id}/tables/{table}/dq/auto")
+def table_dq_auto(version_id: UUID, table: str, request: Request, me: Principal = Depends(builder)):
+    """Rules read off the table's profile, no AI involved: instant, deterministic."""
+    return _st(request).tabledq.auto_suggest(version_id, table, actor=me.name)
+
+
 @router.post("/versions/{version_id}/tables/{table}/dq/suggest")
 def table_dq_suggest(version_id: UUID, table: str, request: Request, response: Response, me: Principal = Depends(builder),
                      background: bool = Query(default=False)):

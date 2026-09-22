@@ -285,6 +285,21 @@ describe("Table screen", () => {
     await user.click(screen.getByRole("button", { name: "Run all rules" }));
     expect(await screen.findByText("Rules of dim_customer run")).toBeInTheDocument();
   });
+  it("reads rules off the profile without the AI, once the table is profiled", async () => {
+    const api = new MockApi({ latency: 10 });
+    renderAt(at("dq"), api);
+    const user = userEvent.setup();
+    const rules = await screen.findByRole("table", { name: "Rules" });
+    await user.click(screen.getByRole("button", { name: "Auto-suggest from profile" }));
+    expect(await screen.findByText(/Profile dim_customer first/)).toBeInTheDocument();
+    await api.runProfile("rgm", 3, "rgm.gold.dim_customer");
+    await user.click(screen.getByRole("button", { name: "Auto-suggest from profile" }));
+    expect(await screen.findByText(/rules read off the profile/)).toBeInTheDocument();
+    expect(await within(rules).findByText("parent_customer_id within range")).toBeInTheDocument();
+    expect(within(rules).getAllByText("auto").length).toBeGreaterThan(0);
+    await user.click(screen.getByRole("button", { name: "Auto-suggest from profile" }));
+    expect(await screen.findByText("The profile suggests nothing new")).toBeInTheDocument();
+  });
   it("edits a rule and shows the rows that break it", async () => {
     renderAt(at("dq"), new MockApi({ latency: 10 }));
     const user = userEvent.setup();

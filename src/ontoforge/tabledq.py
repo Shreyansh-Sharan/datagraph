@@ -330,6 +330,64 @@ class TableQuality:
                 "history": [{"id": str(r.id), "started_at": r.started_at.isoformat(), "score": _f(r.score), "status": r.status} for r in runs],
                 "rules": out_rules, "columns": columns, "summary": summary}
 
+    # -- from the profile, without the AI --------------------------------------------------------
+
+    def auto_suggest(self, version_id: UUID, table: str, *, actor: str) -> dict:
+        """Rules the profile itself justifies: keys unique and present, never-null columns present,
+        small code sets, numeric ranges widened by a tenth, GUID patterns, a row-count band."""
+        self.registry.assert_editable(version_id, actor)
+        snap = self.metadata.get(version_id, table)
+        with self.db.rows() as cur:
+            prof = cur.execute("SELECT row_count, columns FROM table_profiles WHERE domain_version_id = %s AND table_name = %s", (version_id, table)).fetchone()
+        if not prof:
+            raise DqError(f"Profile {table} first: the suggestions are read from its profile")
+        rows = int(prof["row_count"] or 0)
+        have = {(r.kind, (r.column_name or "").lower()) for r in self.list_rules(version_id, table)}
+        proposals: list[dict] = []
+
+        def propose(name: str, kind: str, column: str | None, params: dict | None = None, threshold: float = 0.99) -> None:
+            proposals.append({"name": name, "kind": kind, "column": column, "params": params or {}, "threshold": threshold})
+
+        for c in prof["columns"]:
+            name, kind, nulls, distinct = c["name"], c.get("kind"), int(c.get("nulls") or 0), c.get("distinct")
+            non_null = int(c.get("non_null") or 0)
+            if c.get("role") == "row key":
+                propose(f"{name} unique", "unique", name, threshold=1.0)
+                propose(f"{name} present", "not_null", name, threshold=1.0)
+                continue
+            if nulls == 0 and non_null > 0:
+                propose(f"{name} present", "not_null", name)
+            values = [v["value"] for v in (c.get("values") or [])]
+            if kind == "categorical" and values and distinct is not None and distinct <= 12 and non_null and distinct / non_null < 0.5:
+                propose(f"{name} in its known set", "in_set", name, {"values": values})
+            if kind == "numeric":
+                lo, hi = _num(c.get("min")), _num(c.get("max"))
+                if lo is not None and hi is not None and hi >= lo:
+                    pad = (hi - lo) * 0.1 or abs(hi) * 0.1 or 1.0
+                    low = max(0.0, lo - pad) if lo >= 0 else lo - pad
+                    propose(f"{name} within range", "range", name, {"min": _tidy(low), "max": _tidy(hi + pad)})
+            if kind == "categorical" and c.get("top") and _GUID.match(str(c["top"])) and (c.get("unique_pct") or 0) > 0.9:
+                propose(f"{name} is a GUID", "regex", name, {"pattern": _GUID.pattern})
+            if kind == "date" and c.get("max"):
+                last = _date(c["max"])
+                if last is not None and (datetime.now(timezone.utc) - last).days <= 30 and any(k in name.lower() for k in ("modif", "updat", "load", "ingest")):
+                    propose(f"{name} fresh within 2 days", "freshness", name, {"hours": 48})
+        if rows:
+            propose("Row count within range", "row_count", None, {"min": max(0, int(rows * 0.8)), "max": int(rows * 1.2) + 1}, threshold=1.0)
+
+        added, skipped = [], []
+        for p in proposals:
+            key = (p["kind"], (p["column"] or "").lower())
+            if key in have:
+                skipped.append(f"{p['name']} (already defined)"); continue
+            try:
+                rule = self.add_rule(version_id, table, actor=actor, name=p["name"], kind=p["kind"], column=p["column"], params=p["params"], threshold=p["threshold"], origin="auto")
+                have.add(key)
+                added.append(rule.to_dict())
+            except (DqError, ValueError) as exc:
+                skipped.append(f"{p['name']} ({exc})")
+        return {"added": len(added), "skipped": skipped, "rules": added}
+
     # -- AI --------------------------------------------------------------------------------------
 
     def suggest(self, version_id: UUID, table: str, llm, *, actor: str, on_progress: Callable[[str], None] | None = None) -> dict:
@@ -363,6 +421,28 @@ class TableQuality:
             except (DqError, ValueError) as exc:
                 skipped.append(f"{s.get('name')} ({exc})")
         return {"added": len(added), "skipped": skipped, "rules": added}
+
+
+_GUID = __import__("re").compile(r"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$")
+
+
+def _num(v) -> float | None:
+    try:
+        return None if v is None else float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _tidy(x: float) -> float | int:
+    return int(round(x)) if abs(x - round(x)) < 1e-9 else round(x, 4)
+
+
+def _date(v: str) -> datetime | None:
+    try:
+        d = datetime.fromisoformat(str(v))
+        return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
 
 
 def _rule(row: dict) -> Rule:

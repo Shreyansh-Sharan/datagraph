@@ -359,6 +359,24 @@ export class MockApi implements DatagraphApi {
     for (const w of fresh) st.rules.push({ id: `r-ai-${Date.now()}-${w.column}`, table_name: table, name: w.name, column_name: w.column, kind: w.kind, dimension: w.dimension, params: {}, threshold: 0.95, owner: null, origin: "ai", enabled: true, last: null, history: [] });
     return { added: fresh.length, skipped: want.length === fresh.length ? [] : [`${want.length - fresh.length} already defined`] };
   }
+  async autoSuggestRules(domain: string, version: number, table: string): Promise<{ added: number; skipped: string[] }> {
+    this.editableVersion(domain, version);
+    const prof = this.profiles[this.tkey(domain, version, table)];
+    if (!prof) throw new Error(`Profile ${table.split(".").pop()} first: the suggestions are read from its profile`);
+    const st = this.dq(domain, version, table); const skipped: string[] = []; let added = 0;
+    const propose = (name: string, kind: DqRule["kind"], column: string | null, params: Record<string, unknown>, threshold: number) => {
+      if (st.rules.some(r => r.kind === kind && (r.column_name ?? "") === (column ?? ""))) { skipped.push(`${name} (already defined)`); return; }
+      st.rules.push({ id: `r-auto-${Date.now()}-${st.rules.length}`, table_name: table, name, column_name: column, kind, dimension: { not_null: "completeness", unique: "uniqueness", in_set: "validity", range: "validity", regex: "validity", referential: "consistency", freshness: "timeliness", row_count: "volume", custom: "validity" }[kind], params, threshold, owner: null, origin: "auto", enabled: true, last: null, history: [] }); added++;
+    };
+    for (const c of prof.columns) {
+      if (c.role === "row key") { propose(`${c.name} unique`, "unique", c.name, {}, 1); propose(`${c.name} present`, "not_null", c.name, {}, 1); continue; }
+      if (c.nulls === 0) propose(`${c.name} present`, "not_null", c.name, {}, 0.99);
+      if (c.kind === "categorical" && c.values.length && (c.distinct ?? 99) <= 12) propose(`${c.name} in its known set`, "in_set", c.name, { values: c.values.map(v => v.value) }, 0.99);
+      if (c.kind === "numeric" && c.min != null && c.max != null) { const lo = Number(c.min), hi = Number(c.max), pad = (hi - lo) * 0.1 || 1; propose(`${c.name} within range`, "range", c.name, { min: Math.max(0, lo - pad), max: hi + pad }, 0.99); }
+    }
+    if (prof.row_count) propose("Row count within range", "row_count", null, { min: Math.floor(prof.row_count * 0.8), max: Math.ceil(prof.row_count * 1.2) }, 1);
+    return { added, skipped };
+  }
   async ruleFailures(ruleId: string, limit = 20): Promise<FailingRows> {
     const { r } = this.findRule(ruleId);
     if (r.kind === "freshness" || r.kind === "row_count") throw new Error(`A ${r.kind.replace("_", " ")} rule is about the whole table: it has no failing rows`);

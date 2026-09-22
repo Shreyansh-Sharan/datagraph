@@ -225,6 +225,10 @@ export class RestApi extends MockApi {
     const r = await this.aiJob<{ added: number; skipped?: string[] }>(`${this.tpath(domain, version, table)}/dq/suggest`, undefined, onProgress);
     return { added: r.added, skipped: r.skipped ?? [] };
   }
+  override async autoSuggestRules(domain: string, version: number, table: string): Promise<{ added: number; skipped: string[] }> {
+    const r = await this.req<{ added: number; skipped?: string[] }>("POST", `${this.tpath(domain, version, table)}/dq/auto`);
+    return { added: r.added, skipped: r.skipped ?? [] };
+  }
   override async ruleFailures(ruleId: string, limit = 20): Promise<FailingRows> { return this.req<FailingRows>("GET", `/dq/rules/${ruleId}/failures?limit=${limit}`); }
   override async suggestTerms(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<{ added: number; skipped: string[] }> {
     const r = await this.aiJob<{ added: number; skipped?: string[] }>(`${this.tpath(domain, version, table)}/glossary/suggest`, undefined, onProgress);

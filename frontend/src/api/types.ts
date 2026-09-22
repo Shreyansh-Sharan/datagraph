@@ -89,7 +89,7 @@ export interface TableProfile { table: string; profiled_at: string; actor: strin
 export type DqKind = "not_null" | "unique" | "in_set" | "range" | "regex" | "referential" | "freshness" | "row_count" | "custom";
 export type DqRuleStatus = "passing" | "warning" | "failing" | "error";
 export interface DqResult { pass_rate: number | null; passed: number | null; failed: number | null; total: number | null; status: DqRuleStatus; error: string | null; ran_at: string }
-export interface DqRule { id: string; table_name: string; name: string; column_name: string | null; kind: DqKind; dimension: string; params: Record<string, unknown>; threshold: number; owner: string | null; origin: "manual" | "ai"; enabled: boolean; last: DqResult | null; history: { pass_rate: number | null; ran_at: string }[] }
+export interface DqRule { id: string; table_name: string; name: string; column_name: string | null; kind: DqKind; dimension: string; params: Record<string, unknown>; threshold: number; owner: string | null; origin: "manual" | "ai" | "auto"; enabled: boolean; last: DqResult | null; history: { pass_rate: number | null; ran_at: string }[] }
 export type Cell = string | number | boolean | null;
 export interface FailingRows { columns: string[]; rows: Cell[][] }
 export interface DqRun { id: string; started_at: string; finished_at: string | null; score: number | null; status: string; error: string | null }
@@ -201,6 +201,7 @@ export interface DatagraphApi {
   updateRule(ruleId: string, patch: Partial<RuleInput>): Promise<DqRule>;
   deleteRule(ruleId: string): Promise<void>;
   suggestRules(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<{ added: number; skipped: string[] }>;
+  autoSuggestRules(domain: string, version: number, table: string): Promise<{ added: number; skipped: string[] }>;             // rules read off the profile, no AI
   ruleFailures(ruleId: string, limit?: number): Promise<FailingRows>;                                                   // a sample of the source rows that break a row-level rule
   suggestTerms(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<{ added: number; skipped: string[] }>;
   glossary(domain: string, opts?: { kind?: "term" | "metric"; table?: string; q?: string }): Promise<GlossaryEntry[]>;
