@@ -64,9 +64,9 @@ npm run preview        # serves dist at http://localhost:4174/ui/
 src/
   api/        types.ts (the port + shared model), mock.ts (design data, live builds), rest.ts (backend mapping, falls back to mock per method), index.ts (adapter selection)
   state/      app.tsx (config, identity, toast, useLoad), domain.tsx (domain/version context, useGo/useParam navigation)
-  layout/     Shell.tsx (top bar with pipeline crumbs + source chip, side nav with version picker)
+  layout/     Shell.tsx (top bar: Domains › domain · version picker + source chip; inside a domain an icon rail of five sections, Ask · Overview · Design · Graph · Versions, and the section's tab bar across the top)
   components/ ui.tsx (buttons, cards, pills, tabs, dialog, toast, skeletons), icons.tsx, Stage.tsx (node-link map on React Flow + dagre), lifecycle.tsx (version actions)
-  screens/    Home (domains as cards or a list, filtered), Overview, Versions, Metadata, Ontology, Mapping, Rules, Quality, Build, Explore, Triples, Analytics, Settings, Tasks, Admin
+  screens/    Home (domains as cards or a list, filtered), Overview (summary + the settings cards: Source, Connections, Domain, MCP policy), Versions, Metadata, Ontology, Mapping, Rules, Quality, Build, Explore, Triples, Analytics, Tasks, Admin
   theme.css   design tokens and primitives
 ```
 

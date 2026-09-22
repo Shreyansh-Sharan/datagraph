@@ -1,35 +1,43 @@
 import { useState } from "react";
-import { Link, Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
+import { Link, Outlet, useLocation, useParams, useSearchParams } from "react-router-dom";
 import { Icon } from "@/components/icons";
-import { Dot, Toast, Pill } from "@/components/ui";
+import { Dot, EmptyState, Pill, Skeleton, Toast } from "@/components/ui";
 import { Spotlight } from "@/components/Spotlight";
 import { useApp, useLoad } from "@/state/app";
-import { DomainProvider, useDomain, useGo, type Screen } from "@/state/domain";
+import { DomainProvider, SECTIONS, sectionOf, useDomainLoad, useDomainOptional, useGo, type Screen } from "@/state/domain";
 import { STATUS_COLOR, STATUS_LABEL, type Role } from "@/api";
 
 const ROLES: Role[] = ["viewer", "builder", "reviewer", "admin"];
 
+/** The frame of every screen. Inside a domain the domain loads here, above the top bar, so the
+ *  breadcrumb can carry the version picker while the body shows its skeleton. */
 export function AppShell() {
   const { toast } = useApp();
+  const { name } = useParams();
+  const inner = <><TopBar /><Outlet /></>;
   return (
     <div className="dg-app">
-      <TopBar />
-      <Outlet />
+      {name ? <DomainProvider>{inner}</DomainProvider> : inner}
       <Spotlight />
       <Toast message={toast} />
     </div>
   );
 }
 
-/** Domain-scoped frame: side nav + version picker around the domain screens. */
+/** Domain-scoped frame: the rail of sections on the left, the section's tab bar on top, the screen below. */
 export function DomainShell() {
+  const d = useDomainOptional();
+  const { error } = useDomainLoad();
+  if (error) return <div className="dg-body"><main className="dg-main"><EmptyState title="Domain not found" text={error} /></main></div>;
+  if (!d) return <div className="dg-body"><aside className="rail" aria-label="Sections" /><main className="dg-main"><Skeleton h={44} w={320} /><Skeleton h={20} style={{ marginTop: 16 }} /><Skeleton h={20} /><Skeleton h={20} /></main></div>;
   return (
-    <DomainProvider>
-      <div className="dg-body">
-        <SideNav />
+    <div className="dg-body">
+      <Rail />
+      <div className="dg-col">
+        <SectionBar />
         <main className="dg-main"><Outlet /></main>
       </div>
-    </DomainProvider>
+    </div>
   );
 }
 
@@ -47,7 +55,7 @@ function TopBar() {
     <header className="topbar">
       <Link className="brand" to="/"><span className="star">★</span><span>datagraph</span></Link>
       <nav className="crumbs" aria-label="Breadcrumb">
-        <Link to="/" className={atHome ? "strong" : ""}>Home</Link>
+        <Link to="/" className={atHome ? "strong" : ""}>Domains</Link>
         {name && <DomainCrumbs />}
       </nav>
       <div className="spacer" />
@@ -63,29 +71,46 @@ function TopBar() {
   );
 }
 
+/** "Domains › name · v1 draft ▾": the domain and, once loaded, the version picker. */
 function DomainCrumbs() {
-  // Rendered inside the domain route only; the provider lives below in DomainShell, so read the route + a light fetch.
   const { name = "" } = useParams();
-  const loc = useLocation();
   const go = useGo();
-  const sp = new URLSearchParams(loc.search);
-  const v = sp.get("v");
-  const screen = loc.pathname.split("/")[3] ?? "";
-  const pipeline: [string, Screen][] = [["Ontology", "ontology"], ["Mapping", "mapping"], ["Graph", "build"]];
-  const done: Record<string, boolean> = { ontology: true, mapping: false, build: true };
   return (
     <>
       <span className="sep">›</span>
-      <a href="#" className="strong" onClick={e => { e.preventDefault(); go("overview"); }}>{name}{v && <span className="muted" style={{ fontWeight: 500 }}> v{v}</span>}</a>
-      {pipeline.map(([label, sc]) => (
-        <span key={sc} style={{ display: "contents" }}>
-          <span className="sep">›</span>
-          <a href="#" className={`step ${done[sc] ? "done" : ""} ${screen === sc ? "strong" : ""}`} onClick={e => { e.preventDefault(); go(sc); }}>
-            <span className="tick">{done[sc] && <Icon name="check" size={10} stroke="#fff" width={2} />}</span>{label}
-          </a>
-        </span>
-      ))}
+      <a href="#" className="strong" onClick={e => { e.preventDefault(); go("overview"); }}>{name}</a>
+      <VersionPicker />
     </>
+  );
+}
+
+function VersionPicker() {
+  const d = useDomainOptional();
+  const go = useGo();
+  const [open, setOpen] = useState(false);
+  if (!d) return null;
+  const { versions, version, setVersion } = d;
+  const dot = version ? STATUS_COLOR[version.status] : "#B3B3B7";
+  return (
+    <span className="crumb-wrap">
+      <button type="button" className={`crumb-ver ${open ? "open" : ""}`} aria-haspopup="listbox" aria-expanded={open} aria-label="Version" onClick={() => setOpen(o => !o)}>
+        <Dot color={dot} size={7} />
+        <span>{version ? `v${version.version}` : "—"} <span className="muted">{version ? STATUS_LABEL[version.status] : "no version"}</span></span>
+        <Icon name="chevron" size={11} stroke="#7A7A80" />
+      </button>
+      {open && (
+        <div className="ver-menu" role="listbox">
+          {versions.map(v => (
+            <a href="#" key={v.version} role="option" aria-selected={v.version === version?.version} className={v.version === version?.version ? "current" : ""} onClick={e => { e.preventDefault(); setVersion(v.version); setOpen(false); }}>
+              <Dot color={STATUS_COLOR[v.status]} />
+              <span style={{ flex: 1, fontSize: 12.5, fontWeight: 600 }}>v{v.version} <span className="muted" style={{ fontWeight: 500 }}>{STATUS_LABEL[v.status]}</span></span>
+              {v.active && <Pill tone="mini" style={{ color: "var(--blue-dark)", background: "var(--blue-soft)" }}>ACTIVE</Pill>}
+            </a>
+          ))}
+          <a href="#" className="manage" onClick={e => { e.preventDefault(); setOpen(false); go("versions"); }}>Manage versions →</a>
+        </div>
+      )}
+    </span>
   );
 }
 
@@ -99,52 +124,53 @@ function SourceChip({ fallback }: { fallback: string }) {
   return <span className="source-chip" title="Source warehouse"><Icon name="db" />{label}</span>;
 }
 
-function SideNav() {
-  const { domain, versions, version, setVersion } = useDomain();
-  const loc = useLocation();
-  const navigate = useNavigate();
+const useScreen = () => (useLocation().pathname.split("/")[3] || "overview") as Screen;
+
+/** The five sections of a domain, as icons down the left; Domains takes you back. */
+function Rail() {
   const go = useGo();
-  const [open, setOpen] = useState(false);
-  const screen = (loc.pathname.split("/")[3] || "overview") as Screen;
-  const items: [string | null, Screen, string, string | number | false][] = [
-    ["Domain", "overview", "Overview", false], [null, "versions", "Versions", versions.length || false], [null, "ask", "Ask", false], [null, "settings", "Settings", false],
-    ["Design", "metadata", "Metadata", 17], [null, "ontology", "Ontology", 12], [null, "mapping", "Mapping", version?.mappingPct != null ? `${version.mappingPct}%` : false], [null, "rules", "Rules", version?.stats.rules || false], [null, "quality", "Data quality", version?.stats.constraints || false],
-    ["Knowledge graph", "build", "Build", false], [null, "explore", "Explore", false], [null, "triples", "Triples", false], [null, "analytics", "Analytics", false],
-  ];
-  const dot = version ? STATUS_COLOR[version.status] : "#B3B3B7";
-  const subline = version ? (version.lease ? `lease · ${version.lease.holder}` : version.active ? "active · served to MCP" : `by ${version.by} · ${version.created}`) : "create a draft";
+  const current = sectionOf(useScreen());
   return (
-    <aside className="sidenav">
-      <div style={{ position: "relative", margin: "0 2px 10px" }}>
-        <button type="button" className={`ver-btn ${open ? "open" : ""}`} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen(o => !o)}>
-          <Dot color={dot} size={8} />
-          <span style={{ flex: 1, minWidth: 0 }}>
-            <span style={{ display: "block" }}>{version ? `v${version.version}` : "—"} <span className="muted" style={{ fontWeight: 500 }}>· {version ? STATUS_LABEL[version.status] : "no version"}</span></span>
-            <span className="sub">{subline}</span>
-          </span>
-          <Icon name="chevron" size={12} stroke="#7A7A80" />
-        </button>
-        {open && (
-          <div className="ver-menu" role="listbox">
-            {versions.map(v => (
-              <a href="#" key={v.version} role="option" aria-selected={v.version === version?.version} className={v.version === version?.version ? "current" : ""} onClick={e => { e.preventDefault(); setVersion(v.version); setOpen(false); }}>
-                <Dot color={STATUS_COLOR[v.status]} />
-                <span style={{ flex: 1, fontSize: 12.5, fontWeight: 600 }}>v{v.version} <span className="muted" style={{ fontWeight: 500 }}>{STATUS_LABEL[v.status]}</span></span>
-                {v.active && <Pill tone="mini" style={{ color: "var(--blue-dark)", background: "var(--blue-soft)" }}>ACTIVE</Pill>}
-              </a>
-            ))}
-            <a href="#" className="manage" onClick={e => { e.preventDefault(); setOpen(false); go("versions"); }}>Manage versions →</a>
-          </div>
-        )}
-      </div>
-      {items.map(([group, id, label, count]) => (
-        <span key={id} style={{ display: "contents" }}>
-          {group && <div className="nav-group">{group}</div>}
-          <a href="#" className="nav-item" aria-current={screen === id ? "page" : undefined} onClick={e => { e.preventDefault(); if (id === "overview") navigate(`/d/${encodeURIComponent(domain.name)}${loc.search}`); else go(id); }}>
-            <Icon name={id} /><span style={{ flex: 1 }}>{label}</span>{count !== false && <span className="chip">{count}</span>}
-          </a>
-        </span>
+    <aside className="rail" aria-label="Sections">
+      {SECTIONS.map(s => (
+        <a href="#" key={s.id} aria-current={current === s.id ? "page" : undefined} onClick={e => { e.preventDefault(); go(s.home); }}>
+          <Icon name={s.icon} size={18} /><span>{s.label}</span>
+        </a>
       ))}
+      <Link to="/" className="rail-back"><Icon name="back" size={18} /><span>Domains</span></Link>
     </aside>
+  );
+}
+
+/** The section's name and its tabs across the top of the screen; Ask has its own layout and shows none. */
+function SectionBar() {
+  const d = useDomainOptional();
+  const go = useGo();
+  const screen = useScreen();
+  const [sp] = useSearchParams();
+  const section = SECTIONS.find(s => s.id === sectionOf(screen))!;
+  if (section.id === "ask") return null;
+  const version = d?.version;
+  const counts: Record<string, string | number | false> = {
+    ontology: version?.stats.classes || false, mapping: version?.mappingPct != null ? `${version.mappingPct}%` : false,
+    rules: version?.stats.rules || false, quality: version?.stats.constraints || false,
+  };
+  const active = (t: { screen: Screen; tab?: string }) => {
+    const here = screen === "table" ? "metadata" : screen === "settings" ? "overview" : screen;
+    return here === t.screen && (sp.get("tab") ?? "") === (t.tab ?? "");
+  };
+  return (
+    <div className="secbar">
+      <span className="sec-title">{section.label}</span>
+      {section.tabs.length > 0 && (
+        <nav className="seg-tabs" role="tablist" aria-label={section.label}>
+          {section.tabs.map(t => (
+            <a href="#" key={t.id} role="tab" aria-selected={active(t)} onClick={e => { e.preventDefault(); go(t.screen, t.tab ? { tab: t.tab } : {}); }}>
+              {t.label}{counts[t.id] !== undefined && counts[t.id] !== false && <span className="count">{counts[t.id]}</span>}
+            </a>
+          ))}
+        </nav>
+      )}
+    </div>
   );
 }

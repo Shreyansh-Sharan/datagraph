@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ConnectionForm, TestReportView, ValidationError, useConnectionTypes, useConnections, useConnectionsClient, useTestConnection, type Connection, type ConnectorSummary } from "@polestar/connections";
 import { Button, Card, Dialog, Dot, ErrorNotice, KV, Label, Pill, Skeleton, Spinner, Toggle } from "@/components/ui";
 import { Icon } from "@/components/icons";
@@ -10,7 +10,11 @@ import type { ConnResult, DomainSource } from "@/api";
 const KIND_LABEL: Record<string, string> = { postgres: "Postgres", databricks: "Databricks", sqlserver: "SQL Server", mssql: "SQL Server", azure_openai: "Azure OpenAI", azureopenai: "Azure OpenAI" };
 const isAiKind = (kind: string, types?: ConnectorSummary[]) => (types?.find(t => t.type === kind)?.category ?? (kind.includes("openai") ? "ai" : "source")) === "ai";
 
-export function Settings() {
+export type SettingsCard = "all" | "source" | "connections" | "domain" | "mcp";
+
+/** The domain's settings cards. Standalone it is the old Settings page; embedded (Overview) it renders one card or all of them, with extra cards on the right. */
+export function Settings({ embedded = false, only = "all", right }: { embedded?: boolean; only?: SettingsCard; right?: ReactNode } = {}) {
+  const show = (c: SettingsCard) => only === "all" || only === c;
   const { api, config, say, can } = useApp();
   const { domain, patch } = useDomain();
   const facts = useLoad(() => api.sourceFacts(domain.name), [domain.name]);
@@ -60,10 +64,10 @@ export function Settings() {
 
   return (
     <>
-      <div className="page-head"><div><h1>Settings</h1><p>Domain description, what MCP exposes, the source warehouse and AI provider this domain uses, and the connections behind them.</p></div></div>
-      <div className="grid two">
+      {!embedded && <div className="page-head"><div><h1>Settings</h1><p>Domain description, what MCP exposes, the source warehouse and AI provider this domain uses, and the connections behind them.</p></div></div>}
+      <div className={only === "all" ? "grid two" : "grid"}>
         <div className="grid">
-          <Card>
+          {show("source") && <Card>
             <div className="row between" style={{ marginBottom: 10 }}><h2 className="h2">Source</h2><Button size="sm" variant="outline" style={{ height: 30 }} onClick={test}>{testing && <Spinner blue />}Test connection</Button></div>
             {facts.loading && <Skeleton h={120} />}
             {facts.error && <ErrorNotice error={facts.error} />}
@@ -92,25 +96,26 @@ export function Settings() {
               {can("builder") && <div className="row" style={{ justifyContent: "flex-end" }}><Button variant="primary" size="sm" onClick={saveSource} disabled={aiMissing}>Save source settings</Button></div>}
             </div>
             <p className="muted-3" style={{ margin: "12px 0 0", fontSize: 11.5 }}>Credentials live in the connection module and never pass through datagraph.</p>
-          </Card>
-          {CONNECTIONS_URL
+          </Card>}
+          {show("connections") && (CONNECTIONS_URL
             ? <HubConnectionManager canEdit={can("admin")} onChanged={refreshAll} />
-            : <Card><div className="row between"><h2 className="h2">Connections</h2><Pill tone="outline">connection module</Pill></div><p className="muted" style={{ marginTop: 8 }}>The connection module is not configured for this front end. Set <span className="mono">VITE_CONNECTIONS_URL</span> to the mf-studio-connectors hub (the gateway route in production, <span className="mono">/hub</span> in development) to add, edit and test connections here.</p></Card>}
+            : <Card><div className="row between"><h2 className="h2">Connections</h2><Pill tone="outline">connection module</Pill></div><p className="muted" style={{ marginTop: 8 }}>The connection module is not configured for this front end. Set <span className="mono">VITE_CONNECTIONS_URL</span> to the mf-studio-connectors hub (the gateway route in production, <span className="mono">/hub</span> in development) to add, edit and test connections here.</p></Card>)}
         </div>
         <div className="grid">
-          <Card>
-            <h2 className="h2" style={{ marginBottom: 10 }}>MCP policy</h2>
-            <div className="row between" style={{ padding: "8px 0", borderTop: "1px solid var(--line-2)", fontSize: 12.5 }}><span><strong style={{ fontWeight: 600 }}>Expose this domain to agents</strong><div className="muted small">Active version answers over MCP and GraphQL</div></span><Toggle on={mcp} label="Expose this domain to agents" onChange={async v => { setMcp(v); await api.setMcp(domain.name, v); patch({ ...domain, mcpExposed: v }); say(v ? "Domain exposed to agents" : "Domain hidden from agents"); }} /></div>
-            <div className="muted small" style={{ paddingTop: 8, borderTop: "1px solid var(--line-2)" }}>Disabled tools</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>{domain.disabledTools.map(t => <span key={t} className="pill mono" style={{ height: 24, padding: "0 10px", border: "1px solid var(--grey-2)", background: "#fff", fontSize: 12 }}>{t}</span>)}<Button dashed onClick={() => say("Pick a tool to disable")}>+ Disable a tool</Button></div>
-          </Card>
-          <Card>
+          {show("domain") && <Card>
             <h2 className="h2" style={{ marginBottom: 10 }}>Domain</h2>
             <Label>Description</Label><input id="s-desc" className="input full" value={description} onChange={e => setDescription(e.target.value)} style={{ marginBottom: 12 }} />
             <Label>Review quorum</Label><input id="s-quorum" className="input" type="number" min={0} value={quorum} onChange={e => setQuorum(Number(e.target.value) || 0)} style={{ width: 100, marginBottom: 12 }} />
             <Label>Base IRI</Label><input id="s-iri" className="input mono full" value={baseIri} onChange={e => setBaseIri(e.target.value)} />
             {can("builder") && <div className="row" style={{ marginTop: 14, justifyContent: "flex-end" }}><Button variant="primary" size="sm" onClick={saveDomain}>Save changes</Button></div>}
-          </Card>
+          </Card>}
+          {show("mcp") && <Card>
+            <h2 className="h2" style={{ marginBottom: 10 }}>MCP policy</h2>
+            <div className="row between" style={{ padding: "8px 0", borderTop: "1px solid var(--line-2)", fontSize: 12.5 }}><span><strong style={{ fontWeight: 600 }}>Expose this domain to agents</strong><div className="muted small">Active version answers over MCP and GraphQL</div></span><Toggle on={mcp} label="Expose this domain to agents" onChange={async v => { setMcp(v); await api.setMcp(domain.name, v); patch({ ...domain, mcpExposed: v }); say(v ? "Domain exposed to agents" : "Domain hidden from agents"); }} /></div>
+            <div className="muted small" style={{ paddingTop: 8, borderTop: "1px solid var(--line-2)" }}>Disabled tools</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>{domain.disabledTools.map(t => <span key={t} className="pill mono" style={{ height: 24, padding: "0 10px", border: "1px solid var(--grey-2)", background: "#fff", fontSize: 12 }}>{t}</span>)}<Button dashed onClick={() => say("Pick a tool to disable")}>+ Disable a tool</Button></div>
+          </Card>}
+          {right}
         </div>
       </div>
     </>

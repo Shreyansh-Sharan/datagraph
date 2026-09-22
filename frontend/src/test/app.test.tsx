@@ -19,13 +19,22 @@ describe("datagraph shell", () => {
     expect(screen.getByTitle("Source warehouse")).toHaveTextContent("Postgres");
     expect(screen.getAllByText(/postgres · rgm_gold/)).not.toHaveLength(0);
   });
-  it("opens a domain with the side nav, version picker and readiness card", async () => {
+  it("opens a domain with the section rail, the version picker in the breadcrumb and the readiness card", async () => {
     renderAt("#/d/rgm");
+    const user = userEvent.setup();
     expect(await screen.findByRole("heading", { level: 2, name: /Readiness · v3/ })).toBeInTheDocument();
-    const nav = screen.getByRole("complementary");
-    expect(within(nav).getByText("Mapping")).toBeInTheDocument();
-    expect(within(nav).getByText("78%")).toBeInTheDocument();
-    expect(screen.getByTitle("Source warehouse")).toHaveTextContent("warehouse · rgm");   // inside a domain: its primary source, not the deployment default
+    const rail = screen.getByRole("complementary", { name: "Sections" });
+    expect(within(rail).getAllByRole("link").map(a => a.textContent)).toEqual(["Ask", "Overview", "Design", "Graph", "Versions", "Domains"]);
+    expect(within(rail).getByRole("link", { name: "Overview" })).toHaveAttribute("aria-current", "page");
+    const tabs = screen.getByRole("tablist", { name: "Overview" });
+    expect(within(tabs).getAllByRole("tab").map(t => t.textContent)).toEqual(["Summary", "Source", "Connections", "Domain", "MCP policy"]);
+    expect(screen.getByRole("button", { name: "Version" })).toHaveTextContent("v3 draft");            // the picker lives in the breadcrumb
+    expect(screen.getByLabelText("Source connection 1")).toBeInTheDocument();                         // the settings cards sit on the summary
+    expect(screen.getByTitle("Source warehouse")).toHaveTextContent("warehouse · rgm");               // inside a domain: its primary source, not the deployment default
+    await user.click(within(rail).getByRole("link", { name: "Design" }));
+    const design = await screen.findByRole("tablist", { name: "Design" });
+    expect(within(design).getByRole("tab", { name: /Mapping/ })).toHaveTextContent("78%");
+    expect(within(design).getByRole("tab", { name: /Metadata/ })).toHaveAttribute("aria-selected", "true");
   });
   it("hides the design tabs behind a create-draft empty state when a domain has no version", async () => {
     renderAt("#/d/finops/ontology");

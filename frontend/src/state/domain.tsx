@@ -2,10 +2,33 @@ import { createContext, useCallback, useContext, useMemo, type ReactNode } from 
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { DomainSummary, VersionInfo } from "@/api";
 import { useApp, useLoad } from "./app";
-import { EmptyState, Skeleton } from "@/components/ui";
 
 export type Screen = "overview" | "versions" | "ask" | "settings" | "metadata" | "table" | "ontology" | "mapping" | "rules" | "quality" | "build" | "explore" | "triples" | "analytics";
 export const DESIGN_SCREENS: Screen[] = ["metadata", "ontology", "mapping", "rules", "quality", "build", "explore", "triples", "analytics"];
+
+/** The five sections of a domain (the rail) and the tabs each one shows across the top. */
+export type Section = "ask" | "overview" | "design" | "graph" | "versions";
+export interface SectionTab { id: string; label: string; screen: Screen; tab?: string }
+export const SECTIONS: { id: Section; label: string; icon: string; home: Screen; tabs: SectionTab[] }[] = [
+  { id: "ask", label: "Ask", icon: "ask", home: "ask", tabs: [] },
+  { id: "overview", label: "Overview", icon: "overview", home: "overview", tabs: [
+    { id: "summary", label: "Summary", screen: "overview" }, { id: "source", label: "Source", screen: "overview", tab: "source" },
+    { id: "connections", label: "Connections", screen: "overview", tab: "connections" }, { id: "domain", label: "Domain", screen: "overview", tab: "domain" },
+    { id: "mcp", label: "MCP policy", screen: "overview", tab: "mcp" }] },
+  { id: "design", label: "Design", icon: "design", home: "metadata", tabs: [
+    { id: "metadata", label: "Metadata", screen: "metadata" }, { id: "ontology", label: "Ontology", screen: "ontology" }, { id: "mapping", label: "Mapping", screen: "mapping" },
+    { id: "rules", label: "Rules", screen: "rules" }, { id: "quality", label: "Data quality", screen: "quality" }] },
+  { id: "graph", label: "Graph", icon: "graph", home: "build", tabs: [
+    { id: "build", label: "Build", screen: "build" }, { id: "explore", label: "Explore", screen: "explore" }, { id: "triples", label: "Triples", screen: "triples" }, { id: "analytics", label: "Analytics", screen: "analytics" }] },
+  { id: "versions", label: "Versions", icon: "versions", home: "versions", tabs: [] },
+];
+export function sectionOf(screen: string): Section {
+  if (screen === "ask") return "ask";
+  if (screen === "versions") return "versions";
+  if (["metadata", "table", "ontology", "mapping", "rules", "quality"].includes(screen)) return "design";
+  if (["build", "explore", "triples", "analytics"].includes(screen)) return "graph";
+  return "overview";
+}
 
 interface DomainState {
   domain: DomainSummary;
@@ -18,6 +41,7 @@ interface DomainState {
 }
 
 const Ctx = createContext<DomainState | null>(null);
+const LoadCtx = createContext<{ loading: boolean; error: string | null }>({ loading: false, error: null });
 
 /** Navigation inside a domain: keeps the selected version, merges extra search params. */
 export function useGo() {
@@ -69,9 +93,17 @@ export function DomainProvider({ children }: { children: ReactNode }) {
     };
   }, [domain, sp, setSp, rank, reload, setLocal]);
 
-  if (error) return <EmptyState title="Domain not found" text={error} />;
-  if (loading || !value) return <div className="dg-body"><aside className="sidenav"><Skeleton h={44} /><Skeleton h={20} style={{ marginTop: 16 }} /><Skeleton h={20} /><Skeleton h={20} /></aside><main className="dg-main"><Skeleton h={28} w={220} /><Skeleton h={14} w={420} style={{ marginTop: 10 }} /></main></div>;
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+  // Children always render: the top bar shows the domain crumb while it loads, and DomainShell shows the skeleton or the error.
+  return <LoadCtx.Provider value={{ loading: !value && !error && loading, error }}><Ctx.Provider value={value}>{children}</Ctx.Provider></LoadCtx.Provider>;
+}
+
+/** The domain when it is loaded, else null (for frames rendered before or while it loads). */
+export function useDomainOptional(): DomainState | null {
+  return useContext(Ctx);
+}
+
+export function useDomainLoad(): { loading: boolean; error: string | null } {
+  return useContext(LoadCtx);
 }
 
 // Local mirror so lifecycle actions can update the shell without a round trip.
