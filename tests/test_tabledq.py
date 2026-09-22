@@ -158,3 +158,59 @@ def test_rules_are_derived_from_the_profile_without_the_ai(db):
     assert ("freshness", "hired") not in rules                                                                  # last hire years ago: no freshness promise
     again = dq.auto_suggest(v.id, "employees", actor="alice")
     assert again["added"] == 0 and len(again["skipped"]) == len(rules)                                         # nothing twice
+
+
+def test_dqx_style_kinds_compile_on_both_dialects_and_score(db):
+    """The catalogue mirrors DQX's check functions: every kind names its dimension, level and parameters, and compiles for Postgres and Databricks."""
+    from ontoforge.tabledq import KIND_CATALOG, KINDS, failing_predicate
+    assert {k["kind"] for k in KIND_CATALOG} == set(KINDS) and all(k["level"] in ("row", "table") and k["dqx"] for k in KIND_CATALOG)
+    reg, meta, src, v = _setup(db)
+    dq = TableQuality(reg, meta, src, db)
+    add = lambda **kw: dq.add_rule(v.id, "employees", actor="alice", **kw)
+    add(name="Name not empty", column="ename", kind="not_empty")                                                  # 100
+    add(name="Not the ghost department", column="deptno", kind="not_in_set", params={"values": [99]})            # GHOST -> 75
+    add(name="Salary not tiny", column="sal", kind="not_less_than", params={"limit": 600})                       # 500 fails, null passes -> 75
+    add(name="Salary capped", column="sal", kind="not_greater_than", params={"limit": 2000})                     # 100
+    add(name="Hired in the past", column="hired", kind="not_in_future")                                          # 100
+    add(name="Hired over a year ago", column="hired", kind="older_than_days", params={"days": 365})              # 100
+    add(name="Upper-case names", column="ename", kind="string_case", params={"case": "upper"})                   # 100
+    add(name="Name length", column="ename", kind="length_between", params={"min": 3, "max": 5})                  # 100
+    add(name="Manager is a number", column="manager", kind="regex", params={"pattern": "^\\d+$"})                # nulls pass -> 100
+    add(name="Payroll total", kind="aggregate", params={"aggr": "sum", "column": "sal", "op": ">=", "limit": 1000})   # 2550 -> 100
+    add(name="Headcount", kind="aggregate", params={"aggr": "count", "op": "<=", "limit": 3})                    # 4 -> 0
+    r_filter = add(name="Reports have a salary", column="sal", kind="not_null", params={"filter": "manager IS NOT NULL"})   # ALLEN fails -> 75
+    add(name="Name and department unique", kind="unique", params={"columns": ["ename", "deptno"]})               # 100
+    run = dq.run(v.id, "employees", actor="alice")
+    assert run.status == "succeeded", run.error
+    rates = {r["name"]: r["last"]["pass_rate"] for r in dq.status(v.id, "employees")["rules"]}
+    assert rates == {"Name not empty": 1.0, "Not the ghost department": 0.75, "Salary not tiny": 0.75, "Salary capped": 1.0, "Hired in the past": 1.0,
+                     "Hired over a year ago": 1.0, "Upper-case names": 1.0, "Name length": 1.0, "Manager is a number": 1.0, "Payroll total": 1.0, "Headcount": 0.0,
+                     "Reports have a salary": 0.75, "Name and department unique": 1.0}
+    cols, rows = dq.failures(r_filter.id)
+    assert [r[cols.index("ename")] for r in rows] == ["ALLEN"]                                                  # the filter narrows the failing rows too
+    # every row-level kind also compiles in the Databricks flavour, with its failing-rows predicate
+    dbx = DatabricksDialect()
+    for k in KIND_CATALOG:
+        params = {p["name"]: {"values": ["a"], "min": 1, "max": 2, "limit": 1, "value": 1, "pattern": "^a$", "case": "upper", "days": 1, "column2": "hired",
+                              "hours": 1, "aggr": "sum", "op": ">=", "column": "sal", "columns": ["ename", "deptno"], "ref_table": "departments", "ref_column": "deptno",
+                              "predicate": "sal > 0"}[p["name"]] for p in k["params"] if p["name"] != "filter"}
+        rule = {"kind": k["kind"], "column_name": "sal" if k["column"] else None, "params": params}
+        sql, _ = rule_sql(rule, dbx)
+        assert sql and "FILTER (WHERE" not in sql
+        if k["level"] == "row":
+            assert failing_predicate(rule, dbx, "t").startswith(("NOT (", "(", "`sal`"))
+
+
+def test_version_wide_quality_overview(db):
+    reg, meta, src, v = _setup(db)
+    dq = TableQuality(reg, meta, src, db)
+    dq.add_rule(v.id, "employees", actor="alice", name="Salary present", column="sal", kind="not_null")
+    dq.add_rule(v.id, "employees", actor="alice", name="Known department", column="deptno", kind="in_set", params={"values": [10, 20]})
+    dq.add_rule(v.id, "departments", actor="alice", name="Department named", column="dname", kind="not_null")
+    dq.run(v.id, "employees", actor="alice")
+    ov = dq.overview(v.id)
+    by = {t["table"]: t for t in ov["tables"]}
+    assert set(by) == {"employees", "departments"} and by["employees"]["rules"] == 2 and by["departments"]["rules"] == 1
+    assert by["employees"]["score"] == 0.75 and by["employees"]["summary"]["failing"] + by["employees"]["summary"]["warning"] >= 1 and by["departments"]["score"] is None
+    assert by["employees"]["dimensions"] == {"completeness": 1, "validity": 1} and by["employees"]["last_run_at"] and by["departments"]["last_run_at"] is None
+    assert len(ov["rules"]) == 3 and {r["kind"] for r in ov["rules"]} == {"not_null", "in_set"} and sum(1 for r in ov["rules"] if r["last"]) == 2

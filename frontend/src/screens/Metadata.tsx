@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Dot, ErrorNotice, Skeleton, Spinner, Tabs } from "@/components/ui";
 import { Icon } from "@/components/icons";
+import { forget, memo } from "@/api/cache";
 import { useApp, useLoad } from "@/state/app";
 import { useDomain, useGo, useParam, useSetParams } from "@/state/domain";
 import { tableName, type CatalogTable } from "@/api";
@@ -39,7 +40,7 @@ export function Metadata() {
   const searchRef = useRef<HTMLInputElement>(null);
 
   // -- the source: every schema, every table, loaded at once ------------------------------------
-  const schemas = useLoad(() => api.schemas(domain.name), [domain.name]);
+  const schemas = useLoad(() => memo(api, `meta:${domain.name}:schemas`, () => api.schemas(domain.name)), [domain.name]);   // remembered for the session: coming back from a table is instant
   const schemaIds = (schemas.data ?? []).map(s => s.id).join("|");
   const [bySchema, setBySchema] = useState<Record<string, SchemaState>>({});
   const [tick, setTick] = useState(0);
@@ -48,13 +49,13 @@ export function Metadata() {
     let alive = true;
     setBySchema(Object.fromEntries(ids.map(id => [id, { loading: true, error: null, data: null }])));
     for (const id of ids) {
-      api.catalogTables(domain.name, id, version?.version)
+      memo(api, `meta:${domain.name}:${version?.version ?? "-"}:${id}`, () => api.catalogTables(domain.name, id, version?.version))
         .then(data => { if (alive) setBySchema(b => ({ ...b, [id]: { loading: false, error: null, data } })); })
         .catch(e => { if (alive) setBySchema(b => ({ ...b, [id]: { loading: false, error: e instanceof Error ? e.message : String(e), data: null } })); });
     }
     return () => { alive = false; };
   }, [api, domain.name, schemaIds, version?.version, tick]);
-  const reload = () => setTick(t => t + 1);
+  const reload = () => { forget(api, `meta:${domain.name}:`); setTick(t => t + 1); };   // imports, removals and refreshes read the source again
   const anyLoading = schemas.loading || Object.values(bySchema).some(x => x.loading);
 
   const all: Row[] = useMemo(() => (schemas.data ?? []).flatMap(sc => (bySchema[sc.id]?.data ?? []).map(t => ({ sid: sc.id, label: sc.label, short: short(sc.label), t, key: `${sc.id}|${t.name}` }))), [schemas.data, bySchema]);

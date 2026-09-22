@@ -54,6 +54,9 @@ class DatabricksDialect(SqlDialect):
     def hours_ago(self, hours: int) -> str:
         return f"current_timestamp() - INTERVAL {int(hours)} HOURS"
 
+    def days_before(self, expr: str, days: int) -> str:
+        return f"({expr} - INTERVAL {int(days)} DAYS)"
+
     def to_double(self, expr: str) -> str:
         return f"CAST({expr} AS DOUBLE)"
 

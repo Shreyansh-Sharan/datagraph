@@ -2,7 +2,7 @@
 // Methods with a settled contract call the API; the rest fall through to the mock so the
 // app stays usable while integration proceeds. Replace fallbacks method by method.
 import { MockApi } from "./mock";
-import type { AssistantContext, ChatEvent, ChatMessage, ChatResult, Conversation, DqRule, DqRun, DqStatus, FailingRows, GlossaryEntry, RuleInput, TableProfile, TermInput, AiProgress, AuditEntry, BuildRun, GraphSample, SearchOptions, BuildStep, CatalogTable, ChecklistItem, DriftIssue, MappingKpis, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, RefreshChange, SnapshotTable, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus } from "./types";
+import type { AssistantContext, ChatEvent, ChatMessage, ChatResult, Conversation, DqRule, DqRun, DqStatus, FailingRows, GlossaryEntry, RuleInput, TableProfile, TermInput, AiProgress, AuditEntry, BuildRun, GraphSample, SearchOptions, BuildStep, CatalogTable, ChecklistItem, DriftIssue, MappingKpis, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, RefreshChange, SnapshotTable, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus, DqKindInfo, DqOverview } from "./types";
 import { tableName } from "./types";
 import { humanAction, relTime } from "./format";
 
@@ -213,6 +213,8 @@ export class RestApi extends MockApi {
     return this.aiJob<TableProfile>(`${this.tpath(domain, version, table)}/profile`, undefined, onProgress);
   }
   override async tableDq(domain: string, version: number, table: string): Promise<DqStatus> { return this.req<DqStatus>("GET", `${this.tpath(domain, version, table)}/dq`); }
+  override async dqKinds(): Promise<DqKindInfo[]> { return this.req<DqKindInfo[]>("GET", "/dq/kinds"); }
+  override async dqOverview(domain: string, version: number): Promise<DqOverview> { return this.req<DqOverview>("GET", `/versions/${this.vid(domain, version)}/dq`); }
   override async runDq(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<DqRun> {
     return this.aiJob<DqRun>(`${this.tpath(domain, version, table)}/dq/run`, undefined, onProgress);
   }

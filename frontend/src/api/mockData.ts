@@ -184,3 +184,28 @@ export const METRICS_SEED: { name: string; definition: string; formula: string; 
   { name: "Active customers", definition: "Customers with a sale in the period", formula: "count(distinct customer_id) where has_sale", unit: "customers", frequency: "Monthly", owner: "Sales ops", status: "certified", table: "rgm.gold.dim_customer", columns: ["customer_id"] },
   { name: "Promo uplift", definition: "Sales during a promotion over the baseline", formula: "sum(qty) / avg(baseline_qty) - 1", unit: "%", frequency: "Weekly", owner: "Trade marketing", status: "pending", table: "rgm.gold.fct_sales", columns: ["qty"] },
 ];
+
+/** The rule-kind catalogue, as the backend serves it (a representative subset; the API carries the full list). */
+export const DQ_KINDS: { kind: string; label: string; dimension: string; level: "row" | "table"; column: boolean; dqx: string; params: { name: string; type: string; required: boolean; help: string }[]; help: string }[] = (() => {
+  const f = { name: "filter", type: "sql", required: false, help: "Optional SQL condition: rows outside it are not checked." };
+  const p = (name: string, type: string, required = false, help = "") => ({ name, type, required, help });
+  return [
+    { kind: "not_null", label: "Not null", dimension: "completeness", level: "row", column: true, dqx: "is_not_null", params: [f], help: "Every row has a value." },
+    { kind: "not_empty", label: "Not null and not empty", dimension: "completeness", level: "row", column: true, dqx: "is_not_null_and_not_empty", params: [f], help: "Every row has a value that is not blank once trimmed." },
+    { kind: "unique", label: "Unique", dimension: "uniqueness", level: "table", column: false, dqx: "is_unique", params: [p("columns", "list", false, "The columns that together identify a row.")], help: "No two rows share the value (or the combination of values)." },
+    { kind: "in_set", label: "Value in allowed set", dimension: "validity", level: "row", column: true, dqx: "is_in_list", params: [p("values", "list", true, "The allowed values."), f], help: "Values (when present) are one of the allowed ones." },
+    { kind: "not_in_set", label: "Value not in forbidden set", dimension: "validity", level: "row", column: true, dqx: "is_not_in_list", params: [p("values", "list", true), f], help: "Values are never one of the forbidden ones." },
+    { kind: "range", label: "Value within range", dimension: "validity", level: "row", column: true, dqx: "is_in_range", params: [p("min", "number"), p("max", "number"), f], help: "Values lie between min and max." },
+    { kind: "not_less_than", label: "Not less than", dimension: "validity", level: "row", column: true, dqx: "is_not_less_than", params: [p("limit", "number", true), f], help: "Values are at least the limit." },
+    { kind: "regex", label: "Matches a pattern", dimension: "validity", level: "row", column: true, dqx: "regex_match", params: [p("pattern", "regex", true), f], help: "Values match the pattern." },
+    { kind: "valid_email", label: "Valid email address", dimension: "validity", level: "row", column: true, dqx: "is_valid_email", params: [f], help: "Values look like an email address." },
+    { kind: "string_case", label: "Letter case", dimension: "validity", level: "row", column: true, dqx: "has_valid_string_case", params: [p("case", "enum:upper,lower", true), f], help: "Text is all upper case or all lower case." },
+    { kind: "not_in_future", label: "Not in the future", dimension: "timeliness", level: "row", column: true, dqx: "is_not_in_future", params: [f], help: "Dates are not later than now." },
+    { kind: "older_than_days", label: "Older than N days", dimension: "timeliness", level: "row", column: true, dqx: "is_older_than_n_days", params: [p("days", "number", true), f], help: "Dates are at least N days in the past." },
+    { kind: "referential", label: "Referential integrity", dimension: "consistency", level: "row", column: true, dqx: "foreign_key", params: [p("ref_table", "table", true), p("ref_column", "column", true), f], help: "Values exist in the referenced table's column." },
+    { kind: "freshness", label: "Freshness", dimension: "timeliness", level: "table", column: true, dqx: "is_data_fresh", params: [p("hours", "number", false, "24 by default.")], help: "The newest value is at most N hours old." },
+    { kind: "row_count", label: "Row count within range", dimension: "volume", level: "table", column: false, dqx: "is_aggr_not_less_than", params: [p("min", "number"), p("max", "number")], help: "The table has between min and max rows." },
+    { kind: "aggregate", label: "Aggregate within limit", dimension: "volume", level: "table", column: false, dqx: "is_aggr_not_greater_than", params: [p("aggr", "enum:count,count_distinct,sum,avg,min,max", true), p("column", "column"), p("op", "enum:<=,>=,=,!=,<,>", true), p("limit", "number", true)], help: "An aggregate of the table compares as stated with the limit." },
+    { kind: "custom", label: "Custom predicate", dimension: "validity", level: "row", column: false, dqx: "sql_expression", params: [p("predicate", "sql", true, "One boolean SQL expression over the row."), f], help: "Every row satisfies the SQL condition." },
+  ];
+})();

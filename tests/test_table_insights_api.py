@@ -98,3 +98,15 @@ def test_failing_rows_and_glossary_suggestions_over_the_api(db):
         assert sug.status_code == 200 and sug.json()["added"] == 2, sug.text
         names = {e["name"]: e for e in client.get("/domains/hr/glossary", params={"table": "employees"}).json()}
         assert names["Manager"]["status"] == "draft" and names["Headcount"]["status"] == "pending"
+
+
+def test_rule_kinds_and_the_version_wide_overview_are_served(client):
+    vid = _version(client)
+    kinds = client.get("/dq/kinds").json()
+    assert {k["kind"] for k in kinds} >= {"not_null", "aggregate", "valid_email", "older_than_column"} and all("params" in k and "dqx" in k for k in kinds)
+    assert client.post(f"/versions/{vid}/tables/employees/dq/rules", json={"name": "Salary present", "kind": "not_null", "column": "sal"}).status_code == 201
+    assert client.post(f"/versions/{vid}/tables/employees/dq/rules", json={"name": "Work email", "kind": "valid_email", "column": "ename", "params": {"filter": "sal > 0"}}).status_code == 201
+    assert client.post(f"/versions/{vid}/tables/employees/dq/run").status_code == 200
+    ov = client.get(f"/versions/{vid}/dq").json()
+    assert ov["tables"][0]["table"] == "employees" and ov["tables"][0]["rules"] == 2 and ov["tables"][0]["score"] is not None
+    assert {r["kind"] for r in ov["rules"]} == {"not_null", "valid_email"} and all(r["last"] for r in ov["rules"])

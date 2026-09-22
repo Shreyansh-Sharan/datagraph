@@ -3,12 +3,18 @@
 // other tabs of the section bar show one settings card at a time.
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { Icon } from "@/components/icons";
 import { Button, Card, CheckDot, Dot } from "@/components/ui";
 import { RejectDialog, useLifecycle } from "@/components/lifecycle";
 import { useApp, useLoad } from "@/state/app";
 import { useDomain, useGo } from "@/state/domain";
 import { Settings, type SettingsCard } from "./Settings";
 import { STATUS_COLOR } from "@/api";
+
+/** Where work starts from the overview, in the order it usually happens. */
+const QUICK: [string, string, string][] = [["Import tables", "metadata", "Snapshot tables from the source"], ["Ontology", "ontology", "Classes and relationships"], ["Mapping", "mapping", "Classes onto tables"],
+  ["Rules", "rules", "Data-quality rules across the tables"], ["Build", "build", "Load the graph"], ["Explore", "explore", "Walk the graph"], ["Ask", "ask", "The assistant"], ["Versions", "versions", "Review and publish"]];
+const ICON_OF: Record<string, string> = { rules: "quality" };
 
 export function Overview({ defaultTab = "all" }: { defaultTab?: SettingsCard } = {}) {
   const { api, can } = useApp();
@@ -95,6 +101,11 @@ export function Overview({ defaultTab = "all" }: { defaultTab?: SettingsCard } =
             ))}
           </div>
         </Card>
+      )}
+      {tab === "all" && (
+        <nav className="quick-links" aria-label="Quick links">
+          {QUICK.map(([label, screen, hint]) => <a href="#" key={screen} title={hint} onClick={e => { e.preventDefault(); go(screen); }}><Icon name={ICON_OF[screen] ?? screen} size={14} />{label}</a>)}
+        </nav>
       )}
       <Settings embedded only={tab} right={tab === "all" ? side : undefined} />
       <RejectDialog version={rejecting} onClose={() => setRejecting(null)} onReject={life.reject} />

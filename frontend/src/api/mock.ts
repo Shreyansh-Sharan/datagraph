@@ -6,7 +6,7 @@ import type { AiProgress, AssistantContext, ChatEvent, ChatMessage, ChatResult, 
   Analytics, ApiKey, AuditEntry, BuildRun, BuildStep, CatalogTable, ChecklistItem, ClassMapping, Comment, Config, ConnResult, Constraint,
   DatagraphApi, DomainSummary, EntityDetail, GraphStatus, Lock, MappingKpis, Me, NewDomainInput, OntoCheck,
   OntoClass, Principal, Role, Rule, SearchHit, SourceKind, TableDetail, TablePreview, Task, TriplePage, TripleQuery,
-  VersionStatus, ConnectorSpec, ConnectionRec, SourceFacts, DomainSettingsPatch } from "./types";
+  VersionStatus, ConnectorSpec, ConnectionRec, SourceFacts, DomainSettingsPatch, DqKindInfo, DqOverview } from "./types";
 
 export interface MockOptions { sourceKind?: SourceKind; role?: Role; catalogDenied?: boolean; latency?: number; stepScale?: number }
 
@@ -331,6 +331,14 @@ export class MockApi implements DatagraphApi {
     return { table, score: last?.score ?? null, last_run: last ? { ...last, finished_at: last.started_at, error: null } : null, history: clone(st.runs), rules: clone(st.rules), columns, summary };
   }
   async tableDq(domain: string, version: number, table: string): Promise<DqStatus> { return this.dqStatus(domain, version, table); }
+  async dqKinds(): Promise<DqKindInfo[]> { return clone(D.DQ_KINDS) as DqKindInfo[]; }
+  async dqOverview(domain: string, version: number): Promise<DqOverview> {
+    const rows = (await this.snapshot(domain, version)).map(t => this.dqStatus(domain, version, t.table)).filter(st => st.rules.length);
+    const summaries = rows.map(st => ({ table: st.table, rules: st.rules.length, enabled: st.rules.filter(r => r.enabled).length,
+      kinds: st.rules.reduce<Record<string, number>>((a, r) => ({ ...a, [r.kind]: (a[r.kind] ?? 0) + 1 }), {}), dimensions: st.rules.reduce<Record<string, number>>((a, r) => ({ ...a, [r.dimension]: (a[r.dimension] ?? 0) + 1 }), {}),
+      summary: { ...st.summary, error: 0 }, score: st.score, last_run_at: st.last_run?.started_at ?? null, last_run_status: st.last_run?.status ?? null }));
+    return { tables: summaries, rules: rows.flatMap(st => st.rules), kinds: clone(D.DQ_KINDS) as DqKindInfo[] };
+  }
   async runDq(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<DqRun> {
     const st = this.dq(domain, version, table);
     await this.stages(onProgress, [`Running ${st.rules.filter(r => r.enabled).length} rules on ${table.split(".").pop()}`], this.mockOpts.latency ?? 300);
@@ -341,8 +349,8 @@ export class MockApi implements DatagraphApi {
     this.editableVersion(domain, version);
     const name = table.split(".").pop() ?? table; const cols = (D.COLUMNS[name] || D.GENERIC_COLS).cols.map(c => c[0]);
     if (rule.column && !cols.includes(rule.column)) throw new Error(`Unknown column '${rule.column}' on ${table}`);
-    const dims: Record<string, string> = { not_null: "completeness", unique: "uniqueness", in_set: "validity", range: "validity", regex: "validity", referential: "consistency", freshness: "timeliness", row_count: "volume", custom: "validity" };
-    const r: DqRule = { id: `r-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, table_name: table, name: rule.name, column_name: rule.column ?? null, kind: rule.kind, dimension: rule.dimension ?? dims[rule.kind], params: rule.params ?? {}, threshold: rule.threshold ?? 0.95, owner: rule.owner ?? null, origin: "manual", enabled: rule.enabled ?? true, last: null, history: [] };
+    const dims: Record<string, string> = Object.fromEntries(D.DQ_KINDS.map(k => [k.kind, k.dimension]));
+    const r: DqRule = { id: `r-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, table_name: table, name: rule.name, column_name: rule.column ?? null, kind: rule.kind, dimension: rule.dimension ?? (dims[rule.kind] ?? "validity"), params: rule.params ?? {}, threshold: rule.threshold ?? 0.95, owner: rule.owner ?? null, origin: "manual", enabled: rule.enabled ?? true, last: null, history: [] };
     this.dq(domain, version, table).rules.push(r); return clone(r);
   }
   private findRule(ruleId: string) { for (const st of Object.values(this.dqState)) { const r = st.rules.find(x => x.id === ruleId); if (r) return { st, r }; } throw new Error(`Rule ${ruleId} not found`); }
@@ -368,7 +376,7 @@ export class MockApi implements DatagraphApi {
     const st = this.dq(domain, version, table); const skipped: string[] = []; let added = 0;
     const propose = (name: string, kind: DqRule["kind"], column: string | null, params: Record<string, unknown>, threshold: number) => {
       if (st.rules.some(r => r.kind === kind && (r.column_name ?? "") === (column ?? ""))) { skipped.push(`${name} (already defined)`); return; }
-      st.rules.push({ id: `r-auto-${Date.now()}-${st.rules.length}`, table_name: table, name, column_name: column, kind, dimension: { not_null: "completeness", unique: "uniqueness", in_set: "validity", range: "validity", regex: "validity", referential: "consistency", freshness: "timeliness", row_count: "volume", custom: "validity" }[kind], params, threshold, owner: null, origin: "auto", enabled: true, last: null, history: [] }); added++;
+      st.rules.push({ id: `r-auto-${Date.now()}-${st.rules.length}`, table_name: table, name, column_name: column, kind, dimension: (D.DQ_KINDS.find(k => k.kind === kind)?.dimension ?? "validity"), params, threshold, owner: null, origin: "auto", enabled: true, last: null, history: [] }); added++;
     };
     for (const c of prof.columns) {
       if (c.role === "row key") { propose(`${c.name} unique`, "unique", c.name, {}, 1); propose(`${c.name} present`, "not_null", c.name, {}, 1); continue; }

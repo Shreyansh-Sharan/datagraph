@@ -608,3 +608,16 @@ table.fail .hit { background: #FFF1E8; color: var(--orange-text); }
 .xp-explain { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line-2); }
 .xp-explain .md { font-size: 12.5px; }
 @media (max-width: 900px) { .xp-panel { width: calc(100% - 32px); } .xp-bar { width: calc(100% - 32px); } }
+
+.quick-links { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
+.quick-links a { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line); background: #fff; color: var(--ink-2); font-size: 12.5px; font-weight: 600; }
+.quick-links a:hover { border-color: var(--blue); color: var(--blue-dark); text-decoration: none; }
+
+/* Rules: the catalogue of kinds */
+.kind-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.kind { display: grid; gap: 4px; text-align: left; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; font: inherit; color: var(--ink); cursor: pointer; }
+.kind:hover:not(:disabled) { border-color: var(--blue); }
+.kind:disabled { cursor: default; }
+.kind strong { font-size: 13px; font-weight: 700; }
+.kind .chip { font-size: 11px; font-weight: 700; color: var(--blue-dark); background: var(--blue-soft); border-radius: 999px; padding: 0 7px; height: 18px; display: inline-flex; align-items: center; }
+.dq-table:hover { border-color: var(--blue); }

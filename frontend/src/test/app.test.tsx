@@ -580,3 +580,52 @@ describe("Mapping screen · fill relationships", () => {
 });
 
 
+
+
+describe("Rules and Data quality across the version", () => {
+  it("lists the rule kinds by dimension and every rule of every table, and adds a rule to a chosen table", async () => {
+    renderAt("#/d/rgm/rules?v=3", new MockApi({ latency: 5 }));
+    const user = userEvent.setup();
+    expect(await screen.findByRole("heading", { level: 1, name: "Rules" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Valid email address/ })).toBeInTheDocument();          // the catalogue
+    const all = await screen.findByRole("table", { name: "All rules" });
+    expect(within(all).getByText("Country is ISO-2")).toBeInTheDocument();                                    // a dim_customer rule
+    expect(within(all).getAllByRole("row").length).toBeGreaterThan(2);
+    await user.click(screen.getByRole("button", { name: /Not null and not empty/ }));
+    const dlg = screen.getByRole("dialog", { name: "New rule" });
+    expect(within(dlg).getByLabelText("Kind")).toHaveValue("not_empty");
+    await user.selectOptions(within(dlg).getByLabelText("Table"), "rgm.gold.dim_product");
+    await user.type(within(dlg).getByLabelText("Rule name"), "Product has a name");
+    await user.click(within(dlg).getByRole("button", { name: "Add rule" }));
+    expect(await screen.findByText(/Rule Product has a name added to dim_product/)).toBeInTheDocument();
+    expect(await within(await screen.findByRole("table", { name: "All rules" })).findByText("Product has a name")).toBeInTheDocument();
+  });
+  it("shows each table's score and rule summary on the Data quality tab and keeps the graph constraints on their own", async () => {
+    renderAt("#/d/rgm/quality?v=3", new MockApi({ latency: 5 }));
+    const user = userEvent.setup();
+    expect(await screen.findByRole("heading", { level: 1, name: "Data quality" })).toBeInTheDocument();
+    expect(await screen.findByLabelText("Score of dim_customer")).toHaveTextContent(/\d+%/);
+    expect(screen.getAllByText(/uniqueness · 1/).length).toBeGreaterThan(0);
+    await user.click(screen.getByRole("tab", { name: "Graph constraints" }));
+    expect(await screen.findByText("Constraint")).toBeInTheDocument();
+  });
+  it("does not read the source again when coming back to Metadata from a table", async () => {
+    let reads = 0;
+    class Counting extends MockApi { override async schemas(d: string) { reads++; return super.schemas(d); } }
+    renderAt("#/d/rgm/metadata?v=3", new Counting({ latency: 5 }));
+    const user = userEvent.setup();
+    expect(await screen.findByRole("heading", { level: 1, name: "Metadata" })).toBeInTheDocument();
+    await waitFor(() => expect(reads).toBe(1));
+    await user.click(screen.getByRole("link", { name: "Design" }));      // the rail keeps us in Design; go to a table and back
+    window.location.hash = "#/d/rgm/table?v=3&schema=rgm.gold&table=dim_customer&tab=profile";
+    expect(await screen.findByRole("heading", { level: 1, name: "dim_customer" })).toBeInTheDocument();
+    await user.click(screen.getByRole("link", { name: "Metadata" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Metadata" })).toBeInTheDocument();
+    expect(reads).toBe(1);
+  });
+  it("offers quick links on the overview", async () => {
+    renderAt("#/d/rgm");
+    const links = await screen.findByRole("navigation", { name: "Quick links" });
+    expect(within(links).getAllByRole("link").map(a => a.textContent)).toEqual(["Import tables", "Ontology", "Mapping", "Rules", "Build", "Explore", "Ask", "Versions"]);
+  });
+});

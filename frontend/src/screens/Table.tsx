@@ -3,19 +3,14 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Button, Dialog, Dot, ErrorNotice, Label, Skeleton, Spinner } from "@/components/ui";
 import { Icon } from "@/components/icons";
+import { RuleDialog } from "@/components/RuleDialog";
 import { useApp, useLoad } from "@/state/app";
 import { useDomain, useGo, useParam, useSetParams } from "@/state/domain";
 import { relTime } from "@/api/format";
-import type { AiProgress, DqKind, DqRule, DqStatus, FailingRows, GlossaryEntry, GlossaryStatus, RuleInput, SnapshotTable, TableProfile, TermInput } from "@/api";
+import type { AiProgress, DqKind, DqKindInfo, DqRule, DqStatus, FailingRows, GlossaryEntry, GlossaryStatus, RuleInput, SnapshotTable, TableProfile, TermInput } from "@/api";
 
 type Tab = "profile" | "dq" | "glossary";
 const BLUE = "#2249FF", ORANGE = "#FF7000", GREY = "#B3B3B7";
-const KINDS: { id: DqKind; label: string; dimension: string }[] = [
-  { id: "not_null", label: "Not null", dimension: "completeness" }, { id: "unique", label: "Unique", dimension: "uniqueness" },
-  { id: "in_set", label: "Value in allowed set", dimension: "validity" }, { id: "range", label: "Value within range", dimension: "validity" },
-  { id: "regex", label: "Matches a pattern", dimension: "validity" }, { id: "referential", label: "Referential integrity", dimension: "consistency" },
-  { id: "freshness", label: "Freshness", dimension: "timeliness" }, { id: "row_count", label: "Row count within range", dimension: "volume" },
-  { id: "custom", label: "Custom predicate", dimension: "validity" }];
 const STATUS_TONE: Record<string, string> = { passing: BLUE, warning: ORANGE, failing: "#1B1B1C", error: ORANGE };
 
 const short = (full: string) => full.split(".").pop() ?? full;
@@ -36,6 +31,20 @@ export function describeRule(r: { kind: DqKind; column_name: string | null; para
     case "referential": return `${c} in (select ${p.ref_column ?? "id"} from ${p.ref_table ?? "parent"})`;
     case "freshness": return `max(${c}) > now() - ${p.hours ?? 24}h`;
     case "row_count": return `count(*) between ${p.min ?? 0} and ${p.max ?? "∞"}`;
+    case "not_empty": return `${c} is not null and not blank`;
+    case "not_in_set": return `${c} not in (${(p.values as unknown[] | undefined)?.join(", ") ?? ""})`;
+    case "not_in_range": return `${c} not between ${p.min} and ${p.max}`;
+    case "equal_to": return `${c} = ${p.value}`;
+    case "not_equal_to": return `${c} <> ${p.value}`;
+    case "not_less_than": return `${c} >= ${p.limit}`;
+    case "not_greater_than": return `${c} <= ${p.limit}`;
+    case "valid_email": case "valid_uuid": case "valid_ipv4": case "valid_date": case "valid_timestamp": return `${c} is a valid ${r.kind.slice(6).replace("ipv4", "IPv4 address").replace("uuid", "UUID")}`;
+    case "string_case": return `${c} = ${p.case ?? "upper"}(${c})`;
+    case "length_between": return `length(${c}) between ${p.min ?? 0} and ${p.max ?? "∞"}`;
+    case "not_in_future": return `${c} <= now()`;
+    case "older_than_days": return `${c} <= now() - ${p.days ?? 0} days`;
+    case "older_than_column": return `${c} <= ${p.column2}${p.days ? ` - ${p.days} days` : ""}`;
+    case "aggregate": return `${p.aggr ?? "count"}(${p.column ?? "*"}) ${p.op ?? "<="} ${p.limit}`;
     default: return String(p.predicate ?? "");
   }
 }
@@ -55,6 +64,7 @@ export function Table() {
   const profile = useLoad(() => version && full ? api.tableProfile(domain.name, version.version, full) : Promise.resolve(null), [domain.name, version?.version, full]);
   const dq = useLoad(() => version && full ? api.tableDq(domain.name, version.version, full) : Promise.resolve(null), [domain.name, version?.version, full]);
   const glossary = useLoad(() => api.glossary(domain.name, { table: full }), [domain.name, full]);
+  const kinds = useLoad(() => api.dqKinds().catch(() => [] as DqKindInfo[]), []);
   const cur = (tab as Tab) === "dq" || tab === "glossary" ? (tab as Tab) : "profile";
   const pickTable = (name: string) => { const p = name.split("."); setParams({ schema: p.slice(0, -1).join("."), table: p[p.length - 1] }); };
 
@@ -81,7 +91,7 @@ export function Table() {
 
       {snap && cur === "profile" && <ProfileView profile={profile.data ?? null} loading={profile.loading} error={profile.error} snap={snap} dq={dq.data ?? null} editable={editable}
         onRun={async report => { const p = await api.runProfile(domain.name, version!.version, full, report); profile.reload(); dq.reload(); say(`Profile of ${table} updated · ${fmtInt(p.row_count)} rows`); }} />}
-      {snap && cur === "dq" && <QualityView status={dq.data ?? null} loading={dq.loading} error={dq.error} snap={snap} editable={editable} reload={() => dq.reload()}
+      {snap && cur === "dq" && <QualityView status={dq.data ?? null} loading={dq.loading} error={dq.error} snap={snap} editable={editable} kinds={kinds.data ?? []} reload={() => dq.reload()}
         run={async report => { await api.runDq(domain.name, version!.version, full, report); dq.reload(); say(`Rules of ${table} run`); }}
         suggest={async report => { const r = await api.suggestRules(domain.name, version!.version, full, report); dq.reload(); say(r.added ? `AI added ${r.added} rule${r.added === 1 ? "" : "s"}${r.skipped.length ? ` · ${r.skipped.length} skipped` : ""}` : "The AI proposed nothing new"); }}
         add={async rule => { await api.addRule(domain.name, version!.version, full, rule); dq.reload(); say(`Rule ${rule.name} added`); }}
@@ -219,7 +229,7 @@ function ColumnCard({ c }: { c: import("@/api").ColumnProfile }) {
 // -- Data quality -----------------------------------------------------------------------------------
 
 type Filter = "all" | "passing" | "warning" | "failing";
-function QualityView({ status, loading, error, snap, editable, reload, run, suggest, add, patch, remove, failures, auto }: {
+function QualityView({ status, loading, error, snap, editable, kinds, reload, run, suggest, add, patch, remove, failures, auto }: { kinds: DqKindInfo[];
   status: DqStatus | null; loading: boolean; error: string | null; snap: SnapshotTable; editable: boolean; reload: () => void;
   run: (report: (p: AiProgress) => void) => Promise<void>; suggest: (report: (p: AiProgress) => void) => Promise<void>;
   add: (rule: RuleInput) => Promise<void>; patch: (id: string, p: Partial<RuleInput>, note?: string) => Promise<void>; remove: (r: DqRule) => Promise<void>;
@@ -295,8 +305,8 @@ function QualityView({ status, loading, error, snap, editable, reload, run, sugg
           </table>
         )}
       </section>
-      <RuleDialog open={dialog} onClose={() => setDialog(false)} columns={snap.columnNames} onSave={async rule => { await add(rule); setDialog(false); reload(); }} />
-      <RuleDialog open={editing != null} initial={editing} onClose={() => setEditing(null)} columns={snap.columnNames} onSave={async rule => { await patch(editing!.id, rule, `Rule ${rule.name} updated`); setEditing(null); }} />
+      <RuleDialog open={dialog} onClose={() => setDialog(false)} columns={snap.columnNames} kinds={kinds} onSave={async rule => { await add(rule); setDialog(false); reload(); }} />
+      <RuleDialog open={editing != null} initial={editing} onClose={() => setEditing(null)} columns={snap.columnNames} kinds={kinds} onSave={async rule => { await patch(editing!.id, rule, `Rule ${rule.name} updated`); setEditing(null); }} />
       <FailuresDialog rule={failing} onClose={() => setFailing(null)} load={failures} />
     </>
   );
@@ -348,77 +358,6 @@ function RuleMenu({ rule, editable, onEdit, onFailures, onToggle, onDelete }: { 
     </span>
   );
 }
-
-const paramsToText = (kind: DqKind, p: Record<string, unknown>): Record<string, string> => {
-  const t = (v: unknown) => (v == null ? "" : String(v));
-  switch (kind) {
-    case "in_set": return { values: ((p.values as unknown[] | undefined) ?? []).join(", ") };
-    case "range": case "row_count": return { min: t(p.min), max: t(p.max) };
-    case "regex": return { pattern: t(p.pattern) };
-    case "freshness": return { hours: t(p.hours) };
-    case "referential": return { ref_table: t(p.ref_table), ref_column: t(p.ref_column) };
-    case "custom": return { predicate: t(p.predicate) };
-    default: return {};
-  }
-};
-
-function RuleDialog({ open, initial, onClose, columns, onSave }: { open: boolean; initial?: DqRule | null; onClose: () => void; columns: string[]; onSave: (r: RuleInput) => Promise<void> }) {
-  const { say } = useApp();
-  const [name, setName] = useState("");
-  const [kind, setKind] = useState<DqKind>("not_null");
-  const [column, setColumn] = useState(columns[0] ?? "");
-  const [p, setP] = useState<Record<string, string>>({});
-  const [threshold, setThreshold] = useState("0.95");
-  const [owner, setOwner] = useState("");
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {   // an edit starts from the rule as it is
-    if (!open) return;
-    setName(initial?.name ?? ""); setKind(initial?.kind ?? "not_null"); setColumn(initial?.column_name ?? columns[0] ?? "");
-    setP(initial ? paramsToText(initial.kind, initial.params) : {}); setThreshold(initial ? String(initial.threshold) : "0.95"); setOwner(initial?.owner ?? "");
-  }, [open, initial?.id]);   // eslint-disable-line react-hooks/exhaustive-deps
-  const needsColumn = kind !== "row_count" && kind !== "custom";
-  const params = (): Record<string, unknown> => {
-    switch (kind) {
-      case "in_set": return { values: (p.values ?? "").split(",").map(s => s.trim()).filter(Boolean) };
-      case "range": case "row_count": return { ...(p.min ? { min: Number(p.min) } : {}), ...(p.max ? { max: Number(p.max) } : {}) };
-      case "regex": return { pattern: p.pattern ?? "" };
-      case "freshness": return { hours: Number(p.hours || 24) };
-      case "referential": return { ref_table: p.ref_table ?? "", ref_column: p.ref_column ?? "" };
-      case "custom": return { predicate: p.predicate ?? "" };
-      default: return {};
-    }
-  };
-  const field = (key: string, label: string, placeholder = "", mono = true) => <div><Label>{label}</Label><input className={`input full ${mono ? "mono" : ""}`} aria-label={label} placeholder={placeholder} value={p[key] ?? ""} onChange={e => setP(x => ({ ...x, [key]: e.target.value }))} /></div>;
-  const submit = async () => {
-    setBusy(true);
-    try { await onSave({ name: name.trim() || `${KINDS.find(k => k.id === kind)?.label} on ${column}`, kind, column: needsColumn ? column : null, params: params(), threshold: Number(threshold) || 0.95, owner: owner.trim() || null }); setName(""); setP({}); }
-    catch (e) { say(e instanceof Error ? e.message : String(e)); }
-    finally { setBusy(false); }
-  };
-  return (
-    <Dialog title={initial ? "Edit rule" : "New rule"} open={open} onClose={onClose} width={520} footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" disabled={busy || (needsColumn && !column)} onClick={submit}>{busy && <Spinner />}{initial ? "Save rule" : "Add rule"}</Button></>}>
-      <div style={{ display: "grid", gap: 12 }}>
-        <div><Label>Name</Label><input className="input full" aria-label="Rule name" placeholder="What the rule checks" value={name} onChange={e => setName(e.target.value)} /></div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <div><Label>Kind</Label><select className="select full" aria-label="Kind" value={kind} onChange={e => setKind(e.target.value as DqKind)}>{KINDS.map(k => <option key={k.id} value={k.id}>{k.label}</option>)}</select></div>
-          {needsColumn && <div><Label>Column</Label><select className="select full mono" aria-label="Column" value={column} onChange={e => setColumn(e.target.value)}>{columns.map(c => <option key={c} value={c}>{c}</option>)}</select></div>}
-        </div>
-        {kind === "in_set" && field("values", "Allowed values (comma-separated)", "A, B, C")}
-        {(kind === "range" || kind === "row_count") && <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>{field("min", "Minimum", "0")}{field("max", "Maximum", "")}</div>}
-        {kind === "regex" && field("pattern", "Pattern (regular expression)", "^[A-Z]{2}$")}
-        {kind === "freshness" && field("hours", "Fresh within (hours)", "24")}
-        {kind === "referential" && <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>{field("ref_table", "Referenced table", "schema.table")}{field("ref_column", "Referenced column", "id")}</div>}
-        {kind === "custom" && field("predicate", "SQL predicate (true for a good row)", "amount >= 0 AND currency IS NOT NULL")}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <div><Label>Pass threshold (0 to 1)</Label><input className="input full mono" aria-label="Threshold" value={threshold} onChange={e => setThreshold(e.target.value)} /></div>
-          <div><Label>Owner</Label><input className="input full" aria-label="Owner" placeholder="Domain steward" value={owner} onChange={e => setOwner(e.target.value)} /></div>
-        </div>
-      </div>
-    </Dialog>
-  );
-}
-
-// -- Glossary ---------------------------------------------------------------------------------------
 
 function GlossaryView({ entries, loading, table, snap, cls, add, patch, remove, suggest }: { entries: GlossaryEntry[]; loading: boolean; table: string; snap: SnapshotTable; cls: string | null; add: (t: TermInput) => Promise<void>; patch: (id: string, p: Partial<TermInput>, note?: string) => Promise<void>; remove: (e: GlossaryEntry) => Promise<void>; suggest: (report: (p: AiProgress) => void) => Promise<void> }) {
   const { say } = useApp();

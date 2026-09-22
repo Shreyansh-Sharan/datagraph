@@ -118,11 +118,19 @@ def create_mcp_server(tools: GraphTools, name: str = "ontoforge") -> MCPServer:
     def table_quality(table: str, domain: str | None = None) -> dict:
         return tools.table_quality(domain, table)
 
+    @tool(description="The catalogue of data-quality rule kinds (in the spirit of DQX check functions): each with its dimension, whether it judges rows or the table, whether it needs a column, its parameters and the DQX check it mirrors. Read it before add_quality_rule.")
+    def quality_rule_kinds() -> list[dict]:
+        return tools.quality_rule_kinds()
+
+    @tool(description="Data quality across the domain's working version: every table that has rules with its latest score, rule counts by kind and dimension, passing/warning/failing, and every rule with its last result.")
+    def quality_overview(domain: str | None = None) -> dict:
+        return tools.quality_overview(domain)
+
     @tool(description="Run every enabled data-quality rule of a table against the source now and return the new scores.")
     def run_quality_rules(table: str, domain: str | None = None) -> dict:
         return tools.run_quality_rules(domain, table)
 
-    @tool(description="Add a data-quality rule. kind: not_null | unique | in_set {values} | range {min,max} | regex {pattern} | referential {ref_table, ref_column} | freshness {hours} | row_count {min,max} | custom {predicate}. threshold is the pass fraction that counts as passing.")
+    @tool(description="Add a data-quality rule to a table. kind and params come from quality_rule_kinds (not_null, not_empty, unique {columns}, in_set {values}, not_in_set, range {min,max}, not_in_range, equal_to {value}, not_less_than {limit}, not_greater_than, regex {pattern}, valid_email, valid_uuid, valid_ipv4, valid_date, valid_timestamp, string_case {case}, length_between, not_in_future, older_than_days {days}, older_than_column {column2}, referential {ref_table, ref_column}, freshness {hours}, row_count {min,max}, aggregate {aggr, column, op, limit}, custom {predicate}); row-level kinds take an optional params.filter. threshold is the pass fraction that counts as passing.")
     def add_quality_rule(table: str, name: str, kind: str, column: str | None = None, params: dict | None = None, threshold: float = 0.95, domain: str | None = None) -> dict:
         return tools.add_quality_rule(domain, table, name, kind, column, params, threshold)
 

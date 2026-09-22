@@ -86,7 +86,13 @@ export interface ColumnProfile {
   histogram: { lo: number; hi: number; n: number }[]; values: { value: string; n: number }[]; hints: string[];
 }
 export interface TableProfile { table: string; profiled_at: string; actor: string | null; sample_pct: number; row_count: number | null; size_bytes: number | null; last_modified: string | null; duplicate_keys: number | null; columns: ColumnProfile[]; duplicate_rows: number | null; missing_cells: number | null; row_key: string[] }
-export type DqKind = "not_null" | "unique" | "in_set" | "range" | "regex" | "referential" | "freshness" | "row_count" | "custom";
+export type DqKind = "not_null" | "not_empty" | "unique" | "in_set" | "not_in_set" | "range" | "not_in_range" | "equal_to" | "not_equal_to" | "not_less_than" | "not_greater_than"
+  | "regex" | "valid_email" | "valid_uuid" | "valid_ipv4" | "valid_date" | "valid_timestamp" | "string_case" | "length_between" | "not_in_future" | "older_than_days" | "older_than_column"
+  | "referential" | "freshness" | "row_count" | "aggregate" | "custom";
+export interface DqParam { name: string; type: string; required: boolean; help: string }   // type: number | list | scalar | regex | sql | column | table | enum:a,b
+export interface DqKindInfo { kind: DqKind; label: string; dimension: string; level: "row" | "table"; column: boolean; dqx: string; params: DqParam[]; help: string }
+export interface DqTableSummary { table: string; rules: number; enabled: number; kinds: Record<string, number>; dimensions: Record<string, number>; summary: { passing: number; warning: number; failing: number; error: number }; score: number | null; last_run_at: string | null; last_run_status: string | null }
+export interface DqOverview { tables: DqTableSummary[]; rules: DqRule[]; kinds: DqKindInfo[] }
 export type DqRuleStatus = "passing" | "warning" | "failing" | "error";
 export interface DqResult { pass_rate: number | null; passed: number | null; failed: number | null; total: number | null; status: DqRuleStatus; error: string | null; ran_at: string }
 export interface DqRule { id: string; table_name: string; name: string; column_name: string | null; kind: DqKind; dimension: string; params: Record<string, unknown>; threshold: number; owner: string | null; origin: "manual" | "ai" | "auto"; enabled: boolean; last: DqResult | null; history: { pass_rate: number | null; ran_at: string }[] }
@@ -208,6 +214,8 @@ export interface DatagraphApi {
   tableProfile(domain: string, version: number, table: string): Promise<TableProfile | null>;                       // the saved profile, or null before the first run
   runProfile(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<TableProfile>;
   tableDq(domain: string, version: number, table: string): Promise<DqStatus>;
+  dqKinds(): Promise<DqKindInfo[]>;                                            // the catalogue of rule kinds (DQX-style)
+  dqOverview(domain: string, version: number): Promise<DqOverview>;            // every table with rules, every rule, across the version
   runDq(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<DqRun>;
   addRule(domain: string, version: number, table: string, rule: RuleInput): Promise<DqRule>;
   updateRule(ruleId: string, patch: Partial<RuleInput>): Promise<DqRule>;

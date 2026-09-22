@@ -73,6 +73,9 @@ class SqlDialect(ABC):
     def hours_ago(self, hours: int) -> str:
         return f"now() - interval '{int(hours)} hours'"
 
+    def days_before(self, expr: str, days: int) -> str:
+        return f"({expr} - interval '{int(days)} days')"
+
     def to_double(self, expr: str) -> str:
         return f"CAST({expr} AS DOUBLE PRECISION)"
 

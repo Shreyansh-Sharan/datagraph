@@ -32,6 +32,7 @@ from ontoforge.reasoning import generate_shapes
 from ontoforge.quality import ConstraintSet, QualityEngine, QualityError
 from ontoforge.rules import Rule, RuleEngine, RuleError, RuleSet
 from ontoforge.metadata import MetadataError
+from ontoforge.tabledq import KIND_CATALOG
 from ontoforge.registry import Domain, DomainVersion, LifecycleError, NotFound, Status
 
 router = APIRouter(dependencies=[Depends(viewer)])   # every route needs an authenticated caller
@@ -1517,6 +1518,19 @@ def table_dq_suggest(version_id: UUID, table: str, request: Request, response: R
     st = _st(request)
     return _run_ai(request, version_id, "dq-suggest", background, response, me.name,
                    lambda llm, report: st.tabledq.suggest(version_id, table, llm, actor=me.name, on_progress=report))
+
+
+@router.get("/dq/kinds")
+def dq_kinds():
+    """The catalogue of rule kinds: dimension, level, parameters, the DQX check each mirrors."""
+    return KIND_CATALOG
+
+
+@router.get("/versions/{version_id}/dq")
+def dq_overview(version_id: UUID, request: Request):
+    """Every table with rules, its latest score and rule summary, and every rule with its last result."""
+    _st(request).registry.get_version(version_id)
+    return _st(request).tabledq.overview(version_id)
 
 
 @router.get("/dq/rules/{rule_id}/failures")

@@ -151,6 +151,17 @@ class GraphTools:
                            "pass_rate": (r["last"] or {}).get("pass_rate"), "status": (r["last"] or {}).get("status"), "error": (r["last"] or {}).get("error")} for r in st["rules"]],
                 "columns": [c for c in st["columns"] if c["score"] is not None and c["score"] < 0.95]}
 
+    def quality_rule_kinds(self) -> list[dict]:
+        from ontoforge.tabledq import KIND_CATALOG
+        return KIND_CATALOG
+
+    def quality_overview(self, domain: str | None) -> dict:
+        d, v = self._working(domain)
+        if v is None:
+            return {"error": self._unknown(domain)}
+        ov = self._need("tabledq").overview(v.id)
+        return {"tables": _plain(ov["tables"]), "rules": _plain(ov["rules"])}
+
     def run_quality_rules(self, domain: str | None, table: str) -> dict:
         d, v = self._working(domain)
         if v is None:
