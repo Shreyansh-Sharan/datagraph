@@ -35,7 +35,7 @@ from ontoforge.llm import AnthropicProvider, AzureOpenAIProvider, LLMOutputError
 from ontoforge.mapping import MappingSpecError
 from ontoforge.assistant import Assistant
 from ontoforge.mcp import GraphTools, create_mcp_server
-from ontoforge.mcp.tools import ACTOR
+from ontoforge.mcp.tools import ACTOR, ROLE
 from ontoforge.metadata import MetadataError, MetadataService
 from ontoforge.profiling import ProfileService
 from ontoforge.tabledq import TableQuality
@@ -124,6 +124,7 @@ def _guarded(app: FastAPI, inner):
             try:
                 principal = principal_from_headers(app.state.settings, app.state.principals, Headers(scope=scope))
                 ACTOR.set(principal.name)   # tools that act do so as the caller
+                ROLE.set(principal.role.value)
             except AuthError as exc:
                 body = json.dumps({"detail": str(exc)}).encode()
                 await send({"type": "http.response.start", "status": 401,

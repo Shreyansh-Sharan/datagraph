@@ -14,7 +14,7 @@ from psycopg.types.json import Jsonb
 
 from ontoforge.db import Database
 from ontoforge.llm.provider import LLMProvider, LLMUnavailable
-from ontoforge.mcp.tools import ACTOR
+from ontoforge.mcp.tools import ACTOR, ROLE
 from ontoforge.registry.models import NotFound
 
 SYSTEM = """\
@@ -59,7 +59,12 @@ a path the ontology lacks but the tables carry (a foreign-key column such as Pro
 link table, visible in table_profile, list_tables or preview_sql), say which relationship is
 missing and offer to add it; when the user asks you to create it, add it with its key, start the
 build, and say to ask again once list_builds shows it finished. Never say you cannot change the
-ontology or the mapping. Never aggregate along a path ontology_paths did not return: when it
+ontology or the mapping. The rest of the backend is yours too: glossary terms and metrics
+(add_term, update_term, delete_term), the version lifecycle (create_version, transition_version,
+review_version, comment_version, set_active_version), domain settings and MCP policy, table
+snapshots (import_tables, refresh_metadata, set_table_comment, remove_table), mapping exclusions,
+reasoning rules (add_rule) and graph constraints (add_constraint). Reviewer and admin actions
+need that role; a tool tells you when the caller lacks it. Never aggregate along a path ontology_paths did not return: when it
 returns no path, the answer is that the relationship is missing, which table carries it (the link
 class's table and keys from class_schema and list_tables), and the offer to add it.
 
@@ -82,7 +87,7 @@ class Assistant:
     # -- the conversation loop ------------------------------------------------------------------------
 
     async def chat(self, *, actor: str, message: str, context: dict | None = None, conversation_id: UUID | None = None,
-                   on_event: Event | None = None) -> dict:
+                   on_event: Event | None = None, role: str | None = None) -> dict:
         if self.llm is None:
             raise LLMUnavailable("No LLM provider configured")
         emit = on_event or (lambda _e: None)
@@ -94,7 +99,7 @@ class Assistant:
         tools = [{"name": t.name, "description": t.description or "", "input_schema": t.input_schema} for t in await self.server.list_tools()]
         system = SYSTEM + _context_lines(context)
         trace: list[dict] = []
-        token = ACTOR.set(actor)
+        token, rtoken = ACTOR.set(actor), ROLE.set(role)
         try:
             for _ in range(self.max_steps):
                 reply = await asyncio.to_thread(self.llm.chat, system, msgs, tools)
@@ -124,6 +129,7 @@ class Assistant:
             return {"conversation_id": str(conv_id), "answer": answer, "tools": trace}
         finally:
             ACTOR.reset(token)
+            ROLE.reset(rtoken)
 
     async def _call(self, name: str, arguments: dict) -> str:
         """One MCP tool call, its result as text; an error becomes text too so the model can recover."""

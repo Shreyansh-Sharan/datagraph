@@ -20,12 +20,16 @@ from graphql import graphql_sync, print_schema
 from ontoforge.constants import MCP_TOOLS
 from ontoforge.graphql import build_schema
 from ontoforge.mapping import AttributeBinding, ClassMapping, MappingSpec, MappingSpecError, RelationMapping, mapping_status
+from ontoforge.quality import Constraint, ConstraintSet, QualityError
+from ontoforge.rules import Rule, RuleSet
 from ontoforge.ontology import XSD, DatatypeProperty, ObjectProperty, OntoClass, Ontology
 from ontoforge.registry import Domain, DomainVersion, NotFound, Registry, RegistryError, Status
 from ontoforge.store import TripleStore
 
 
 ACTOR: ContextVar[str | None] = ContextVar("ontoforge_mcp_actor", default=None)   # who is calling: set by the API guard and by the assistant
+ROLE: ContextVar[str | None] = ContextVar("mcp_role", default=None)   # the caller's role (viewer | builder | reviewer | admin), or None when unknown
+_RANK = {"viewer": 0, "builder": 1, "reviewer": 2, "admin": 3}
 
 
 def _doms(p) -> tuple:
@@ -200,11 +204,391 @@ class GraphTools:
         return _plain(self._need("scheduler").submit(v.id, actor=self._actor(), full=full))
 
     def preview_sql(self, domain: str | None, sql: str, limit: int = 20) -> dict:
+        if msg := self._disabled("preview_sql", domain):
+            return {"error": msg}
         d, v = self._working(domain)
         if v is None:
             return {"error": self._unknown(domain)}
         columns, rows = self._need("sources").for_version(v.id).query(sql, max(1, min(int(limit), 100)))
         return {"columns": columns, "rows": _plain([list(r) for r in rows])}
+
+    # -- the rest of the backend: glossary, lifecycle, domains, metadata, mapping exclusions, rules, constraints --
+
+    @staticmethod
+    def _require(role: str) -> str | None:
+        """An error when the caller's role is known and below the one this action needs."""
+        have = ROLE.get()
+        if have is not None and _RANK.get(have, 0) < _RANK[role]:
+            return f"{ACTOR.get() or 'the caller'} is {have}; this action needs {role}"
+        return None
+
+    def _version_of(self, d: Domain, version: int | None):
+        """A version by number, or the working one; (version, error)."""
+        if version is None:
+            v = self.registry.latest_version(d.id, Status.DRAFT) or self.registry.served_version(d.id)
+            return (v, None) if v else (None, f"Domain {d.name!r} has no version yet")
+        v = next((x for x in self.registry.list_versions(d.id) if x.version == int(version)), None)
+        return (v, None) if v else (None, f"Domain {d.name!r} has no version {version}; list_domain_versions shows them")
+
+    @staticmethod
+    def _vsum(v: DomainVersion) -> dict:
+        return {"id": str(v.id), "version": v.version, "status": v.status.value, "has_ontology": bool(v.ontology_ttl), "has_mapping": bool(v.mapping)}
+
+    def _dsum(self, d: Domain) -> dict:
+        active = next((v.version for v in self.registry.list_versions(d.id) if v.id == d.active_version_id), None) if d.active_version_id else None
+        return {"name": d.name, "description": d.description, "base_iri": d.base_iri, "review_quorum": d.review_quorum, "active_version": active,
+                "materialization": d.materialization, "target_schema": d.target_schema, "mcp_policy": d.mcp_policy}
+
+    # glossary
+    def add_term(self, domain: str | None, kind: str, name: str, definition: str = "", table: str | None = None, columns: list[str] | None = None,
+                 class_name: str | None = None, formula: str | None = None, unit: str | None = None, frequency: str | None = None,
+                 status: str = "draft", owner: str | None = None) -> dict:
+        d, v = self._working(domain)
+        if d is None:
+            return {"error": self._unknown(domain)}
+        if table and v is not None:
+            table, err = self._table(v, table)
+            if err:
+                return {"error": err}
+            cols, err = self._columns_of(v, table, list(columns or []))
+            if err:
+                return {"error": err}
+            columns = cols
+        try:
+            t = self._need("glossary").add(d.id, actor=self._actor(), kind=kind, name=name, definition=definition, table=table, columns=columns,
+                                           status=status, owner=owner, class_name=class_name, formula=formula, unit=unit, frequency=frequency)
+        except ValueError as exc:
+            return {"error": str(exc)}
+        return _plain(t.to_dict())
+
+    def update_term(self, term_id: str, name: str | None = None, definition: str | None = None, status: str | None = None, table: str | None = None,
+                    columns: list[str] | None = None, class_name: str | None = None, formula: str | None = None, unit: str | None = None,
+                    frequency: str | None = None, owner: str | None = None) -> dict:
+        changes = {k: val for k, val in dict(name=name, definition=definition, status=status, table=table, columns=columns, class_name=class_name,
+                                              formula=formula, unit=unit, frequency=frequency, owner=owner).items() if val is not None}
+        try:
+            return _plain(self._need("glossary").update(UUID(term_id), actor=self._actor(), **changes).to_dict())
+        except (ValueError, NotFound) as exc:
+            return {"error": str(exc)}
+
+    def delete_term(self, term_id: str) -> dict:
+        try:
+            self._need("glossary").delete(UUID(term_id), actor=self._actor())
+        except (ValueError, NotFound) as exc:
+            return {"error": str(exc)}
+        return {"deleted": term_id}
+
+    # lifecycle
+    def create_version(self, domain: str | None) -> dict:
+        d = self._domain(domain)
+        if d is None:
+            return {"error": self._unknown(domain)}
+        if err := self._require("builder"):
+            return {"error": err}
+        try:
+            return {**self._vsum(self.registry.create_version(d.id, actor=self._actor())), "next": "The new draft copies the last version's design; edit it, build it, then transition_version to in_review."}
+        except RegistryError as exc:
+            return {"error": str(exc)}
+
+    def transition_version(self, domain: str | None, to: str, version: int | None = None) -> dict:
+        """Move a version along the lifecycle: draft -> in_review (builder), in_review -> draft or published (reviewer; publishing needs the review quorum), published -> archived (admin)."""
+        d = self._domain(domain)
+        if d is None:
+            return {"error": self._unknown(domain)}
+        try:
+            target = Status(to)
+        except ValueError:
+            return {"error": f"to must be one of {', '.join(s.value for s in Status)}"}
+        if err := self._require({Status.IN_REVIEW: "builder", Status.DRAFT: "reviewer", Status.PUBLISHED: "reviewer", Status.ARCHIVED: "admin"}[target]):
+            return {"error": err}
+        v, err = self._version_of(d, version)
+        if err:
+            return {"error": err}
+        try:
+            return self._vsum(self.registry.transition(v.id, target, actor=self._actor()))
+        except RegistryError as exc:
+            return {"error": str(exc)}
+
+    def review_version(self, domain: str | None, approved: bool, comment: str | None = None, version: int | None = None) -> dict:
+        d = self._domain(domain)
+        if d is None:
+            return {"error": self._unknown(domain)}
+        if err := self._require("reviewer"):
+            return {"error": err}
+        v, err = self._version_of(d, version)
+        if err:
+            return {"error": err}
+        try:
+            return _plain(asdict(self.registry.add_review(v.id, reviewer=self._actor(), approved=approved, comment=comment)))
+        except RegistryError as exc:
+            return {"error": str(exc)}
+
+    def comment_version(self, domain: str | None, body: str, version: int | None = None) -> dict:
+        d = self._domain(domain)
+        if d is None:
+            return {"error": self._unknown(domain)}
+        v, err = self._version_of(d, version)
+        if err:
+            return {"error": err}
+        return _plain(asdict(self.registry.add_comment(v.id, author=self._actor(), body=body)))
+
+    def set_active_version(self, domain: str | None, version: int | None) -> dict:
+        """Serve a published version (None serves nothing)."""
+        d = self._domain(domain)
+        if d is None:
+            return {"error": self._unknown(domain)}
+        if err := self._require("reviewer"):
+            return {"error": err}
+        vid = None
+        if version is not None:
+            v, err = self._version_of(d, version)
+            if err:
+                return {"error": err}
+            vid = v.id
+        try:
+            return self._dsum(self.registry.set_active_version(d.id, vid, actor=self._actor()))
+        except RegistryError as exc:
+            return {"error": str(exc)}
+
+    def delete_version(self, domain: str | None, version: int) -> dict:
+        d = self._domain(domain)
+        if d is None:
+            return {"error": self._unknown(domain)}
+        if err := self._require("builder"):
+            return {"error": err}
+        v, err = self._version_of(d, version)
+        if err:
+            return {"error": err}
+        try:
+            self.registry.delete_version(v.id, actor=self._actor())
+        except RegistryError as exc:
+            return {"error": str(exc)}
+        return {"deleted": v.version}
+
+    # domains
+    def create_domain(self, name: str, base_iri: str, description: str | None = None, review_quorum: int = 1) -> dict:
+        if err := self._require("builder"):
+            return {"error": err}
+        try:
+            d = self.registry.create_domain(name, description, base_iri=base_iri, review_quorum=review_quorum)
+        except (RegistryError, ValueError) as exc:
+            return {"error": str(exc)}
+        self.registry.create_version(d.id, actor=self._actor())
+        return {**self._dsum(d), "next": "import_tables to snapshot its tables, add_class / map_class to design it, then start_build. Its source connection is set in Settings."}
+
+    def update_domain(self, domain: str | None, description: str | None = None, base_iri: str | None = None, review_quorum: int | None = None,
+                      materialization: str | None = None, target_schema: str | None = None) -> dict:
+        d = self._domain(domain)
+        if d is None:
+            return {"error": self._unknown(domain)}
+        if err := self._require("builder"):
+            return {"error": err}
+        changes = {k: val for k, val in dict(description=description, base_iri=base_iri, review_quorum=review_quorum, materialization=materialization,
+                                              target_schema=target_schema).items() if val is not None}
+        try:
+            return self._dsum(self.registry.update_domain(d.id, changes, actor=self._actor()))
+        except (RegistryError, ValueError) as exc:
+            return {"error": str(exc)}
+
+    def set_mcp_policy(self, domain: str | None, disabled_tools: list[str] | None = None, exposed: bool = True) -> dict:
+        d = self._domain(domain)
+        if d is None:
+            return {"error": self._unknown(domain)}
+        if err := self._require("builder"):
+            return {"error": err}
+        try:
+            pol = self.registry.set_mcp_policy(d.id, {"exposed": exposed, "disabled_tools": list(disabled_tools or [])}).mcp_policy
+        except ValueError as exc:
+            return {"error": str(exc)}
+        return {"exposed": pol.get("exposed", True), "disabled_tools": list(pol.get("disabled_tools", []))}
+
+    def delete_domain(self, domain: str | None) -> dict:
+        d = self._domain(domain)
+        if d is None:
+            return {"error": self._unknown(domain)}
+        if err := self._require("admin"):
+            return {"error": err}
+        self.registry.delete_domain(d.id)
+        if self.current == d.name:
+            self.current = None
+        return {"deleted": d.name}
+
+    # metadata
+    def import_tables(self, domain: str | None, tables: list[str], schema: str | None = None) -> list[dict]:
+        d, v = self._working(domain)
+        if v is None:
+            return [{"error": self._unknown(domain)}]
+        try:
+            snaps = self._meta().import_tables(v.id, list(tables), actor=self._actor(), schema=schema)
+        except Exception as exc:  # noqa: BLE001 - the catalog's reason is the answer
+            return [{"error": f"{type(exc).__name__}: {exc}"}]
+        return [self._snap(sn) for sn in snaps]
+
+    def refresh_metadata(self, domain: str | None) -> dict:
+        d, v = self._working(domain)
+        if v is None:
+            return {"error": self._unknown(domain)}
+        try:
+            changes = self._meta().refresh(v.id, actor=self._actor())
+        except Exception as exc:  # noqa: BLE001
+            return {"error": f"{type(exc).__name__}: {exc}"}
+        return {"changes": _plain([asdict(c) for c in changes])}
+
+    def set_table_comment(self, domain: str | None, table: str, comment: str | None, column: str | None = None) -> dict:
+        d, v = self._working(domain)
+        if v is None:
+            return {"error": self._unknown(domain)}
+        table, err = self._table(v, table)
+        if err:
+            return {"error": err}
+        if column:
+            cols, err = self._columns_of(v, table, [column])
+            if err:
+                return {"error": err}
+            column = cols[0]
+        try:
+            return self._snap(self._meta().set_comment(v.id, table, column, comment, actor=self._actor()))
+        except Exception as exc:  # noqa: BLE001
+            return {"error": f"{type(exc).__name__}: {exc}"}
+
+    def remove_table(self, domain: str | None, table: str) -> dict:
+        d, v = self._working(domain)
+        if v is None:
+            return {"error": self._unknown(domain)}
+        table, err = self._table(v, table)
+        if err:
+            return {"error": err}
+        try:
+            self._meta().remove(v.id, table, actor=self._actor())
+        except Exception as exc:  # noqa: BLE001
+            return {"error": f"{type(exc).__name__}: {exc}"}
+        return {"removed": table}
+
+    def _meta(self):
+        if self.metadata is None:
+            raise ValueError("The metadata service is not available on this server")
+        return self.metadata
+
+    @staticmethod
+    def _snap(sn) -> dict:
+        return {"table": sn.table, "comment": sn.comment, "columns": {c["name"]: c.get("comment") for c in sn.columns}, "column_count": len(sn.columns),
+                "primary_key": list(sn.primary_key or [])}
+
+    # mapping exclusions
+    def exclude_property(self, domain: str | None, cls: str, prop: str, excluded: bool = True) -> dict:
+        """Mark a class's attribute or relationship as deliberately unmapped (or take that back)."""
+        d, v, o, err = self._draft(domain)
+        if err:
+            return {"error": err}
+        ciri = self._class_of(o, cls)
+        if not ciri:
+            return {"error": self._unknown_class(o, cls)}
+        piri = self._property_of(o, prop)
+        if not piri:
+            return {"error": f"Unknown property {prop!r}; class_schema lists the class's attributes and relationships"}
+        spec = MappingSpec.from_dict(v.mapping) if v.mapping else None
+        cm = next((c for c in (spec.classes if spec else ()) if c.class_iri == ciri), None)
+        if cm is None:
+            return {"error": f"{o.local_name(ciri)} is not mapped to a table yet; call map_class first"}
+        ex = set(cm.excluded) | {piri} if excluded else set(cm.excluded) - {piri}
+        classes = tuple(ClassMapping(c.class_iri, c.table, c.sql_query, c.key_columns, c.iri_template, c.attributes, tuple(sorted(ex))) if c.class_iri == ciri else c for c in spec.classes)
+        if (err := self._save(v, mapping=MappingSpec(spec.base_iri, classes, spec.relations))):
+            return {"error": err}
+        return {"class": ciri, "excluded": sorted(ex)}
+
+    def unmap_class(self, domain: str | None, cls: str) -> dict:
+        """Drop a class's mapping and every relation that touches it (the ontology keeps the class)."""
+        d, v, o, err = self._draft(domain)
+        if err:
+            return {"error": err}
+        ciri = self._class_of(o, cls)
+        if not ciri:
+            return {"error": self._unknown_class(o, cls)}
+        spec = MappingSpec.from_dict(v.mapping) if v.mapping else MappingSpec(base_iri=d.base_iri)
+        rels = tuple(r for r in spec.relations if ciri not in (r.source_class, r.target_class))
+        new = MappingSpec(spec.base_iri, tuple(c for c in spec.classes if c.class_iri != ciri), rels)
+        if (err := self._save(v, mapping=new)):
+            return {"error": err}
+        return {"unmapped": ciri, "relations_dropped": len(spec.relations) - len(rels), "next": _NEXT_BUILD}
+
+    # reasoning rules and constraints
+    def list_rules(self, domain: str | None) -> list[dict]:
+        d, v = self._working(domain)
+        if v is None:
+            return [{"error": self._unknown(domain)}]
+        return [{"name": r.name, "text": r.text, "mode": r.mode, "enabled": r.enabled} for r in RuleSet.from_dict(v.rules).rules]
+
+    def add_rule(self, domain: str | None, name: str, text: str, mode: str = "materialize", enabled: bool = True) -> dict:
+        """Add or replace a reasoning rule written as SWRL-style text over the ontology's names, e.g.
+        'Employee(?e) ^ salary(?e, ?s) ^ swrlb:greaterThan(?s, 1000) -> HighEarner(?e)'. mode: materialize (adds triples at build) | violation (reports matches)."""
+        d, v, o, err = self._draft(domain)
+        if err:
+            return {"error": err}
+        try:
+            rule = Rule.from_text(text, o, name, mode, enabled)
+        except Exception as exc:  # noqa: BLE001 - the parser's message is the answer
+            return {"error": f"Cannot parse the rule: {exc}"}
+        rs = RuleSet([r for r in RuleSet.from_dict(v.rules).rules if r.name != name] + [rule])
+        try:
+            self.registry.update_content(v.id, actor=self._actor(), rules=rs.to_dict())
+        except RegistryError as exc:
+            return {"error": str(exc)}
+        return {"name": rule.name, "text": rule.text, "mode": rule.mode, "enabled": rule.enabled, "next": "start_build applies materialize rules; violation rules report at build."}
+
+    def remove_rule(self, domain: str | None, name: str) -> dict:
+        d, v, o, err = self._draft(domain)
+        if err:
+            return {"error": err}
+        rs = RuleSet.from_dict(v.rules)
+        if all(r.name != name for r in rs.rules):
+            return {"error": f"Unknown rule {name!r}; list_rules names them"}
+        try:
+            self.registry.update_content(v.id, actor=self._actor(), rules=RuleSet([r for r in rs.rules if r.name != name]).to_dict())
+        except RegistryError as exc:
+            return {"error": str(exc)}
+        return {"removed": name}
+
+    def list_constraints(self, domain: str | None) -> list[dict]:
+        d, v = self._working(domain)
+        if v is None:
+            return [{"error": self._unknown(domain)}]
+        return [_plain(c.to_dict()) for c in ConstraintSet.from_dict(v.quality).constraints]
+
+    def add_constraint(self, domain: str | None, name: str, target_class: str, kind: str, property: str | None = None, value=None,
+                       severity: str = "violation", message: str | None = None) -> dict:
+        """Add or replace a data-quality constraint on the graph (SHACL-like). kind: min_count | max_count | datatype | class | pattern | in |
+        min_inclusive | max_inclusive | min_exclusive | max_exclusive | unique | node_kind | require_label | no_orphans. severity: violation | warning | info."""
+        d, v, o, err = self._draft(domain)
+        if err:
+            return {"error": err}
+        ciri = self._class_of(o, target_class)
+        if not ciri:
+            return {"error": self._unknown_class(o, target_class)}
+        piri = None
+        if property is not None:
+            piri = self._property_of(o, property)
+            if not piri:
+                return {"error": f"Unknown property {property!r}; class_schema lists the class's attributes and relationships"}
+        try:
+            c = Constraint(name, ciri, piri, kind, value, severity, message)
+            cs = ConstraintSet([x for x in ConstraintSet.from_dict(v.quality).constraints if x.name != name] + [c])
+            self.registry.update_content(v.id, actor=self._actor(), quality=cs.to_dict())
+        except (QualityError, RegistryError, ValueError) as exc:
+            return {"error": str(exc)}
+        return {**_plain(c.to_dict()), "next": "Constraints are checked on the built graph (Data quality screen, validate)."}
+
+    def remove_constraint(self, domain: str | None, name: str) -> dict:
+        d, v, o, err = self._draft(domain)
+        if err:
+            return {"error": err}
+        cs = ConstraintSet.from_dict(v.quality)
+        if all(c.name != name for c in cs.constraints):
+            return {"error": f"Unknown constraint {name!r}; list_constraints names them"}
+        try:
+            self.registry.update_content(v.id, actor=self._actor(), quality=ConstraintSet([c for c in cs.constraints if c.name != name]).to_dict())
+        except RegistryError as exc:
+            return {"error": str(exc)}
+        return {"removed": name}
 
     # -- design: the assistant changes the working draft, not only reads it ---------------------------
 

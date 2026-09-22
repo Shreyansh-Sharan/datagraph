@@ -1580,12 +1580,12 @@ async def assistant_chat(body: ChatIn, request: Request, me: Principal = Depends
     if not body.message.strip():
         raise ValueError("Say something")
     if not stream:
-        return await st.assistant.chat(actor=me.name, message=body.message, context=body.context, conversation_id=body.conversation_id)
+        return await st.assistant.chat(actor=me.name, role=me.role.value, message=body.message, context=body.context, conversation_id=body.conversation_id)
     queue: asyncio.Queue = asyncio.Queue()
 
     async def produce():
         try:
-            result = await st.assistant.chat(actor=me.name, message=body.message, context=body.context, conversation_id=body.conversation_id, on_event=queue.put_nowait)
+            result = await st.assistant.chat(actor=me.name, role=me.role.value, message=body.message, context=body.context, conversation_id=body.conversation_id, on_event=queue.put_nowait)
             queue.put_nowait({"type": "done", **result})
         except Exception as exc:  # noqa: BLE001 - the stream reports the failure instead of dying
             queue.put_nowait({"type": "error", "error": f"{type(exc).__name__}: {exc}"})

@@ -64,7 +64,7 @@ catalog metadata ──autodraft / LLM──▶ Ontology (OWL 2) ──▶ Mappi
 | `auth/` | Header or API-key authentication; roles viewer < builder < reviewer < admin | — |
 | `observability.py` | JSON/text logging, request ids, request timing, build events | — |
 | `api/` | FastAPI REST surface for all of the above | — |
-| `mcp/` | MCP server: `list_domains`, `describe_ontology`, `graph_status`, `search_entities`, `describe_entity`, `get_graphql_schema`, `query_graphql` | MCP spec |
+| `mcp/` | MCP server: the whole backend as tools. Read the graph (`describe_ontology`, `search_entities`, `describe_entity`, `class_schema`, `ontology_paths`, `graph_aggregate`, `query_graphql`); design the draft (`add_class`, `map_class`, `add_attribute`, `add_relationship`, `map_relationship`, `remove_relationship`, `exclude_property`, `unmap_class`); snapshot tables (`import_tables`, `refresh_metadata`); profile and check quality (`run_profile`, `table_quality`, `add_quality_rule`, `failing_rows`); glossary (`add_term`, `update_term`, `delete_term`); reasoning rules and constraints (`add_rule`, `add_constraint`); build (`start_build`, incremental); lifecycle (`create_version`, `transition_version`, `review_version`, `set_active_version`); domain settings and MCP policy. Every action runs as the caller under the lease, role and policy. | MCP spec |
 
 ## Triple table
 

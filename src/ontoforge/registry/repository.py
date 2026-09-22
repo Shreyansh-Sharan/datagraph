@@ -8,7 +8,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from ontoforge.constants import MCP_REGISTRY_TOOLS, MCP_TOOLS
+from ontoforge.constants import MCP_REGISTRY_TOOLS, MCP_TOOLS, MCP_DOMAIN_TOOLS
 from ontoforge.db import Database
 
 from .models import (
@@ -87,10 +87,9 @@ class Registry:
 
     def set_mcp_policy(self, domain_id: UUID, policy: dict) -> Domain:
         disabled = list(policy.get("disabled_tools", []))
-        bad = [t for t in disabled if t not in MCP_TOOLS or t in MCP_REGISTRY_TOOLS]
+        bad = [t for t in disabled if t not in MCP_DOMAIN_TOOLS]
         if bad:
-            raise ValueError(f"Cannot disable tool(s) {', '.join(bad)}; domain-scoped tools are "
-                             f"{', '.join(t for t in MCP_TOOLS if t not in MCP_REGISTRY_TOOLS)}")
+            raise ValueError(f"Cannot disable tool(s) {', '.join(bad)}; domain-scoped tools are {', '.join(MCP_DOMAIN_TOOLS)}")
         clean = {"exposed": bool(policy.get("exposed", True))}
         if disabled:
             clean["disabled_tools"] = sorted(set(disabled))
