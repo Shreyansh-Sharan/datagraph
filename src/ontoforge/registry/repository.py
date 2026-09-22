@@ -377,6 +377,18 @@ class Registry:
         with self._cur() as cur:
             cur.execute("UPDATE build_runs SET steps = %s WHERE id = %s", (Jsonb(steps), run_id))
 
+    def build_state(self, version_id: UUID) -> dict | None:
+        """The mapping hash and per-table signatures as of the last successful load, or None."""
+        with self._cur() as cur:
+            row = cur.execute("SELECT mapping_hash, tables FROM build_state WHERE domain_version_id = %s", (version_id,)).fetchone()
+        return {"mapping_hash": row["mapping_hash"], "tables": dict(row["tables"] or {})} if row else None
+
+    def save_build_state(self, version_id: UUID, mapping_hash: str, tables: dict[str, str]) -> None:
+        with self._cur() as cur:
+            cur.execute("INSERT INTO build_state (domain_version_id, mapping_hash, tables) VALUES (%s, %s, %s) "
+                        "ON CONFLICT (domain_version_id) DO UPDATE SET mapping_hash = EXCLUDED.mapping_hash, tables = EXCLUDED.tables, updated_at = now()",
+                        (version_id, mapping_hash, Jsonb(tables)))
+
     def running_build(self, version_id: UUID) -> BuildRun | None:
         with self._cur() as cur:
             row = cur.execute("SELECT * FROM build_runs WHERE domain_version_id = %s AND status = 'running' "

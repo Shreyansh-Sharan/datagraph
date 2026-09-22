@@ -137,8 +137,13 @@ tasks run as jobs (`?background=true`) and the screen shows their progress.
 ### Build and mapping
 
 The Build screen starts a run (`POST /versions/{id}/builds`), polls `GET /builds/{run}` until it
-settles and shows the steps as the pipeline records them (compile, drift, prepare, publish when the
-domain materializes, load, finalize); a run still running when the screen opens is picked up, and
+settles and shows the steps as the pipeline records them (compile, drift, prepare, plan, publish when
+the domain materializes, load, finalize). Builds are **incremental**: every triple remembers its
+source table, the plan step compares each mapped table's signature (Delta's last modification on
+Databricks, a row hash on Postgres) with the one saved at the last successful build, and only the
+tables that changed are read again and have their triples replaced; a changed mapping, a published
+view, a query-based logical table or the "Full rebuild" button (`?full=true`) read everything. A
+run still running when the screen opens is picked up, and
 three failed status reads stop polling with a notice. The pipeline records a step when it starts, and
 the load step records how many rows have arrived every 5,000 rows, so a long load shows "12,345 rows
 so far" and the elapsed time instead of a queued step. The pre-build checklist reads the snapshot,

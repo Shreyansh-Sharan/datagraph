@@ -396,13 +396,18 @@ export class RestApi extends MockApi {
   /** The pipeline's step order, so a running build shows what is still to come. */
   private pipeline(domain: string): string[] {
     const publish = (this.materializations[domain] ?? "none") !== "none";
-    return ["compile", "drift", "prepare", ...(publish ? ["publish"] : []), "load", "finalize"];
+    return ["compile", "drift", "prepare", "plan", ...(publish ? ["publish"] : []), "load", "finalize"];
   }
   private toRun(r: { id: string; status: BuildRun["status"]; actor: string | null; started_at: string; finished_at: string | null; triple_count: number | null; error: string | null; steps: { name: string; seconds: number | null; detail?: Record<string, unknown> }[] }, domain?: string): BuildRun {
     const secs = r.finished_at ? (new Date(r.finished_at).getTime() - new Date(r.started_at).getTime()) / 1000 : null;
     const running = r.status === "running" || r.status === "queued";
     const fmt = (v: unknown) => typeof v === "number" ? v.toLocaleString() : String(v);
-    const detail = (d?: Record<string, unknown>) => d ? Object.entries(d).filter(([, v]) => typeof v !== "object" || v === null).map(([k, v]) => k === "rows" ? `${fmt(v)} rows so far` : `${fmt(v)} ${k}`).join(", ") + (Array.isArray(d.issues) ? `${d.issues.length} drift issue${d.issues.length === 1 ? "" : "s"}` : "") : "";
+    const detail = (d?: Record<string, unknown>) => {
+      if (!d) return "";
+      if (d.mode) return `${d.mode}: ${Array.isArray(d.changed) ? d.changed.length : 0} table${Array.isArray(d.changed) && d.changed.length === 1 ? "" : "s"} to read, ${fmt(d.unchanged ?? 0)} unchanged`;   // the plan step
+      if (d.skipped) return "nothing changed: no rows read";
+      return Object.entries(d).filter(([k, v]) => (typeof v !== "object" || v === null) && k !== "reason").map(([k, v]) => k === "rows" ? `${fmt(v)} rows so far` : `${fmt(v)} ${k}`).join(", ") + (Array.isArray(d.issues) ? `${d.issues.length} drift issue${d.issues.length === 1 ? "" : "s"}` : "");
+    };
     const done = r.steps.map(s => ({ name: s.name, detail: detail(s.detail), seconds: s.seconds, state: (s.seconds == null && running ? "running" : "done") as BuildStep["state"] }));
     const seen = new Set(done.map(s => s.name));
     const order = domain ? this.pipeline(domain) : [];
@@ -419,7 +424,7 @@ export class RestApi extends MockApi {
   private runDomains: Record<string, string> = {};   // run id -> domain, so a poll can still show the queued steps
   private remember(domain: string, run: BuildRun): BuildRun { this.runDomains[run.id] = domain; return run; }
   override async builds(domain: string, version: number): Promise<BuildRun[]> { const rs = await this.req<Parameters<RestApi["toRun"]>[0][]>("GET", `/versions/${this.vid(domain, version)}/builds`); return rs.map(r => this.remember(domain, this.toRun(r, domain))); }
-  override async startBuild(domain: string, version: number): Promise<BuildRun> { return this.remember(domain, this.toRun(await this.req("POST", `/versions/${this.vid(domain, version)}/builds`), domain)); }
+  override async startBuild(domain: string, version: number, opts?: { full?: boolean }): Promise<BuildRun> { return this.remember(domain, this.toRun(await this.req("POST", `/versions/${this.vid(domain, version)}/builds${opts?.full ? "?full=true" : ""}`), domain)); }
   override async buildStatus(runId: string): Promise<BuildRun> { return this.toRun(await this.req("GET", `/builds/${runId}`), this.runDomains[runId]); }
   override async cancelBuild(runId: string): Promise<BuildRun> { return this.toRun(await this.req("POST", `/builds/${runId}/cancel`), this.runDomains[runId]); }
   override async checklist(domain: string, version: number): Promise<ChecklistItem[]> {

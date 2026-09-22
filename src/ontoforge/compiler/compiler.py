@@ -38,6 +38,11 @@ class TripleSelect:
     sql: str
     triples_map: str
     predicate: str | None  # constant predicate IRI when known
+    tables: tuple[str, ...] = ()   # source tables the rows come from: the child table first, a joined parent second; empty for a query
+
+    @property
+    def source_table(self) -> str | None:
+        return self.tables[0] if self.tables else None
 
 
 @dataclass(frozen=True)
@@ -67,6 +72,14 @@ class _Term:
     language: str | None = None
 
 
+def _tables(*maps: TriplesMap) -> tuple[str, ...]:
+    """The named logical tables behind these triples maps, child first, without repeats; empty when any is a query."""
+    names = [m.logical_table.table_name for m in maps]
+    if any(n is None for n in names):
+        return ()
+    return tuple(dict.fromkeys(names))
+
+
 def compile_mapping(mapping: Mapping, dialect: SqlDialect,
                     column_types: ColumnTypeResolver | None = None) -> CompiledMapping:
     return _Compiler(dialect, column_types).compile(mapping)
@@ -94,7 +107,7 @@ class _Compiler:
         for cls in tm.classes:
             obj = _Term(self.d.string_literal(cls), TermKind.IRI, ())
             pred = _Term(self.d.string_literal(RDF_TYPE), TermKind.IRI, ())
-            out.append(TripleSelect(self._select(subject, pred, obj, source, []), tm.iri, RDF_TYPE))
+            out.append(TripleSelect(self._select(subject, pred, obj, source, []), tm.iri, RDF_TYPE, _tables(tm)))
         for pom in tm.predicate_object_maps:
             out.extend(self._predicate_object_map(tm, subject, source, pom))
         return out
@@ -108,10 +121,12 @@ class _Compiler:
                 if isinstance(obj_map, RefObjectMap):
                     obj, from_clause, on = self._reference(tm, obj_map)
                     sql = self._select(subject, pred, obj, from_clause, on)
+                    tables = _tables(tm, obj_map.parent_triples_map)
                 else:
                     obj = self._term(obj_map, CHILD, tm.logical_table)
                     sql = self._select(subject, pred, obj, source, [])
-                out.append(TripleSelect(sql, tm.iri, pred_map.constant if pred_map.is_constant else None))
+                    tables = _tables(tm)
+                out.append(TripleSelect(sql, tm.iri, pred_map.constant if pred_map.is_constant else None, tables))
         return out
 
     def _reference(self, child: TriplesMap, ref: RefObjectMap) -> tuple[_Term, str, list[str]]:

@@ -77,3 +77,16 @@ def test_connect_factory_sets_session_catalog_and_schema(monkeypatch):
     assert calls[-1]["_socket_timeout"] == 600       # a dropped connection must fail, never hang a job forever
     databricks_connect_factory("h", "/p", "t", socket_timeout=30)()
     assert calls[-1]["_socket_timeout"] == 30
+
+
+def test_table_signature_comes_from_describe_detail():
+    class DescribingCursor(FakeCursor):
+        description = [("format",), ("lastModified",), ("numFiles",), ("sizeInBytes",)]
+    class DescribingConnection(FakeConnection):
+        def cursor(self):
+            c = DescribingCursor(list(self.rows)); self.cursors.append(c); return c
+    conn = DescribingConnection([("delta", "2026-09-21 20:16:26", 4, 17_000_000)])
+    src = DatabricksSource(lambda: conn, default_catalog="main", default_schema="hr")
+    assert src.table_signature("hr.employee") == "2026-09-21 20:16:26|4|17000000"
+    assert conn.cursors[0].executed[0][0] == "DESCRIBE DETAIL `hr`.`employee`"
+    assert src.table_stats("hr.employee") == (17_000_000, "2026-09-21 20:16:26")

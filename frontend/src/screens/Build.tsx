@@ -48,17 +48,18 @@ export function Build() {
   const shown = live ?? runs[0] ?? null;
   const building = shown?.status === "running" || shown?.status === "queued";
   const built = shown?.status === "succeeded";
-  const start = async () => { setLost(null); try { setLive(await api.startBuild(domain.name, version!.version)); } catch (e) { say(e instanceof Error ? e.message : String(e)); } };
+  const start = async (full = false) => { setLost(null); try { setLive(await api.startBuild(domain.name, version!.version, { full })); } catch (e) { say(e instanceof Error ? e.message : String(e)); } };
   const cancel = async () => { if (live) { try { setLive(await api.cancelBuild(live.id)); } catch (e) { say(e instanceof Error ? e.message : String(e)); } } };
   const blockReason = editable ? "" : "Only the lease holder can build a draft";
 
   return (
     <>
       <div className="page-head">
-        <div><h1>Build</h1><p>Compile the mapping to SQL, load triples from {dbx ? "Databricks" : "Postgres"}, infer, run rules and quality, publish. A failed build keeps the previous graph.</p></div>
+        <div><h1>Build</h1><p>Compile the mapping to SQL, read the source tables that changed since the last build from {dbx ? "Databricks" : "Postgres"}, replace their triples, finalize. A failed build keeps the previous graph.</p></div>
         <div className="actions">
           {building && <Button onClick={cancel}>Cancel</Button>}
-          <Button variant="primary" disabled={building || !editable} title={blockReason} onClick={start}>{building && <Spinner />}{building ? "Building…" : "Start build"}</Button>
+          {!building && <Button disabled={!editable} title={editable ? "Read every source table again, whatever changed" : blockReason} onClick={() => start(true)}>Full rebuild</Button>}
+          <Button variant="primary" disabled={building || !editable} title={editable ? "Read only the source tables that changed since the last build" : blockReason} onClick={() => start(false)}>{building && <Spinner />}{building ? "Building…" : "Start build"}</Button>
         </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 320px", gap: 20, alignItems: "start" }}>

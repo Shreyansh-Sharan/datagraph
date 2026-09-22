@@ -46,7 +46,7 @@ def test_build_materialises_triples_and_records_run(env):
     run = pipeline.run(v.id, actor="alice")
     assert run.status == "succeeded", run.error
     assert run.triple_count == store.count(v.id) > 0
-    assert [s["name"] for s in run.steps] == ["compile", "prepare", "load", "finalize"]
+    assert [s["name"] for s in run.steps] == ["compile", "prepare", "plan", "load", "finalize"]
     assert reg.get_version(v.id).r2rml_ttl and "r2rml" in reg.get_version(v.id).r2rml_ttl
 
 

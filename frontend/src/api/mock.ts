@@ -480,7 +480,7 @@ export class MockApi implements DatagraphApi {
     return this.runs[key];
   }
   async builds(domain: string, version: number) { return clone(this.historyFor(domain, version)); }
-  async startBuild(domain: string, version: number): Promise<BuildRun> {
+  async startBuild(domain: string, version: number, _opts?: { full?: boolean }): Promise<BuildRun> {
     const id = `#${(this.nextRun++).toString(16)}`;
     const steps: BuildStep[] = D.STEP_NAMES.map(([name, detail], i) => ({ name, detail, seconds: null, state: i === 0 ? "running" : "queued" }));
     const run: BuildRun = { id, status: "running", actor: "alice", duration: "—", triples: "—", inferred: "—", error: "", steps, stepIndex: 0 };

@@ -18,14 +18,14 @@ class BuildScheduler:
         self._cancel: dict[UUID, threading.Event] = {}
         self._futures: dict[UUID, Future] = {}
 
-    def submit(self, version_id: UUID, *, actor: str | None = None) -> BuildRun:
+    def submit(self, version_id: UUID, *, actor: str | None = None, full: bool = False) -> BuildRun:
         with self._lock:
             if self.registry.running_build(version_id) is not None:
                 raise LifecycleError("A build is already running for this version")
             run = self.registry.start_build(version_id, actor=actor)
             flag = threading.Event()
             self._cancel[run.id] = flag
-            self._futures[run.id] = self.pool.submit(self._execute, version_id, run, flag)
+            self._futures[run.id] = self.pool.submit(self._execute, version_id, run, flag, full)
         return run
 
     def wait(self, run_id: UUID, timeout: float | None = None) -> BuildRun:
@@ -45,9 +45,9 @@ class BuildScheduler:
     def shutdown(self, wait: bool = True) -> None:
         self.pool.shutdown(wait=wait)
 
-    def _execute(self, version_id: UUID, run: BuildRun, flag: threading.Event) -> None:
+    def _execute(self, version_id: UUID, run: BuildRun, flag: threading.Event, full: bool = False) -> None:
         try:
-            self.pipeline.run(version_id, run=run, cancel_check=flag.is_set)
+            self.pipeline.run(version_id, run=run, cancel_check=flag.is_set, full=full)
         finally:
             with self._lock:
                 self._cancel.pop(run.id, None)

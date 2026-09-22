@@ -32,12 +32,15 @@ class TripleStore:
 
     # -- loading -------------------------------------------------------------
 
-    def replace_from_sql(self, version_id: UUID, select_sql: str) -> int:
-        """Full rebuild when the source tables live in this database: one server-side statement."""
+    def replace_from_sql(self, version_id: UUID, select_sql: str, tables: list[str] | None = None, with_source: bool = False) -> int:
+        """Rebuild when the source tables live in this database: one server-side statement. With ``tables``
+        only the triples of those source tables are replaced; ``with_source`` means the SELECT carries a
+        seventh column, source_table."""
+        cols = list(COLUMNS) + (["source_table"] if with_source else [])
         with self.db.transaction() as cur:
-            cur.execute("DELETE FROM triples WHERE domain_version_id = %s", (version_id,))
-            cur.execute(f"INSERT INTO triples (domain_version_id, {', '.join(COLUMNS)}) "
-                        f"SELECT %s, {', '.join(COLUMNS)} FROM (\n{select_sql}\n) AS src", (version_id,))
+            self._clear(cur, version_id, tables)
+            cur.execute(f"INSERT INTO triples (domain_version_id, {', '.join(cols)}) "
+                        f"SELECT %s, {', '.join(cols)} FROM (\n{select_sql}\n) AS src", (version_id,))
             return cur.rowcount
 
     def replace(self, version_id: UUID, rows: Iterable[Row]) -> int:
@@ -45,6 +48,20 @@ class TripleStore:
         with self.db.transaction() as cur:
             cur.execute("DELETE FROM triples WHERE domain_version_id = %s", (version_id,))
             return self._copy(cur, version_id, rows, inferred=False)
+
+    def replace_tables(self, version_id: UUID, tables: list[str] | None, rows: Iterable[Row]) -> int:
+        """Replace the triples of the given source tables (every table when None) from a stream of rows
+        that carry their source table as a seventh value; atomic."""
+        with self.db.transaction() as cur:
+            self._clear(cur, version_id, tables)
+            return self._copy(cur, version_id, rows, inferred=False, with_source=True)
+
+    @staticmethod
+    def _clear(cur, version_id: UUID, tables: list[str] | None) -> None:
+        if tables is None:
+            cur.execute("DELETE FROM triples WHERE domain_version_id = %s", (version_id,))
+        else:
+            cur.execute("DELETE FROM triples WHERE domain_version_id = %s AND NOT inferred AND source_table = ANY(%s)", (version_id, tables))
 
     def add_inferred(self, version_id: UUID, rows: Iterable[Row]) -> int:
         with self.db.transaction() as cur:
@@ -61,11 +78,12 @@ class TripleStore:
             return cur.rowcount
 
     @staticmethod
-    def _copy(cur, version_id: UUID, rows: Iterable[Row], inferred: bool) -> int:
+    def _copy(cur, version_id: UUID, rows: Iterable[Row], inferred: bool, with_source: bool = False) -> int:
         n = 0
-        with cur.copy(f"COPY triples (domain_version_id, {', '.join(COLUMNS)}, inferred) FROM STDIN") as copy:
+        cols = f"domain_version_id, {', '.join(COLUMNS)}, inferred" + (", source_table" if with_source else "")
+        with cur.copy(f"COPY triples ({cols}) FROM STDIN") as copy:
             for row in rows:
-                copy.write_row((version_id, *row[:6], inferred))
+                copy.write_row((version_id, *row[:6], inferred, *((row[6],) if with_source else ())))
                 n += 1
         return n
 

@@ -230,7 +230,7 @@ export interface DatagraphApi {
   constraints(domain: string, version: number): Promise<Constraint[]>;
 
   builds(domain: string, version: number): Promise<BuildRun[]>;
-  startBuild(domain: string, version: number): Promise<BuildRun>;
+  startBuild(domain: string, version: number, opts?: { full?: boolean }): Promise<BuildRun>;   // full: read every source table again instead of only the changed ones
   buildStatus(runId: string): Promise<BuildRun>;
   cancelBuild(runId: string): Promise<BuildRun>;
   checklist(domain: string, version: number): Promise<ChecklistItem[]>;

@@ -40,7 +40,7 @@ def test_scheduler_runs_build_in_background_and_records_progress(db):
     assert run.status == "running"
     done = wait_for(lambda: (r := reg.get_build(run.id)) and r.status != "running" and r)
     assert done.status == "succeeded" and done.triple_count == store.count(v.id) > 0
-    assert [s["name"] for s in done.steps] == ["compile", "prepare", "load", "finalize"]
+    assert [s["name"] for s in done.steps] == ["compile", "prepare", "plan", "load", "finalize"]
     assert all(s.get("seconds") is not None for s in done.steps)
     sched.shutdown()
 
@@ -50,9 +50,9 @@ def test_only_one_running_build_per_version(db):
     gate = threading.Event()
 
     class SlowPipeline(BuildPipeline):
-        def run(self, version_id, *, actor=None, run=None, cancel_check=None):
+        def run(self, version_id, *, actor=None, run=None, cancel_check=None, **kw):
             gate.wait(5)
-            return super().run(version_id, actor=actor, run=run, cancel_check=cancel_check)
+            return super().run(version_id, actor=actor, run=run, cancel_check=cancel_check, **kw)
 
     sched = BuildScheduler(SlowPipeline(reg, store, PostgresSource(db)), reg)
     first = sched.submit(v.id, actor="a")

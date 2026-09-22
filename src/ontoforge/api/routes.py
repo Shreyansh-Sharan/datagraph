@@ -763,10 +763,11 @@ def release_lease(version_id: UUID, request: Request, me: Principal = Depends(bu
 
 @router.post("/versions/{version_id}/builds", status_code=202)
 def build(version_id: UUID, request: Request, response: Response, me: Principal = Depends(builder),
-          wait: bool = Query(default=False, description="block until the build finishes")):
+          wait: bool = Query(default=False, description="block until the build finishes"),
+          full: bool = Query(default=False, description="read every source table again instead of only the changed ones")):
     """Starts a build in the background (202 + running run). ``?wait=true`` returns the finished run (200)."""
     sched = _st(request).scheduler
-    run = sched.submit(version_id, actor=me.name)
+    run = sched.submit(version_id, actor=me.name, full=full)
     if wait:
         response.status_code = 200
         return sched.wait(run.id)

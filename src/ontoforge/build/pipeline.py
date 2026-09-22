@@ -6,6 +6,8 @@ triples untouched (the load itself is one transaction, so a cancel during it is 
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import re
 import time
@@ -62,7 +64,7 @@ class BuildPipeline:
         return self._source(version_id) if callable(self._source) else self._source
 
     def run(self, version_id: UUID, *, actor: str | None = None, run: BuildRun | None = None,
-            cancel_check: Callable[[], bool] | None = None) -> BuildRun:
+            cancel_check: Callable[[], bool] | None = None, full: bool = False) -> BuildRun:
         run = run or self.registry.start_build(version_id, actor=actor)
         steps: list[dict] = []
         cancelled = cancel_check or (lambda: False)
@@ -92,7 +94,10 @@ class BuildPipeline:
                 r2rml = self._r2rml(version)
                 self.source = self.source_for(version_id)   # the domain's own connection, or the deployment's source
                 compiled = compile_mapping(r2rml, self.source.dialect, column_types=self.source.catalog.resolver())
-                self.registry.store_r2rml(version_id, serialize_r2rml(r2rml))
+                ttl = serialize_r2rml(r2rml)
+                self.registry.store_r2rml(version_id, ttl)
+                # The spec, canonically serialized: the Turtle carries fresh blank-node ids every time.
+                mapping_hash = hashlib.sha256((json.dumps(version.mapping, sort_keys=True) if version.mapping else (version.r2rml_ttl or "")).encode()).hexdigest()
                 steps[-1]["detail"] = {"selects": len(compiled.selects)}
             if self.metadata is not None:
                 with step("drift"):
@@ -103,17 +108,29 @@ class BuildPipeline:
                         log.warning("schema drift: %d issue(s)", len(issues), extra={"event": "build.drift", "issues": issues, **ctx})
             with step("prepare"):
                 self._prepare()
-            load_sql = compiled.sql
+            with step("plan"):
+                plan = self._plan(version_id, compiled, mapping_hash, full=full or bool(self.publish))
+                steps[-1]["detail"] = {"mode": plan.mode, "reason": plan.reason, "changed": plan.changed, "unchanged": len(plan.unchanged)}
             if self.publish:
                 with step("publish"):
                     published = self._publish(version, compiled.sql)
                     steps[-1]["detail"] = published
                     load_sql = f"SELECT {', '.join(COLUMNS)} FROM {self._quote(published['table'] or published['view'])}"
-            with step("load"):
-                count = self._load(version_id, load_sql, on_rows)
-                steps[-1]["detail"] = {"triples": count}
+                with step("load"):
+                    count = self._load(version_id, load_sql, on_rows)
+                    steps[-1]["detail"] = {"triples": count}
+            else:
+                with step("load"):
+                    if plan.mode == "incremental" and not plan.changed:
+                        count = 0
+                        steps[-1]["detail"] = {"triples": 0, "skipped": True}
+                    else:
+                        count = self._load_tables(version_id, compiled, plan, on_rows)
+                        steps[-1]["detail"] = {"triples": count}
             with step("finalize"):
                 counted = self.store.count(version_id)
+                if not self.publish:
+                    self.registry.save_build_state(version_id, mapping_hash, plan.signatures_after)
             log.info("build succeeded: %d triples", counted, extra={"event": "build.succeeded", "triples": counted, **ctx})
             return self.registry.finish_build(run.id, status="succeeded", triple_count=counted, steps=steps)
         except BuildCancelled as exc:
@@ -122,6 +139,52 @@ class BuildPipeline:
         except Exception as exc:  # noqa: BLE001 - every failure must be recorded on the run
             log.error("build failed: %s", exc, extra={"event": "build.failed", "error": str(exc), **ctx}, exc_info=True)
             return self.registry.finish_build(run.id, status="failed", error=f"{type(exc).__name__}: {exc}", steps=steps)
+
+    # -- incremental planning and loading ----------------------------------------
+
+    def _plan(self, version_id: UUID, compiled, mapping_hash: str, *, full: bool) -> "BuildPlan":
+        """Which source tables must be read: all of them, or only those whose signature moved since the
+        last successful load of this version with this mapping."""
+        childs = list(dict.fromkeys(s.source_table for s in compiled.selects if s.source_table))
+        deps: dict[str, set[str]] = {t: set() for t in childs}
+        for sel in compiled.selects:
+            if sel.source_table:
+                deps[sel.source_table].update(sel.tables)
+        every = sorted({t for ts in deps.values() for t in ts})
+        signatures = {t: self.source.table_signature(t) for t in every}
+        state = self.registry.build_state(version_id)
+        if full:
+            mode, reason = "full", "requested" if not self.publish else "published view"
+        elif any(not s.tables for s in compiled.selects):
+            mode, reason = "full", "query-based logical table"
+        elif state is None:
+            mode, reason = "full", "first build"
+        elif state["mapping_hash"] != mapping_hash:
+            mode, reason = "full", "mapping changed"
+        else:
+            mode, reason = "incremental", "signatures compared"
+        if mode == "full":
+            changed, unchanged = childs, []
+        else:
+            known = state["tables"]
+            changed = [t for t in childs if any(signatures.get(d) is None or known.get(d) != signatures[d] for d in deps[t])]
+            unchanged = [t for t in childs if t not in changed]
+        after = dict(state["tables"]) if state and mode == "incremental" else {}
+        after.update({t: sig for t, sig in signatures.items() if sig is not None})
+        return BuildPlan(mode, reason, changed, unchanged, after)
+
+    def _load_tables(self, version_id: UUID, compiled, plan: "BuildPlan", on_rows: Callable[[int], None] | None = None) -> int:
+        """Replace the triples of the changed source tables (every table on a full build) from a
+        SELECT whose rows carry their source table as a seventh column."""
+        d = self.source.dialect
+        wanted = set(plan.changed)
+        parts = [f"SELECT {', '.join(COLUMNS)}, {d.string_literal(s.source_table) if s.source_table else d.null_text()} AS source_table FROM (\n{s.sql}\n) AS t{i}"
+                 for i, s in enumerate(compiled.selects) if plan.mode == "full" or s.source_table in wanted]
+        sql = "\nUNION ALL\n".join(parts)
+        tables = None if plan.mode == "full" else plan.changed
+        if isinstance(self.source, PostgresSource) and self.source.db is self.store.db:
+            return self.store.replace_from_sql(version_id, sql, tables=tables, with_source=True)
+        return self.store.replace_tables(version_id, tables, self._counted(self.source.stream(sql), on_rows))
 
     # -- overridable stages ---------------------------------------------------
 
@@ -173,6 +236,15 @@ def safe_identifier(name: str) -> str:
     if not ident or ident[0].isdigit():
         ident = "d_" + ident
     return ident
+
+
+@dataclass(frozen=True)
+class BuildPlan:
+    mode: str                       # full | incremental
+    reason: str
+    changed: list[str]              # source tables to read
+    unchanged: list[str]            # source tables left as they are
+    signatures_after: dict[str, str]
 
 
 class _step:

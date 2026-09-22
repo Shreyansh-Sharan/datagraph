@@ -46,6 +46,11 @@ class SourceEngine(ABC):
         """(size in bytes, last modified) when the warehouse can tell; (None, None) otherwise."""
         return None, None
 
+    def table_signature(self, table: str) -> str | None:
+        """A string that changes whenever the table's rows change; None when the warehouse cannot tell
+        (the table is then reloaded on every build)."""
+        return None
+
     def ensure_schema(self, schema: str) -> None:
         self.execute(f"CREATE SCHEMA IF NOT EXISTS {self.dialect.quote_table(schema)}")
 
@@ -80,6 +85,14 @@ class PostgresSource(SourceEngine):
         with self.db.transaction() as cur:
             cur.execute("SELECT pg_total_relation_size(%s::regclass)", (self.dialect.quote_table(table),))
             return int(cur.fetchone()[0]), None
+
+    def table_signature(self, table: str) -> str | None:
+        """Row count plus an order-independent hash of every row: one pass, exact. Postgres has no
+        cheap modification counter, so this is the honest fallback."""
+        with self.db.transaction() as cur:
+            cur.execute(f"SELECT count(*), coalesce(sum(hashtext(t::text)::bigint), 0) FROM {self.dialect.quote_table(table)} t")
+            n, h = cur.fetchone()
+            return f"{n}|{h}"
 
     def query_params(self, sql: str, params: dict, limit: int = 100) -> tuple[list[str], list[tuple]]:
         import re

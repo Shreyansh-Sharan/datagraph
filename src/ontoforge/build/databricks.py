@@ -63,21 +63,29 @@ class DatabricksSource(SourceEngine):
         finally:
             conn.close()
 
-    def table_stats(self, table: str) -> tuple[int | None, "datetime | None"]:
-        """DESCRIBE DETAIL: Delta's size in bytes and last modification time."""
+    def describe_detail(self, table: str) -> dict:
+        """DESCRIBE DETAIL as a dict: Delta's size, file count and last modification time, among others."""
         conn = self.connect()
         try:
             with conn.cursor() as cur:
                 cur.execute(f"DESCRIBE DETAIL {self.dialect.quote_table(table)}")
                 names = [d[0] for d in (getattr(cur, "description", None) or [])]
                 rows = cur.fetchall()
-                if not rows or not names:
-                    return None, None
-                row = dict(zip(names, rows[0]))
-                size = row.get("sizeInBytes")
-                return (int(size) if size is not None else None), row.get("lastModified")
+                return dict(zip(names, rows[0])) if rows and names else {}
         finally:
             conn.close()
+
+    def table_stats(self, table: str) -> tuple[int | None, "datetime | None"]:
+        row = self.describe_detail(table)
+        size = row.get("sizeInBytes")
+        return (int(size) if size is not None else None), row.get("lastModified")
+
+    def table_signature(self, table: str) -> str | None:
+        """Every write to a Delta table moves lastModified; numFiles and sizeInBytes guard the rest."""
+        row = self.describe_detail(table)
+        if not row or row.get("lastModified") is None:
+            return None
+        return f"{row.get('lastModified')}|{row.get('numFiles')}|{row.get('sizeInBytes')}"
 
     def _run_query(self, sql: str, params: tuple) -> list[tuple]:
         conn = self.connect()
