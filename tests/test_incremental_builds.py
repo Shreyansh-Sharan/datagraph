@@ -67,18 +67,30 @@ def test_a_deleted_row_disappears_because_the_table_reloads_whole(db):
     assert store.count(v.id) == run.triple_count
 
 
-def test_a_mapping_change_or_an_explicit_request_forces_a_full_build(db):
+def test_a_mapping_change_reloads_only_the_tables_whose_selects_changed(db):
     reg, store, pipeline, v = _env(db)
     pipeline.run(v.id, actor="alice")
     forced = pipeline.run(v.id, actor="alice", full=True)
     assert _plan(forced)["mode"] == "full" and forced.status == "succeeded"
     spec = mapping().to_dict()
-    reg.update_content(v.id, actor="alice", mapping=spec)          # same content, same hash: still incremental
-    assert _plan(pipeline.run(v.id, actor="alice"))["mode"] == "incremental"
-    spec["classes"][0]["attributes"] = spec["classes"][0]["attributes"][:-1]        # one attribute fewer: the mapping changed
+    reg.update_content(v.id, actor="alice", mapping=spec)          # same content: nothing to read
+    assert _plan(pipeline.run(v.id, actor="alice"))["changed"] == []
+    spec["classes"][0]["attributes"] = spec["classes"][0]["attributes"][:-1]        # Employee loses `hired`: only employees is re-read
     reg.update_content(v.id, actor="alice", mapping=spec)
     run = pipeline.run(v.id, actor="alice")
-    assert _plan(run)["mode"] == "full" and run.status == "succeeded"
+    plan = _plan(run)
+    assert run.status == "succeeded" and plan["mode"] == "incremental" and plan["changed"] == ["employees"] and "mapping" in plan["reason"]
+    with db.transaction() as cur:
+        assert cur.execute("SELECT count(*) FROM triples WHERE domain_version_id = %s AND predicate = %s", (v.id, EX + "hired")).fetchone()[0] == 0
+        assert cur.execute("SELECT count(*) FROM triples WHERE domain_version_id = %s AND source_table = 'departments'", (v.id,)).fetchone()[0] > 0
+    # a relation dropped with its link table: its triples go, and nothing is read for it
+    spec["relations"] = [r for r in spec["relations"] if r["table"] != "collaborations"]
+    reg.update_content(v.id, actor="alice", mapping=spec)
+    plan = _plan(pipeline.run(v.id, actor="alice"))
+    assert plan["changed"] == [] and plan["dropped"] == ["collaborations"]
+    with db.transaction() as cur:
+        assert cur.execute("SELECT count(*) FROM triples WHERE domain_version_id = %s AND source_table = 'collaborations'", (v.id,)).fetchone()[0] == 0
+        assert cur.execute("SELECT count(*) FROM triples WHERE domain_version_id = %s AND source_table = 'employees'", (v.id,)).fetchone()[0] > 0
 
 
 def test_replace_tables_touches_only_the_named_tables(db):

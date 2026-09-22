@@ -48,3 +48,12 @@ def test_unknown_class_names_the_closest_classes(db):
     tools = GraphTools(reg, store)
     for err in (tools.class_schema("hr", "Emp")["error"], tools.ontology_paths("hr", "Emp", "Department")["error"], tools.graph_aggregate("hr", "Emp")["error"]):
         assert err.startswith("Unknown class 'Emp'") and "Employee" in err and "Department" not in err
+
+
+def test_aggregate_rejects_a_step_that_is_not_in_the_ontology(db):
+    reg, store, v = built_domain(db)
+    tools = GraphTools(reg, store)
+    out = tools.graph_aggregate("hr", "Employee", measure="salary", filters=[{"path": ["works in", "hasCulture"], "value": "French"}])
+    assert "hasCulture" in out["error"] and "ontology_paths" in out["error"]
+    out = tools.graph_aggregate("hr", "Employee", measure="salary", filters=[{"path": ["works in", "name"], "value": "SALES"}])
+    assert out["rows"][0]["sum"] == 800

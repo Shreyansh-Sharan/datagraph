@@ -237,7 +237,7 @@ class GraphTools:
         if not src or not tgt:
             return {"error": self._unknown_class(o, from_cls if not src else to_cls)}
         if (have := self._property_of(o, name)):
-            return {"error": f"Relationship {name!r} already exists as {have}; map_relationship maps it, remove_relationship removes it"}
+            return {"error": f"Relationship {name!r} already exists as {have}, {self._mapped_as(v, o, have)}; map_relationship maps it, remove_relationship removes it"}
         p = ObjectProperty(o.mint(name), label or name, description, domain=src, range=tgt)
         spec = rel = None
         if fk_column or link_table:
@@ -383,6 +383,16 @@ class GraphTools:
         if (err := self._save(v, ontology=o, mapping=spec if unmapped else None)):
             return {"error": err}
         return {"removed": iri, "unmapped": unmapped, "next": "start_build to drop its triples from the graph."}
+
+    @staticmethod
+    def _mapped_as(v: DomainVersion, o: Ontology, iri: str) -> str:
+        spec = MappingSpec.from_dict(v.mapping) if v.mapping else None
+        rel = next((r for r in (spec.relations if spec else ()) if r.property_iri == iri), None)
+        if rel is None:
+            return "not mapped"
+        if rel.table:
+            return f"mapped on table {rel.table} (source key {', '.join(rel.source_key or ())}; target key {', '.join(rel.target_key or ())})"
+        return f"mapped by foreign key {', '.join(rel.target_key or ())} on the source class's table"
 
     def _draft(self, domain: str | None):
         """The working draft, its ontology (a new one for an empty domain) — or an error."""
@@ -787,6 +797,12 @@ class GraphTools:
                 return {"error": f"group_by is a path of steps, not a list of dimensions: {o.local_name(st.lstrip('^'))!r} is an attribute, so nothing follows it. "
                                  "Group by one dimension per call (group_by='<date attribute>' with group_kind='year', or group_by='<relationship>'); to combine two, filter on one and group by the other."}
         fl = [{"path": steps(f.get("path") or ([f["predicate"]] if f.get("predicate") else [])), "value": f.get("value")} for f in (filters or []) if f.get("value") is not None]
+        if o is not None:   # every step must be a property of the ontology; a guessed one would silently match nothing
+            known = set(o.object_properties) | set(o.datatype_properties)
+            for st in ([m] if m else []) + gpath + [st for f in fl for st in (f["path"] or [])]:
+                if st.lstrip("^") not in known:
+                    return {"error": f"{st.lstrip('^')!r} is not a property of the ontology, so the graph holds nothing behind it. "
+                                     "Use the steps ontology_paths returns; when it returns no path, the relationship is missing: add_relationship adds it."}
         rows = self.store.aggregate(v.id, iri, measure=m, group_by=steps(group_by), group_kind=group_kind, filters=fl, limit=limit)
         return {"class": iri, "measure": m, "group_by": steps(group_by), "group_kind": group_kind, "rows": rows,
                 "note": "sum/avg/min/max are over the measure where present; count is instances. Check the source table's date coverage before reading a last-period drop as a decline."}

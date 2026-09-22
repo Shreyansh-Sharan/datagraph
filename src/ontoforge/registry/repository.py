@@ -378,16 +378,17 @@ class Registry:
             cur.execute("UPDATE build_runs SET steps = %s WHERE id = %s", (Jsonb(steps), run_id))
 
     def build_state(self, version_id: UUID) -> dict | None:
-        """The mapping hash and per-table signatures as of the last successful load, or None."""
+        """The mapping hash, per-table signatures and per-table select hashes as of the last successful load, or None."""
         with self._cur() as cur:
-            row = cur.execute("SELECT mapping_hash, tables FROM build_state WHERE domain_version_id = %s", (version_id,)).fetchone()
-        return {"mapping_hash": row["mapping_hash"], "tables": dict(row["tables"] or {})} if row else None
+            row = cur.execute("SELECT mapping_hash, tables, selects FROM build_state WHERE domain_version_id = %s", (version_id,)).fetchone()
+        return {"mapping_hash": row["mapping_hash"], "tables": dict(row["tables"] or {}), "selects": dict(row["selects"] or {})} if row else None
 
-    def save_build_state(self, version_id: UUID, mapping_hash: str, tables: dict[str, str]) -> None:
+    def save_build_state(self, version_id: UUID, mapping_hash: str, tables: dict[str, str], selects: dict[str, str] | None = None) -> None:
         with self._cur() as cur:
-            cur.execute("INSERT INTO build_state (domain_version_id, mapping_hash, tables) VALUES (%s, %s, %s) "
-                        "ON CONFLICT (domain_version_id) DO UPDATE SET mapping_hash = EXCLUDED.mapping_hash, tables = EXCLUDED.tables, updated_at = now()",
-                        (version_id, mapping_hash, Jsonb(tables)))
+            cur.execute("INSERT INTO build_state (domain_version_id, mapping_hash, tables, selects) VALUES (%s, %s, %s, %s) "
+                        "ON CONFLICT (domain_version_id) DO UPDATE SET mapping_hash = EXCLUDED.mapping_hash, tables = EXCLUDED.tables, "
+                        "selects = EXCLUDED.selects, updated_at = now()",
+                        (version_id, mapping_hash, Jsonb(tables), Jsonb(selects or {})))
 
     def running_build(self, version_id: UUID) -> BuildRun | None:
         with self._cur() as cur:

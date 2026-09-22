@@ -72,7 +72,9 @@ def test_remove_relationship_and_errors_that_teach(db):
     assert all(r.property_iri != EX + "worksIn" for r in MappingSpec.from_dict(reg.get_version(v.id).mapping).relations)
     assert "Employee" in tools.add_relationship("hr", "x", "Emp", "Department", fk_column="deptno")["error"]
     assert "not a column" in tools.add_relationship("hr", "y", "Employee", "Department", fk_column="nope")["error"]
-    assert "already" in tools.add_relationship("hr", "reports to", "Employee", "Employee", fk_column="manager")["error"]
+    dup = tools.add_relationship("hr", "reports to", "Employee", "Employee", fk_column="manager")["error"]
+    assert "already" in dup and "mapped" in dup and "manager" in dup                  # says how it is mapped, so nothing is guessed
+    assert "not mapped" in tools.add_relationship("hr", "manages", "Employee", "Employee")["error"]
     assert "Unknown relationship" in tools.remove_relationship("hr", "nothing")["error"]
     assert "start_build" in tools.add_relationship("hr", "z", "Employee", "Department")["next"]   # ontology only: the mapping comes later
 

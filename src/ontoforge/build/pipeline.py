@@ -12,7 +12,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Iterable, Iterator
 from uuid import UUID
 
@@ -104,7 +104,7 @@ class BuildPipeline:
                 self._prepare()
             with step("plan"):
                 plan = self._plan(version_id, compiled, mapping_hash, full=full or bool(self.publish))
-                steps[-1]["detail"] = {"mode": plan.mode, "reason": plan.reason, "changed": plan.changed, "unchanged": len(plan.unchanged)}
+                steps[-1]["detail"] = {"mode": plan.mode, "reason": plan.reason, "changed": plan.changed, "unchanged": len(plan.unchanged), "dropped": plan.dropped}
             if self.metadata is not None:
                 with step("drift"):
                     from dataclasses import asdict
@@ -123,7 +123,7 @@ class BuildPipeline:
                     steps[-1]["detail"] = {"triples": count}
             else:
                 with step("load"):
-                    if plan.mode == "incremental" and not plan.changed:
+                    if plan.mode == "incremental" and not plan.changed and not plan.dropped:
                         count = 0
                         steps[-1]["detail"] = {"triples": 0, "skipped": True}
                     else:
@@ -132,7 +132,7 @@ class BuildPipeline:
             with step("finalize"):
                 counted = self.store.count(version_id)
                 if not self.publish:
-                    self.registry.save_build_state(version_id, mapping_hash, plan.signatures_after)
+                    self.registry.save_build_state(version_id, mapping_hash, plan.signatures_after, _select_hashes(compiled))
             log.info("build succeeded: %d triples", counted, extra={"event": "build.succeeded", "triples": counted, **ctx})
             return self.registry.finish_build(run.id, status="succeeded", triple_count=counted, steps=steps)
         except BuildCancelled as exc:
@@ -170,25 +170,31 @@ class BuildPipeline:
         with ThreadPoolExecutor(max_workers=min(8, max(1, len(every)))) as pool:   # one statement per table: side by side, not in a row
             signatures = dict(zip(every, pool.map(self.source.table_signature, every)))
         state = self.registry.build_state(version_id)
+        selects = _select_hashes(compiled)
+        remapped = [t for t in childs if state and state["selects"].get(t) != selects[t]] if state and state.get("selects") else []
+        dropped: list[str] = []
         if full:
             mode, reason = "full", "requested" if not self.publish else "published view"
         elif any(not s.tables for s in compiled.selects):
             mode, reason = "full", "query-based logical table"
         elif state is None:
             mode, reason = "full", "first build"
+        elif state["mapping_hash"] != mapping_hash and not state.get("selects"):
+            mode, reason = "full", "mapping changed"          # a state older than per-table select hashes: no way to tell which tables
         elif state["mapping_hash"] != mapping_hash:
-            mode, reason = "full", "mapping changed"
+            mode, reason = "incremental", f"mapping changed: {len(remapped)} table(s) re-mapped"
         else:
             mode, reason = "incremental", "signatures compared"
         if mode == "full":
             changed, unchanged = childs, []
         else:
             known = state["tables"]
-            changed = [t for t in childs if any(signatures.get(d) is None or known.get(d) != signatures[d] for d in deps[t])]
+            changed = [t for t in childs if t in remapped or any(signatures.get(d) is None or known.get(d) != signatures[d] for d in deps[t])]
             unchanged = [t for t in childs if t not in changed]
+            dropped = sorted(t for t in state.get("selects", {}) if t not in childs)   # no select produces it any more: its triples go
         after = dict(state["tables"]) if state and mode == "incremental" else {}
         after.update({t: sig for t, sig in signatures.items() if sig is not None})
-        return BuildPlan(mode, reason, changed, unchanged, after)
+        return BuildPlan(mode, reason, changed, unchanged, after, dropped)
 
     def _load_tables(self, version_id: UUID, compiled, plan: "BuildPlan", on_rows: Callable[[int], None] | None = None) -> int:
         """Replace the triples of the changed source tables (every table on a full build) from a
@@ -198,7 +204,9 @@ class BuildPipeline:
         parts = [f"SELECT {', '.join(COLUMNS)}, {d.string_literal(s.source_table) if s.source_table else d.null_text()} AS source_table FROM (\n{s.sql}\n) AS t{i}"
                  for i, s in enumerate(compiled.selects) if plan.mode == "full" or s.source_table in wanted]
         sql = "\nUNION ALL\n".join(parts)
-        tables = None if plan.mode == "full" else plan.changed
+        tables = None if plan.mode == "full" else plan.changed + plan.dropped
+        if not parts:                                   # only tables to drop: nothing to read
+            return self.store.replace_tables(version_id, tables, iter(()))
         if isinstance(self.source, PostgresSource) and self.source.db is self.store.db:
             return self.store.replace_from_sql(version_id, sql, tables=tables, with_source=True)
         return self.store.replace_tables(version_id, tables, self._counted(self.source.stream(sql), on_rows))
@@ -262,6 +270,16 @@ class BuildPlan:
     changed: list[str]              # source tables to read
     unchanged: list[str]            # source tables left as they are
     signatures_after: dict[str, str]
+    dropped: list[str] = field(default_factory=list)   # source tables no select produces any more: their triples are cleared
+
+
+def _select_hashes(compiled) -> dict[str, str]:
+    """Per source table, a hash of the SQL of the selects that produce its triples."""
+    by_table: dict[str, list[str]] = {}
+    for s in compiled.selects:
+        if s.source_table:
+            by_table.setdefault(s.source_table, []).append(s.sql)
+    return {t: hashlib.sha256("\n".join(sorted(sqls)).encode()).hexdigest() for t, sqls in by_table.items()}
 
 
 class _step:
