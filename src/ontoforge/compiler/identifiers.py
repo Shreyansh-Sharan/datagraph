@@ -14,7 +14,7 @@ class IdentifierError(ValueError):
     """An identifier is empty, malformed, or looks like an injection attempt."""
 
 
-_BARE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_BARE = re.compile(r"^[A-Za-z_](?:[A-Za-z0-9_]|-(?=[A-Za-z0-9_]))*$")   # a single hyphen between word characters (etl-app) is fine: every dialect quotes identifiers; "--" is not
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 
@@ -42,7 +42,7 @@ def _validate_part(name: str, *, what: str) -> str:
             raise IdentifierError(f"Malformed delimited {what} name {name!r}")
         return inner.replace('\x00', '"')
     if not _BARE.match(name):
-        raise IdentifierError(f"Invalid {what} name {name!r}: use letters, digits, '_' or a \"delimited\" name")
+        raise IdentifierError(f"Invalid {what} name {name!r}: use letters, digits, '_', '-' or a \"delimited\" name")
     return name
 
 

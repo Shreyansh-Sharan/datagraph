@@ -32,6 +32,7 @@ from ontoforge.reasoning import generate_shapes
 from ontoforge.quality import ConstraintSet, QualityEngine, QualityError
 from ontoforge.rules import Rule, RuleEngine, RuleError, RuleSet
 from ontoforge.metadata import MetadataError
+from ontoforge.catalog import SnapshotCatalog
 from ontoforge.tabledq import KIND_CATALOG
 from ontoforge.registry import Domain, DomainVersion, LifecycleError, NotFound, Status
 
@@ -979,8 +980,13 @@ def autodraft(version_id: UUID, body: AutodraftIn, request: Request, me: Princip
     st = _st(request)
     version = st.registry.get_version(version_id)
     domain = st.registry.get_domain_by_id(version.domain_id)
-    onto, spec = draft_from_catalog(st.sources.for_version(version_id).catalog, ontology_iri=body.ontology_iri, base_iri=domain.base_iri,
-                                    tables=body.tables, schema=body.schema_name, infer=body.infer_keys)
+    # The snapshot already holds the columns, keys and foreign keys: draft from it when it covers the tables asked for
+    # (no round trips to the source); the live catalog serves the rest.
+    snap = SnapshotCatalog(st.metadata, version_id)
+    wanted = body.tables if body.tables is not None else (snap.list_tables(body.schema_name) or None)
+    catalog = snap if wanted and all(snap.has(t) for t in wanted) else st.sources.for_version(version_id).catalog
+    onto, spec = draft_from_catalog(catalog, ontology_iri=body.ontology_iri, base_iri=domain.base_iri,
+                                    tables=wanted, schema=body.schema_name, infer=body.infer_keys)
     st.registry.update_content(version_id, actor=me.name, ontology_ttl=onto.to_turtle(), mapping=spec.to_dict())
     return {"classes": len(onto.classes), "properties": len(onto.datatype_properties) + len(onto.object_properties),
             "relations": len(spec.relations), "issues": onto.check()}

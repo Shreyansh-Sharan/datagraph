@@ -75,3 +75,12 @@ def test_sqlite_dialect_primitives():
     assert d.string_literal("it's") == "'it''s'"
     assert d.concat(["'a'", '"B"']) == "('a' || \"B\")"
     assert d.to_text('"B"') == 'CAST("B" AS TEXT)'
+
+
+def test_hyphenated_schema_names_are_identifiers_and_get_quoted():
+    assert validate_table("etl-app.projects") == ("etl-app", "projects")
+    from ontoforge.dialects import PostgresDialect, DatabricksDialect
+    assert PostgresDialect().quote_table("etl-app.projects") == '"etl-app"."projects"'
+    assert DatabricksDialect().quote_table("etl-app.projects") == "`etl-app`.`projects`"
+    with pytest.raises(IdentifierError):
+        validate_table("etl-app.projects; drop table x")
