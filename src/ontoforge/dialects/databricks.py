@@ -55,3 +55,9 @@ class DatabricksDialect(SqlDialect):
 
     def to_double(self, expr: str) -> str:
         return f"CAST({expr} AS DOUBLE)"
+
+    def quantile(self, expr: str, q: float) -> str:
+        return f"percentile_approx({expr}, {_num(q)})"
+
+    def is_multiple(self, expr: str, n: int) -> str:
+        return f"MOD({expr}, {int(n)}) = 0"

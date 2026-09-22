@@ -76,8 +76,16 @@ export interface RefreshChange { table: string; missing: boolean; added: string[
 export interface CatalogColumn { name: string; type: string; comment: string; key: "pk" | "fk" | null; keyInferred: boolean }
 export interface TableDetail { name: string; fullName: string; comment: string; columns: CatalogColumn[] }
 // -- table insights: profile, data quality, glossary ----------------------------------------------
-export interface ColumnProfile { name: string; type: string; nulls: number; null_rate: number; distinct: number | null; min: string | null; max: string | null; top: string | null; top_share: number | null }
-export interface TableProfile { table: string; profiled_at: string; actor: string | null; sample_pct: number; row_count: number | null; size_bytes: number | null; last_modified: string | null; duplicate_keys: number | null; columns: ColumnProfile[] }
+export type ColumnRole = "row key" | "binary" | "feature";
+export type ColumnKind = "numeric id" | "numeric" | "categorical" | "boolean" | "date";
+export interface ColumnProfile {
+  name: string; type: string; nulls: number; null_rate: number; distinct: number | null; min: string | null; max: string | null; top: string | null; top_share: number | null;
+  role: ColumnRole; kind: ColumnKind; non_null: number; unique_pct: number | null; balance: number | null;
+  mean: number | null; mean_ci: number | null; std: number | null; median: number | null; q1: number | null; q3: number | null;
+  skew: number | null; kurtosis: number | null; normal_p: number | null; outliers: number | null; outlier_rate: number | null; zeros_rate: number | null; heaped_rate: number | null; peaks: number | null;
+  histogram: { lo: number; hi: number; n: number }[]; values: { value: string; n: number }[]; hints: string[];
+}
+export interface TableProfile { table: string; profiled_at: string; actor: string | null; sample_pct: number; row_count: number | null; size_bytes: number | null; last_modified: string | null; duplicate_keys: number | null; columns: ColumnProfile[]; duplicate_rows: number | null; missing_cells: number | null; row_key: string[] }
 export type DqKind = "not_null" | "unique" | "in_set" | "range" | "regex" | "referential" | "freshness" | "row_count" | "custom";
 export type DqRuleStatus = "passing" | "warning" | "failing" | "error";
 export interface DqResult { pass_rate: number | null; passed: number | null; failed: number | null; total: number | null; status: DqRuleStatus; error: string | null; ran_at: string }

@@ -2,7 +2,7 @@
 // UI behaves like the real thing (lifecycle transitions, builds with live steps, comments).
 import * as D from "./mockData";
 import { compileClassSql, tableName } from "./types";
-import type { AiProgress, ColumnProfile, DqResult, DqRule, DqRun, DqStatus, GlossaryEntry, RuleInput, TableProfile, TermInput, DomainSource, DriftIssue, GraphSample, SearchOptions, RefreshChange, SnapshotTable, SourceFactsEntry, SourceInput,
+import type { AiProgress, ColumnKind, ColumnProfile, ColumnRole, DqResult, DqRule, DqRun, DqStatus, GlossaryEntry, RuleInput, TableProfile, TermInput, DomainSource, DriftIssue, GraphSample, SearchOptions, RefreshChange, SnapshotTable, SourceFactsEntry, SourceInput,
   Analytics, ApiKey, AuditEntry, BuildRun, BuildStep, CatalogTable, ChecklistItem, ClassMapping, Comment, Config, ConnResult, Constraint,
   DatagraphApi, DomainSummary, EntityDetail, GraphStatus, Lock, MappingKpis, Me, NewDomainInput, OntoCheck,
   OntoClass, Principal, Role, Rule, SearchHit, SourceKind, TableDetail, TablePreview, Task, TriplePage, TripleQuery,
@@ -265,13 +265,30 @@ export class MockApi implements DatagraphApi {
   private buildProfile(table: string, actor: string): TableProfile {
     const name = table.split(".").pop() ?? table; const cols = (D.COLUMNS[name] || D.GENERIC_COLS).cols; const p = D.PROFILE[name];
     const rows = p ? parseInt(p.rows.replace(/,/g, "")) || 0 : 1000 + name.length * 37;
-    const columns: ColumnProfile[] = cols.map(([cname, type], i) => {
+    const seeded = (i: number, k: number) => ((i + 1) * 7919 * (k + 3)) % 97;   // deterministic "randomness" per column and bin
+    const columns: ColumnProfile[] = cols.map(([cname, type, , key], i) => {
       const [nullPct, distinct] = p?.cols[cname] ?? [i === 0 ? 0 : (i * 7) % 23, Math.max(1, Math.round(rows / (i + 1)))];
       const rate = nullPct / 100; const t = type.toLowerCase(); const numeric = /int|decimal|numeric|double|float/.test(t); const temporal = /date|time/.test(t); const bool = /bool/.test(t);
-      return { name: cname, type, nulls: Math.round(rate * rows), null_rate: rate, distinct, min: numeric ? "1" : temporal ? "2019-01-01" : null, max: numeric ? String(rows * (i + 1)) : temporal ? "2026-09-21" : null,
-        top: bool ? "true" : !numeric && !temporal ? (i === 1 ? "Carrefour" : "MODERN_TRADE") : null, top_share: bool ? 0.81 : !numeric && !temporal ? 0.12 : null };
+      const nn = Math.round(rows * (1 - rate)); const isKey = key === "pk" && numeric && distinct >= rows;
+      const role: ColumnRole = isKey ? "row key" : distinct === 2 ? "binary" : "feature";
+      const kind: ColumnKind = temporal ? "date" : bool ? "boolean" : numeric ? (isKey ? "numeric id" : "numeric") : "categorical";
+      const lo = numeric ? (isKey ? 1 : 0) : 0, hi = numeric ? (isKey ? rows : 100 * (i + 1)) : 0;
+      const histogram = numeric ? Array.from({ length: 10 }, (_, k) => ({ lo: lo + (hi - lo) * k / 10, hi: lo + (hi - lo) * (k + 1) / 10, n: isKey ? Math.round(nn / 10) : 20 + seeded(i, k) * 5 })) : [];
+      const levels = bool ? ["true", "false"] : kind === "categorical" && distinct <= 12 ? ["MODERN_TRADE", "WHOLESALE", "ECOM", "DIRECT", "OTHER"].slice(0, Math.max(2, Math.min(distinct, 5))) : distinct <= 12 && numeric ? Array.from({ length: distinct }, (_, k) => String(k + 1)) : [];
+      const values = levels.map((v, k) => ({ value: v, n: Math.max(1, Math.round(nn * (levels.length - k) / ((levels.length * (levels.length + 1)) / 2))) }));
+      const mean = numeric ? (isKey ? (rows + 1) / 2 : 48.8 * (i + 1)) : null; const std = numeric ? (isKey ? rows / Math.sqrt(12) : 17.9 * (i + 1)) : null;
+      const peaks = numeric ? (isKey ? 1 : 1 + (i % 3)) : null;
+      const hints = role === "row key" ? ["Primary-key candidate: exclude from features; use for joins and dedup checks."] : role === "binary" ? ["Binary: encode as 0/1."] : kind === "categorical" && distinct <= 12 ? [`Encode: one-hot (${distinct} levels).`] : kind === "categorical" && distinct / rows > 0.9 ? ["High cardinality: almost every value is distinct; bar chart omitted."] : [];
+      if (numeric && (peaks ?? 0) >= 2) hints.push(`Multimodal (${peaks} peaks): may mix distinct populations; consider a segment feature.`);
+      return { name: cname, type, nulls: Math.round(rate * rows), null_rate: rate, distinct, min: numeric ? String(lo) : temporal ? "2019-01-01" : null, max: numeric ? String(hi) : temporal ? "2026-09-21" : null,
+        top: values[0]?.value ?? (kind === "categorical" ? "Carrefour" : null), top_share: values[0] ? Math.round(values[0].n / nn * 1e4) / 1e4 : kind === "categorical" ? 0.002 : null,
+        role, kind, non_null: nn, unique_pct: Math.round(distinct / rows * 1e4) / 1e4, balance: values.length ? Math.round(Math.log2(values.length) * 0.93 * 1e4) / 1e4 : null,
+        mean, mean_ci: std != null ? Math.round(1.96 * std / Math.sqrt(nn) * 1e4) / 1e4 : null, std, median: mean, q1: mean != null && std != null ? mean - 0.67 * std : null, q3: mean != null && std != null ? mean + 0.67 * std : null,
+        skew: numeric ? (i % 5 - 2) / 100 : null, kurtosis: numeric ? -1.2 : null, normal_p: numeric ? 0 : null, outliers: numeric ? 0 : null, outlier_rate: numeric ? 0 : null, zeros_rate: numeric ? (isKey ? 0 : 0.05) : null, heaped_rate: numeric ? 0.2 : null, peaks, histogram, values, hints };
     });
-    return { table, profiled_at: new Date().toISOString(), actor, sample_pct: 100, row_count: rows, size_bytes: rows * 128, last_modified: new Date(Date.now() - 20 * 3600e3).toISOString(), duplicate_keys: p ? (parseInt(p.dup) || 0) : 0, columns };
+    const missing = columns.reduce((a, c) => a + c.nulls, 0) / Math.max(1, rows * columns.length);
+    return { table, profiled_at: new Date().toISOString(), actor, sample_pct: 100, row_count: rows, size_bytes: rows * 128, last_modified: new Date(Date.now() - 20 * 3600e3).toISOString(), duplicate_keys: p ? (parseInt(p.dup) || 0) : 0, columns,
+      duplicate_rows: 0, missing_cells: Math.round(missing * 1e6) / 1e6, row_key: columns.filter(c => c.role === "row key").map(c => c.name).slice(0, 1) };
   }
   async tableProfile(domain: string, version: number, table: string): Promise<TableProfile | null> { const p = this.profiles[this.tkey(domain, version, table)]; return p ? clone(p) : null; }
   async runProfile(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<TableProfile> {

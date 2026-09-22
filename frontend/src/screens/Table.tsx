@@ -115,44 +115,106 @@ function useTask(fn: (report: (p: AiProgress) => void) => Promise<void>, say: (m
 function ProfileView({ profile, loading, error, snap, dq, editable, onRun }: { profile: TableProfile | null; loading: boolean; error: string | null; snap: SnapshotTable; dq: DqStatus | null; editable: boolean; onRun: (report: (p: AiProgress) => void) => Promise<void> }) {
   const { say } = useApp();
   const task = useTask(onRun, say);
-  const nullRate = profile && profile.row_count ? profile.columns.reduce((a, c) => a + c.null_rate, 0) / Math.max(1, profile.columns.length) : null;
-  const nullable = profile ? profile.columns.filter(c => c.nulls > 0).length : 0;
+  const [showAll, setShowAll] = useState(false);
+  const [findings, setFindings] = useState(false);
   const colScore = Object.fromEntries((dq?.columns ?? []).map(c => [c.name.toLowerCase(), c.score]));
-  const pk = new Set(snap.primaryKey.map(k => k.toLowerCase()));
+  const cols = profile?.columns ?? [];
+  const nullable = cols.filter(c => c.nulls > 0).length;
+  const nullRate = profile?.missing_cells ?? null;
+  const rows = profile?.row_count ?? null;
+  const sampled = rows != null && profile ? Math.round(rows * profile.sample_pct / 100) : null;
+  const highCard = cols.filter(c => c.kind !== "date" && c.values.length === 0 && c.histogram.length === 0 && (c.unique_pct ?? 0) > 0.9).length;
+  const listed = findings ? cols.filter(c => c.hints.length > 0) : cols;
+  const cards = showAll ? listed : listed.slice(0, 24);
   const tiles: [string, string, string, string][] = profile ? [
-    ["Rows", fmtInt(profile.row_count), "last profile", BLUE], ["Columns", String(profile.columns.length), `${nullable} nullable`, BLUE],
-    ["Null rate", pct(nullRate, 1), "across all cells", BLUE], ["Duplicates", profile.duplicate_keys == null ? "—" : fmtInt(profile.duplicate_keys), snap.primaryKey.length ? "on primary key" : "no primary key", BLUE],
+    ["Rows", fmtInt(rows), profile.sample_pct < 100 ? `${fmtInt(sampled)} sampled` : "last profile", BLUE], ["Columns", String(cols.length), `${nullable} nullable`, BLUE],
+    ["Null rate", pct(nullRate, 1), "across all cells", BLUE], ["Duplicates", profile.duplicate_rows == null ? "—" : fmtInt(profile.duplicate_rows), profile.duplicate_rows == null ? "not measured" : "identical rows", BLUE],
     ["Size", fmtBytes(profile.size_bytes), profile.size_bytes == null ? "not reported" : "in the warehouse", BLUE], ["Freshness", profile.last_modified ? relTime(profile.last_modified) : "—", profile.last_modified ? "since last write" : "not reported", ORANGE]] : [];
   return (
     <>
       {profile && <div className="tbl-tiles">{tiles.map(([k, v, sub, color]) => <div key={k} className="tile" aria-label={k}><span className="k">{k}<Dot color={color} /></span><b>{v}</b><span className="sub">{sub}</span><i /></div>)}</div>}
-      <section className="card flush tbl-card" aria-label="Column profile">
+      {profile && (
+        <section className="card tbl-card rowkey" aria-label="Row key">
+          <span className="ic"><Icon name="check" size={12} /></span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="row" style={{ gap: 10, alignItems: "baseline" }}><h2>Row key</h2>{profile.row_key.length > 0 && <span className="mono" style={{ fontWeight: 700 }}>{profile.row_key.join(" + ")}</span>}</div>
+            <p className="muted small" style={{ marginTop: 2 }}>The column(s) that identify each row, used to detect duplicates. {profile.row_key.length ? (snap.primaryKey.length ? "Declared in the catalog." : "Detected: unique and never null.") : "No single column identifies every row: rows may be genuine duplicates, or the key is composite."}{profile.duplicate_keys != null && profile.row_key.length ? ` ${fmtInt(profile.duplicate_keys)} duplicate key${profile.duplicate_keys === 1 ? "" : "s"}.` : ""}</p>
+          </div>
+        </section>
+      )}
+      <section className="card flush tbl-card" aria-label="Column summary">
         <div className="tbl-card-head">
-          <div className="row" style={{ gap: 10, alignItems: "baseline" }}><h2>Column profile</h2><span className="muted small">{task.progress ?? (profile ? `Profiled ${ago(profile.profiled_at)} on a ${profile.sample_pct % 1 ? profile.sample_pct.toFixed(1) : profile.sample_pct}% sample` : loading ? "Reading…" : "Not profiled yet")}</span></div>
-          <Button variant="outline" pill disabled={!editable || task.busy} title={editable ? "Read the table again" : "Only the lease holder of a draft can profile"} onClick={task.start}>{task.busy && <Spinner blue />}{profile ? "Re-run profile" : "Run profile"}</Button>
+          <div className="row" style={{ gap: 10, alignItems: "baseline" }}><h2>Column summary</h2><span className="muted small">{task.progress ?? (profile ? `Profiled ${ago(profile.profiled_at)} on a ${profile.sample_pct % 1 ? profile.sample_pct.toFixed(1) : profile.sample_pct}% sample` : loading ? "Reading…" : "Not profiled yet")}</span></div>
+          <div className="row">
+            {profile && <label className="row muted small" style={{ gap: 6 }}><input type="checkbox" checked={findings} onChange={e => setFindings(e.target.checked)} />Findings only ({cols.filter(c => c.hints.length).length})</label>}
+            <Button variant="outline" pill disabled={!editable || task.busy} title={editable ? "Read the table again" : "Only the lease holder of a draft can profile"} onClick={task.start}>{task.busy && <Spinner blue />}{profile ? "Re-run profile" : "Run profile"}</Button>
+          </div>
         </div>
         {error && <div style={{ padding: "0 20px 16px" }}><ErrorNotice error={error} /></div>}
         {loading && !profile && <div style={{ padding: 20 }}><Skeleton h={16} /><Skeleton h={16} style={{ marginTop: 10 }} /><Skeleton h={16} style={{ marginTop: 10 }} /></div>}
-        {!loading && !profile && !error && <div className="tbl-empty"><strong>No profile of {short(snap.table)} yet.</strong><span className="muted">Run the profile to count rows, nulls, distinct values and ranges for its {snap.columns} columns.</span></div>}
+        {!loading && !profile && !error && <div className="tbl-empty"><strong>No profile of {short(snap.table)} yet.</strong><span className="muted">Run the profile to count rows, nulls, distinct values, ranges and distributions for its {snap.columns} columns.</span></div>}
         {profile && (
-          <table className="prof" aria-label="Column profile">
-            <colgroup><col style={{ width: "26%" }} /><col style={{ width: 90 }} /><col /><col style={{ width: 90 }} /><col style={{ width: "24%" }} /><col style={{ width: 60 }} /></colgroup>
-            <thead><tr><th>Column</th><th>Type</th><th>Nulls</th><th style={{ textAlign: "right" }}>Distinct</th><th>Min · max / top value</th><th style={{ textAlign: "right" }}>DQ</th></tr></thead>
+          <table className="prof" aria-label="Column summary">
+            <colgroup><col style={{ width: "22%" }} /><col style={{ width: 84 }} /><col style={{ width: 104 }} /><col style={{ width: 80 }} /><col style={{ width: 120 }} /><col /><col /><col /><col /><col style={{ width: 56 }} /></colgroup>
+            <thead><tr><th>Column</th><th>Role</th><th>Type</th><th style={{ textAlign: "right" }}>Missing</th><th style={{ textAlign: "right" }}>Unique</th><th style={{ textAlign: "right" }}>Min</th><th style={{ textAlign: "right" }}>Median</th><th style={{ textAlign: "right" }}>Mean</th><th style={{ textAlign: "right" }}>Max</th><th style={{ textAlign: "right" }}>DQ</th></tr></thead>
             <tbody>
-              {profile.columns.map(c => { const rate = c.null_rate; const tone = rate >= 0.3 ? "var(--ink)" : rate > 0.05 ? ORANGE : BLUE; const s = colScore[c.name.toLowerCase()]; return (
+              {listed.map(c => { const s = colScore[c.name.toLowerCase()]; const num = c.kind === "numeric" || c.kind === "numeric id"; return (
                 <tr key={c.name}>
-                  <td className="name">{c.name}{pk.has(c.name.toLowerCase()) && <span className="pk">PK</span>}</td>
-                  <td className="type">{c.type}</td>
-                  <td><span className="nulls"><span className="bar"><i style={{ width: `${Math.max(rate > 0 ? 1.5 : 0, rate * 100)}%`, background: tone }} /></span><span className="mono">{(rate * 100).toFixed(1)}%</span></span></td>
-                  <td className="num">{fmtInt(c.distinct)}</td>
-                  <td className="range">{c.top != null ? <>{`"${c.top}"`} · top{c.top_share != null ? ` ${c.top_share > 0 && c.top_share < 0.01 ? "<1" : (c.top_share * 100).toFixed(0)}%` : ""}</> : c.min != null || c.max != null ? `${c.min ?? "—"} · ${c.max ?? "—"}` : <span className="muted-3">—</span>}</td>
+                  <td className="name" title={c.name}>{c.name}</td>
+                  <td><span className={`role ${c.role.replace(" ", "-")}`}>{c.role}</span></td>
+                  <td><span className={`kindtag ${c.kind.replace(" ", "-")}`}>{c.kind}</span></td>
+                  <td className="num" style={{ color: c.null_rate > 0.05 ? "var(--orange-text)" : undefined }}>{pct(c.null_rate, c.null_rate > 0 && c.null_rate < 0.01 ? 1 : 0)}</td>
+                  <td className="num">{fmtInt(c.distinct)}{c.unique_pct != null && <span className="muted-3"> ({c.unique_pct > 0 && c.unique_pct < 0.001 ? "<0.1" : (c.unique_pct * 100).toFixed(c.unique_pct >= 0.1 ? 0 : 1)}%)</span>}</td>
+                  <td className="num">{c.min ?? "—"}</td><td className="num">{num ? fmtNum(c.median) : "—"}</td><td className="num">{num ? fmtNum(c.mean) : "—"}</td><td className="num">{c.max ?? "—"}</td>
                   <td className="num" style={{ fontWeight: 700, color: scoreColor(s ?? null) }}>{s == null ? "—" : pct(s)}</td>
                 </tr>); })}
             </tbody>
           </table>
         )}
       </section>
+      {profile && (
+        <section aria-label="Column profiles">
+          <div className="row between" style={{ alignItems: "baseline", flexWrap: "wrap", gap: 8, margin: "4px 0 10px" }}>
+            <div><h2 className="h2">Column profiles</h2><p className="muted small">Per-column stats and distributions.{highCard ? ` Bar charts for ${highCard} high-cardinality column${highCard === 1 ? "" : "s"} are omitted: almost every value is distinct.` : ""}</p></div>
+            <span className="muted small">Showing {cards.length} of {listed.length} columns{listed.length > cards.length ? ": use Show more for the rest." : "."}</span>
+          </div>
+          <div className="prof-grid">
+            {cards.map(c => <ColumnCard key={c.name} c={c} />)}
+          </div>
+          {listed.length > cards.length && <div style={{ marginTop: 12 }}><Button onClick={() => setShowAll(true)}>Show more ({listed.length - cards.length})</Button></div>}
+        </section>
+      )}
     </>
+  );
+}
+
+const fmtNum = (x: number | null | undefined, digits = 4) => (x == null ? "—" : Number.isInteger(x) ? x.toLocaleString() : x.toLocaleString(undefined, { maximumFractionDigits: digits }));
+const fmtSigned = (x: number | null | undefined) => (x == null ? "—" : `${x > 0 ? "+" : ""}${fmtNum(x)}`);
+
+function ColumnCard({ c }: { c: import("@/api").ColumnProfile }) {
+  const num = c.kind === "numeric" || c.kind === "numeric id";
+  const bars = c.values.length > 0 ? c.values.slice(0, 8).map(v => ({ label: v.value, n: v.n })) : c.histogram.length > 0 ? c.histogram.map(b => ({ label: `${fmtNum(b.lo, 2)} · ${fmtNum(b.hi, 2)}`, n: b.n })) : [];
+  const max = Math.max(1, ...bars.map(b => b.n));
+  const cell = (k: string, v: ReactNode, tone?: string) => <div className="stat"><span className="k">{k}</span><b style={{ color: tone }}>{v}</b></div>;
+  return (
+    <article className="pcard">
+      <div className="row between" style={{ gap: 8, alignItems: "flex-start" }}><span className="pname" title={c.name}>{c.name}</span><span className="row" style={{ gap: 6, flex: "none" }}><span className={`role ${c.role.replace(" ", "-")}`}>{c.role}</span><span className={`kindtag ${c.kind.replace(" ", "-")}`}>{c.kind}</span></span></div>
+      <div className="stats">
+        {cell("Non-null", fmtInt(c.non_null))}{cell("Missing", <>{pct(c.null_rate, c.null_rate > 0 && c.null_rate < 0.01 ? 1 : 0)} <span className="muted-3">({fmtInt(c.nulls)})</span></>)}
+        {cell("Unique", fmtInt(c.distinct))}{cell(num && !c.values.length ? "Mean" : "Mode", num && !c.values.length ? <>{fmtNum(c.mean)}{c.mean_ci != null && <span className="muted-2"> ± {fmtNum(c.mean_ci)}</span>}</> : c.top != null ? <>{c.top} <span className="muted-3">({c.top_share != null ? pct(c.top_share, c.top_share < 0.1 ? 1 : 0) : "—"})</span></> : "—")}
+        {c.balance != null && cell("Balance", fmtNum(c.balance, 3))}
+        {num && c.values.length > 0 && cell("Mean", <>{fmtNum(c.mean)}{c.mean_ci != null && <span className="muted-2"> ± {fmtNum(c.mean_ci)}</span>}</>)}
+        {num && <>{cell("Std", fmtNum(c.std))}{cell("Median", fmtNum(c.median))}{cell("Skew", fmtSigned(c.skew))}{cell("Kurtosis", fmtSigned(c.kurtosis))}
+          {cell("Outliers", pct(c.outlier_rate), (c.outlier_rate ?? 0) > 0.02 ? ORANGE : undefined)}{cell("Zeros", pct(c.zeros_rate, (c.zeros_rate ?? 0) > 0 && (c.zeros_rate ?? 0) < 0.01 ? 1 : 0))}
+          {cell("Peaks", c.peaks ?? "—", (c.peaks ?? 0) >= 2 ? ORANGE : undefined)}{c.heaped_rate != null && (c.heaped_rate > 0.4) ? cell("Heaped", pct(c.heaped_rate, 1), ORANGE) : cell("Normal p", c.normal_p == null ? "—" : c.normal_p < 0.001 ? "0" : fmtNum(c.normal_p, 3), (c.normal_p ?? 1) < 0.05 ? ORANGE : undefined)}</>}
+      </div>
+      {bars.length > 0 ? (
+        <div className={`chart ${c.values.length ? "cat" : "hist"}`} role="img" aria-label={`Distribution of ${c.name}`}>
+          {bars.map(b => <div key={b.label} className="bar-row"><span className="lbl" title={b.label}>{b.label}</span><span className="track"><i style={{ width: `${Math.max(1.5, b.n / max * 100)}%` }} /></span><span className="cnt">{fmtInt(b.n)}</span></div>)}
+        </div>
+      ) : c.kind !== "date" && (c.unique_pct ?? 0) > 0.9 ? <p className="muted-2 small" style={{ fontStyle: "italic" }}>High cardinality: bar chart omitted (almost every value is distinct).</p> : null}
+      {c.hints.length > 0 && <ul className="hints">{c.hints.map(h => <li key={h}>{h}</li>)}</ul>}
+    </article>
   );
 }
 

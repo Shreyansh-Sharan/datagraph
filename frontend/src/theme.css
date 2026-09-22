@@ -410,3 +410,31 @@ table.rules td.small { font-size: 12px; color: var(--ink-2); overflow: hidden; t
 .pill.pick input { margin: 0; accent-color: var(--blue); }
 .pill.pick.on { border-color: var(--blue); background: var(--blue-soft); color: var(--blue-dark); }
 @media (max-width: 1000px) { .dq-top { grid-template-columns: 1fr; } }
+
+/* Table screen: profile details */
+.rowkey { display: flex; gap: 14px; align-items: flex-start; }
+.rowkey .ic { width: 26px; height: 26px; border-radius: 8px; background: var(--blue-soft); color: var(--blue); display: inline-flex; align-items: center; justify-content: center; flex: none; margin-top: 2px; }
+.role, .kindtag { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.role { color: var(--muted-2); }
+.role.row-key { background: var(--blue-soft); color: var(--blue-dark); }
+.role.binary { background: #EAF7EE; color: #1E7A3E; }
+.kindtag { background: var(--blue-soft); color: var(--blue-dark); }
+.kindtag.categorical { background: #EEF1FF; color: var(--blue-deep); }
+.kindtag.date { background: var(--surface-3); color: var(--ink-2); }
+.prof-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.pcard { background: #fff; border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.pcard .pname { font: 600 12.5px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.pcard .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
+.pcard .stat .k { display: block; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted-2); }
+.pcard .stat b { display: block; font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+.pcard .chart { display: grid; gap: 5px; }
+.pcard .bar-row { display: grid; grid-template-columns: minmax(64px, 38%) 1fr 40px; align-items: center; gap: 8px; font-size: 11px; color: var(--ink-2); }
+.pcard .bar-row .lbl { text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 10.5px; }
+.pcard .bar-row .track { display: block; height: 12px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
+.pcard .bar-row .track > i { display: block; height: 100%; background: var(--blue-light); border-radius: 3px; }
+.pcard .chart.cat .track > i { background: #2FB565; }
+.pcard .bar-row .cnt { text-align: right; font-family: var(--mono); font-size: 10.5px; color: var(--muted-2); }
+.pcard .hints { margin: 0; padding-left: 16px; font-size: 12px; color: var(--ink-2); line-height: 1.45; }
+.pcard .hints li + li { margin-top: 4px; }
+.pcard .expect { font-size: 12px; color: var(--ink-2); line-height: 1.45; border-top: 1px solid var(--line-2); padding-top: 10px; }
+.pcard .expect .k { display: block; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted-2); margin-bottom: 2px; }

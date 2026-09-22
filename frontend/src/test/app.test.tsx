@@ -251,9 +251,16 @@ describe("Table screen", () => {
     await user.click(await screen.findByRole("button", { name: "Run profile" }));
     expect(await screen.findByText(/Profile of dim_customer updated/)).toBeInTheDocument();
     expect(await screen.findByLabelText("Rows")).toHaveTextContent("612");
-    const prof = screen.getByRole("table", { name: "Column profile" });
-    expect(within(prof).getByText("credit_limit")).toBeInTheDocument();
-    expect(within(prof).getAllByText("PK")).toHaveLength(1);
+    expect(screen.getByLabelText("Row key")).toHaveTextContent("customer_id");
+    const summary = screen.getByRole("table", { name: "Column summary" });
+    const keyRow = within(summary).getByText("customer_id").closest("tr")!;
+    expect(within(keyRow).getByText("row key")).toBeInTheDocument();
+    expect(within(keyRow).getByText("numeric id")).toBeInTheDocument();
+    expect(within(within(summary).getByText("segment_code").closest("tr")!).getByText("categorical")).toBeInTheDocument();
+    const cards = screen.getByRole("region", { name: "Column profiles" });
+    expect(within(cards).getByRole("img", { name: "Distribution of segment_code" })).toBeInTheDocument();
+    expect(within(cards).getByText(/Primary-key candidate/)).toBeInTheDocument();
+    expect(within(cards).getAllByText(/Encode: one-hot/).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Re-run profile" })).toBeInTheDocument();
   });
   it("shows the rules with their scores, filters them, adds one and runs them", async () => {

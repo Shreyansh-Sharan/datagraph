@@ -34,6 +34,39 @@ def test_profile_counts_rows_nulls_distinct_ranges_and_keys(db):
     assert svc.get(v.id, "employees").row_count == 4 and any("column" in s for s in seen)
 
 
+def test_profile_has_moments_quartiles_histograms_value_counts_roles_and_hints(db):
+    reg, meta, src, v = _setup(db)
+    p = ProfileService(reg, meta, src, db).run(v.id, "employees", actor="alice")
+    by = {c.name: c for c in p.columns}
+    # table level
+    assert p.duplicate_rows == 0 and abs(p.missing_cells - 5 / 24) < 1e-6 and p.row_key == ["empno"]   # sal, deptno, manager x2, hired
+    # a numeric feature: 800, 1250, 500 (one null)
+    sal = by["sal"]
+    assert sal.role == "feature" and sal.kind == "numeric" and sal.non_null == 3 and sal.unique_pct == 0.75
+    assert sal.mean == 850 and sal.median == 800 and sal.q1 == 650 and sal.q3 == 1025 and round(sal.std, 4) == 377.4917
+    assert sal.mean_ci == round(1.96 * sal.std / 3 ** 0.5, 4)
+    assert sal.zeros_rate == 0 and sal.outliers == 0 and sal.outlier_rate == 0
+    assert sal.skew is not None and sal.kurtosis is not None and sal.normal_p is not None
+    assert len(sal.histogram) == 10 and sum(b["n"] for b in sal.histogram) == 3 and sal.histogram[0]["lo"] == 500 and sal.histogram[-1]["hi"] == 1250
+    assert sal.peaks >= 1
+    # the key: unique, integer, never null
+    emp = by["empno"]
+    assert emp.role == "row key" and emp.kind == "numeric id" and emp.unique_pct == 1.0 and "Primary-key candidate" in " ".join(emp.hints)
+    # a categorical: four distinct names, one row each
+    en = by["ename"]
+    assert en.role == "feature" and en.kind == "categorical" and en.balance == 2.0 and en.top_share == 0.25
+    assert sorted(v["value"] for v in en.values) == ["ALLEN", "GHOST", "SMITH", "WARD"] and all(v["n"] == 1 for v in en.values)
+    assert any(h.startswith("Encode: one-hot") for h in en.hints)
+    # a low-cardinality number is still numeric, with its value counts for the bar chart
+    dept = by["deptno"]
+    assert dept.kind == "numeric" and {v["value"]: v["n"] for v in dept.values} == {"10": 1, "20": 1, "99": 1}
+    # dates
+    assert by["hired"].kind == "date" and by["hired"].histogram == [] and by["hired"].mean is None
+    # everything survives a save and a load
+    again = ProfileService(reg, meta, src, db).get(v.id, "employees")
+    assert {c.name: c for c in again.columns}["sal"].histogram == sal.histogram and again.row_key == ["empno"]
+
+
 def test_profile_samples_big_tables_and_speaks_databricks(db):
     reg, meta, _, v = _setup(db)
     # The fake answers every query with the same row: 5,000,000 rows, then aggregate values.
@@ -42,9 +75,9 @@ def test_profile_samples_big_tables_and_speaks_databricks(db):
     dbx.table_stats = lambda table: (17_000_000, None)   # DESCRIBE DETAIL, stubbed
     p = ProfileService(reg, meta, dbx, db, sample_rows=1_000_000).run(v.id, "employees", actor="alice")
     assert p.row_count == 5_000_000 and p.sample_pct == 20 and p.size_bytes == 17_000_000
-    by = {c.name: c for c in p.columns}
-    assert by["ename"].distinct == 100                     # approx_count_distinct can overshoot: never more than the non-null rows
     sqls = [sql for c in conn.cursors for sql, _ in c.executed]
     assert any("TABLESAMPLE (20 PERCENT)" in s for s in sqls)
     assert any("approx_count_distinct(`sal`)" in s for s in sqls)
+    assert any("percentile_approx(CAST(`sal` AS DOUBLE), 0.5)" in s for s in sqls)
     assert any("mode(`ename`)" in s for s in sqls)
+    assert all(c.distinct is None or c.distinct <= c.non_null for c in p.columns)   # approximate counts never exceed the rows

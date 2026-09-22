@@ -76,6 +76,15 @@ class SqlDialect(ABC):
     def to_double(self, expr: str) -> str:
         return f"CAST({expr} AS DOUBLE PRECISION)"
 
+    def quantile(self, expr: str, q: float) -> str:
+        return f"percentile_cont({_num(q)}) WITHIN GROUP (ORDER BY {expr})"
+
+    def stddev(self, expr: str) -> str:
+        return f"stddev_samp({expr})"
+
+    def is_multiple(self, expr: str, n: int) -> str:
+        return f"MOD(CAST({expr} AS NUMERIC), {int(n)}) = 0"
+
     def literal(self, value) -> str:
         """A SQL literal for a JSON value: numbers and booleans as they are, anything else as text."""
         if isinstance(value, bool):
