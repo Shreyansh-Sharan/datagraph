@@ -209,6 +209,61 @@ class TripleStore:
             nodes = self._entities(cur, version_id, iris)
         return Subgraph(nodes=nodes, edges=edges)
 
+    def aggregate(self, version_id: UUID, class_iri: str, *, measure: str | None = None, group_by: "str | list[str] | None" = None,
+                  group_kind: str = "value", filters: list[dict] | None = None, limit: int = 50) -> list[dict]:
+        """Count the instances of a class, and sum/average a numeric datatype property, grouped by a
+        property (its value, or the year / month of a date) reached directly or through a path of
+        steps, keeping only instances that reach a value through a filter path. A step is a
+        predicate IRI, or "^" + IRI to walk the relationship backwards."""
+        jparams: list = []                      # bound in the JOINs, which come first in the statement
+        wparams: list = [version_id, RDF_TYPE, class_iri]
+        where = ["i.domain_version_id = %s AND i.predicate = %s AND i.object = %s AND i.subject NOT LIKE '\\_:%%'"]
+        joins: list[str] = []
+        n = 0
+        for f in filters or []:
+            steps = f.get("path") or ([f["predicate"]] if f.get("predicate") else [])
+            if not steps:
+                continue
+            n, end = self._walk(steps, "i.subject", joins, jparams, version_id, n)
+            where.append(f"{end} = %s")
+            wparams.append(str(f["value"]))
+        gsteps = [group_by] if isinstance(group_by, str) else list(group_by or [])
+        gexpr = "NULL"
+        if gsteps:
+            n, gend = self._walk(gsteps, "i.subject", joins, jparams, version_id, n, outer=True)
+            gexpr = f"substr({gend}, 1, 4)" if group_kind == "year" else f"substr({gend}, 1, 7)" if group_kind == "month" else gend
+        mexpr = "CAST(NULL AS double precision)"
+        if measure:
+            joins.append("LEFT JOIN triples m ON m.domain_version_id = %s AND m.subject = i.subject AND m.predicate = %s")
+            jparams += [version_id, measure]
+            mexpr = "NULLIF(regexp_replace(m.object, '[^0-9.eE-]', '', 'g'), '')::double precision"
+        sql = (f"SELECT {gexpr} AS grp, count(DISTINCT i.subject) AS n, sum(x.v), avg(x.v), min(x.v), max(x.v) FROM triples i {' '.join(joins)} "
+               f"CROSS JOIN LATERAL (SELECT {mexpr} AS v) x WHERE {' AND '.join(where)} GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT {int(limit)}")
+        with self.db.transaction() as cur:
+            rows = cur.execute(sql, jparams + wparams).fetchall()
+            iris = [r[0] for r in rows if isinstance(r[0], str) and r[0].startswith(("http://", "https://", "urn:"))]
+            labels = {e.iri: e.label for e in self._entities(cur, version_id, iris)} if iris else {}
+        out = []
+        for grp, cnt, sm, av, mn, mx in rows:
+            out.append({"group": grp, "label": labels.get(grp, grp), "count": int(cnt), "sum": _num(sm), "avg": _num(av), "min": _num(mn), "max": _num(mx)})
+        return out
+
+    def _walk(self, steps: list[str], start: str, joins: list[str], params: list, version_id: UUID, n: int, outer: bool = False) -> tuple[int, str]:
+        """JOIN one triples alias per step from ``start``; returns the alias count and the end expression."""
+        prev, kind = start, "LEFT JOIN" if outer else "JOIN"
+        for step in steps:
+            n += 1
+            a = f"s{n}"
+            if step.startswith("^"):
+                joins.append(f"{kind} triples {a} ON {a}.domain_version_id = %s AND {a}.predicate = %s AND {a}.object = {prev}")
+                params += [version_id, step[1:]]
+                prev = f"{a}.subject"
+            else:
+                joins.append(f"{kind} triples {a} ON {a}.domain_version_id = %s AND {a}.predicate = %s AND {a}.subject = {prev}")
+                params += [version_id, step]
+                prev = f"{a}.object"
+        return n, prev
+
     def triples(self, version_id: UUID, *, subject: str | None = None, predicate: str | None = None, text: str | None = None,
                 inferred: bool | None = None, limit: int = 100, offset: int = 0,
                 sort: str = "subject", direction: str = "asc") -> TriplePage:
@@ -277,3 +332,8 @@ def fallback_label(iri: str) -> str:
 def _md5(text: str) -> str:
     import hashlib
     return hashlib.md5(text.encode()).hexdigest()
+
+
+
+def _num(v) -> float | None:
+    return None if v is None else round(float(v), 4)

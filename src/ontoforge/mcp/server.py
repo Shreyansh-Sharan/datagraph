@@ -72,6 +72,18 @@ def create_mcp_server(tools: GraphTools, name: str = "ontoforge") -> MCPServer:
     def query_graphql(query: str, domain: str | None = None, variables: dict | None = None) -> str:
         return tools.query_graphql(domain, query, variables)
 
+    @server.tool(description="What a class holds and how it connects: attributes (measures, dates), outgoing and incoming relationships with their IRIs. Use before graph_aggregate.")
+    def class_schema(cls: str, domain: str | None = None) -> dict:
+        return tools.class_schema(domain, cls)
+
+    @server.tool(description="How to get from one class to another through the relationships (shortest paths, forward or inverse steps), for filters and group_by paths in graph_aggregate.")
+    def ontology_paths(from_cls: str, to_cls: str, domain: str | None = None, max_depth: int = 3) -> dict:
+        return tools.ontology_paths(domain, from_cls, to_cls, max_depth)
+
+    @server.tool(description="Count the instances of a class in the graph and sum/avg/min/max a numeric attribute, grouped by an attribute or a relationship target (group_kind 'value', or 'year' / 'month' of a date), optionally through a path of steps; filters keep instances that reach a value through a path (a step is a property name or IRI, '^' + name walks it backwards). This is how to compare over time and against peers.")
+    def graph_aggregate(cls: str, measure: str | None = None, group_by: str | list[str] | None = None, group_kind: str = "value", filters: list[dict] | None = None, limit: int = 50, domain: str | None = None) -> dict:
+        return tools.graph_aggregate(domain, cls, measure, group_by, group_kind, filters, limit)
+
     @server.tool(description="Tables in the domain's snapshot (the ones every table tool accepts), with column count, key, whether profiled, and how many rules each has. Call this before naming a table.")
     def list_tables(domain: str | None = None) -> list[dict]:
         return tools.list_tables(domain)

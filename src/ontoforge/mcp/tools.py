@@ -28,6 +28,11 @@ from ontoforge.store import TripleStore
 ACTOR: ContextVar[str | None] = ContextVar("ontoforge_mcp_actor", default=None)   # who is calling: set by the API guard and by the assistant
 
 
+def _doms(p) -> tuple:
+    d = getattr(p, "all_domains", ())
+    return tuple(d() if callable(d) else d)
+
+
 def _plain(v):
     """JSON-safe copies of dataclasses, UUIDs, datetimes and Decimals, recursively."""
     if is_dataclass(v):
@@ -466,6 +471,84 @@ class GraphTools:
         return json.dumps(out, default=str)
 
     # -- helpers ----------------------------------------------------------------
+
+    def _resolve_property(self, o: Ontology, name: str) -> str | None:
+        for iri, p in list(o.object_properties.items()) + list(o.datatype_properties.items()):
+            if iri == name or o.local_name(iri).lower() == name.lower() or (p.label or "").lower() == name.lower():
+                return iri
+        return None
+
+    def class_schema(self, domain: str | None, cls: str) -> dict:
+        """What a class holds and how it connects: its attributes, its outgoing and incoming relationships."""
+        v = self._version(domain)
+        if v is None:
+            return {"error": self._unknown(domain)}
+        o = self._ontology(v)
+        iri = self._resolve_type(v, cls)
+        if o is None or iri not in o.classes:
+            return {"error": f"Unknown class {cls!r}; call describe_ontology or list_entity_types"}
+        family = {iri, *o.ancestors(iri)}
+        attrs = [{"iri": p.iri, "label": p.label or o.local_name(p.iri), "range": o.local_name(p.range) if p.range else None}
+                 for p in o.datatype_properties.values() if set(_doms(p)) & family]
+        out = [{"iri": p.iri, "label": p.label or o.local_name(p.iri), "target": p.range} for p in o.object_properties.values() if set(_doms(p)) & family]
+        inc = [{"iri": p.iri, "label": p.label or o.local_name(p.iri), "source": _doms(p)[0] if _doms(p) else None}
+               for p in o.object_properties.values() if p.range in family]
+        c = o.classes[iri]
+        return {"class": iri, "label": c.label or o.local_name(iri), "description": c.description, "parents": list(c.parents), "attributes": attrs, "outgoing": out, "incoming": inc,
+                "hint": "graph_aggregate(class, measure=<attribute>, group_by=<relationship or attribute>) counts and sums; filters walk relationships, '^' walks one backwards."}
+
+    def ontology_paths(self, domain: str | None, from_cls: str, to_cls: str, max_depth: int = 3) -> dict:
+        """Ways from one class to another through the relationships, shortest first, up to five."""
+        v = self._version(domain)
+        if v is None:
+            return {"error": self._unknown(domain)}
+        o = self._ontology(v)
+        a, b = self._resolve_type(v, from_cls), self._resolve_type(v, to_cls)
+        if o is None or a not in o.classes or b not in o.classes:
+            return {"error": f"Unknown class {from_cls if a not in (o.classes if o else {}) else to_cls!r}; call describe_ontology or list_entity_types"}
+        edges: dict[str, list[tuple[str, str, str]]] = {}
+        for p in o.object_properties.values():
+            for d in _doms(p):
+                if p.range:
+                    edges.setdefault(d, []).append((p.iri, "forward", p.range))
+                    edges.setdefault(p.range, []).append((p.iri, "inverse", d))
+        found, frontier = [], [(a, [])]
+        seen = {a}
+        for _ in range(max(1, min(int(max_depth), 4))):
+            nxt = []
+            for node, path in frontier:
+                for prop, direction, target in edges.get(node, []):
+                    step = {"from": node, "property": prop, "direction": direction, "to": target}
+                    if target == b:
+                        found.append({"steps": path + [step]})
+                    elif target not in seen:
+                        seen.add(target); nxt.append((target, path + [step]))
+            frontier = nxt
+            if len(found) >= 5 or not frontier:
+                break
+        return {"from": a, "to": b, "paths": found[:5], "hint": "In graph_aggregate filters and group_by, write a forward step as the property IRI and an inverse step as '^' + IRI."}
+
+    def graph_aggregate(self, domain: str | None, cls: str, measure: str | None = None, group_by: "str | list[str] | None" = None,
+                        group_kind: str = "value", filters: list[dict] | None = None, limit: int = 50) -> dict:
+        v = self._version(domain)
+        if v is None:
+            return {"error": self._unknown(domain)}
+        o = self._ontology(v)
+        iri = self._resolve_type(v, cls)
+        if o is not None and iri not in o.classes:
+            return {"error": f"Unknown class {cls!r}; call list_entity_types"}
+        res = lambda name: (self._resolve_property(o, name) if o is not None else None) or name
+
+        def steps(x):
+            if not x:
+                return None
+            xs = [x] if isinstance(x, str) else list(x)
+            return [("^" + res(st[1:])) if st.startswith("^") else res(st) for st in xs]
+        m = res(measure) if measure else None
+        fl = [{"path": steps(f.get("path") or ([f["predicate"]] if f.get("predicate") else [])), "value": f.get("value")} for f in (filters or []) if f.get("value") is not None]
+        rows = self.store.aggregate(v.id, iri, measure=m, group_by=steps(group_by), group_kind=group_kind, filters=fl, limit=limit)
+        return {"class": iri, "measure": m, "group_by": steps(group_by), "group_kind": group_kind, "rows": rows,
+                "note": "sum/avg/min/max are over the measure where present; count is instances. Check the source table's date coverage before reading a last-period drop as a decline."}
 
     def _resolve_type(self, v: DomainVersion, name: str) -> str | None:
         o = self._ontology(v)
