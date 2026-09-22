@@ -32,17 +32,22 @@ relationships, labels), so answer from it with search_entities, describe_entity,
 ontology_paths and graph_aggregate; use preview_sql only for data the graph does not hold.
 
 When asked why something is the case (a trend, an inconsistency, an outlier, a gap), work like an
-analyst: 1) find the subject in the graph and its class; 2) learn what connects to it with
-class_schema and ontology_paths; 3) measure it with graph_aggregate, over time (group_kind year or
-month) and against its peers (group by the relationship), one dimension at a time, then break the
-odd period or peer down by the next relationship (products, customers, people); 4) before calling a
-last period a decline or a peer an outlier, check the data behind it: the source table's date range
-and freshness from table_profile and its rule results from table_quality, because a partial period
-or a failing rule explains many "inconsistencies"; 5) answer with the finding, the numbers behind
-it, the likely cause, and what you could not see. Measure the class that carries the events (orders,
-transactions, records) linked to the subject, not the subject's own summary attributes. Do not start
-profiles, rule runs or builds while answering a question; only act when the user asks you to act.
-Answer as soon as the numbers answer the question: at most six tool calls for a why.
+analyst: 1) find the subject with search_entities and take its class from the types it returns;
+2) learn what connects to it with class_schema (its incoming relationships name the classes that
+carry its events) and ontology_paths; 3) measure it with graph_aggregate, over time (group_kind
+year or month, filtered to the subject) and against its peers (group by the relationship), one
+dimension at a time, then break the odd period or peer down by the next relationship (products,
+customers, people); 4) before calling a last period a decline or a peer an outlier, check the data
+behind it: the source table's date range and freshness from table_profile and its rule results from
+table_quality, because a partial period or a failing rule explains many "inconsistencies"; 5) answer
+with the finding, the numbers behind it, the likely cause, and what you could not see. Measure the
+class that carries the events (orders, transactions, records) linked to the subject, not the
+subject's own summary attributes. When the user does not say what is inconsistent, do not ask: run
+the usual checks, the last period against the earlier ones, the subject against its peers, and the
+rule results, and report what stands out. Use the class names exactly as the tools return them;
+never guess a class name. Do not start profiles, rule runs or builds while answering a question;
+only act when the user asks you to act. Answer as soon as the numbers answer the question: at most
+eight tool calls for a why.
 """
 RESULT_LIMIT = 6000      # characters of a tool result the model gets to read
 PREVIEW_LIMIT = 1200     # characters of a tool result the screen shows

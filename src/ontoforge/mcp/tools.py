@@ -472,6 +472,17 @@ class GraphTools:
 
     # -- helpers ----------------------------------------------------------------
 
+    @staticmethod
+    def _unknown_class(o: Ontology | None, cls: str) -> str:
+        """The error for a class that is not in the ontology, naming the classes it most resembles."""
+        import difflib
+        names = {o.local_name(iri): iri for iri in (o.classes if o else {})}
+        names.update({c.label: iri for iri, c in (o.classes.items() if o else []) if c.label})
+        q = cls.rsplit("#", 1)[-1].rsplit("/", 1)[-1].lower()
+        close = [n for n in names if q and (q in n.lower() or n.lower() in q)] or difflib.get_close_matches(cls, list(names), n=4, cutoff=0.5)
+        hint = f"; did you mean {', '.join(dict.fromkeys(close[:4]))}?" if close else "; call describe_ontology or list_entity_types"
+        return f"Unknown class {cls!r}{hint}"
+
     def _resolve_property(self, o: Ontology, name: str) -> str | None:
         for iri, p in list(o.object_properties.items()) + list(o.datatype_properties.items()):
             if iri == name or o.local_name(iri).lower() == name.lower() or (p.label or "").lower() == name.lower():
@@ -486,7 +497,7 @@ class GraphTools:
         o = self._ontology(v)
         iri = self._resolve_type(v, cls)
         if o is None or iri not in o.classes:
-            return {"error": f"Unknown class {cls!r}; call describe_ontology or list_entity_types"}
+            return {"error": self._unknown_class(o, cls)}
         family = {iri, *o.ancestors(iri)}
         attrs = [{"iri": p.iri, "label": p.label or o.local_name(p.iri), "range": o.local_name(p.range) if p.range else None}
                  for p in o.datatype_properties.values() if set(_doms(p)) & family]
@@ -505,7 +516,7 @@ class GraphTools:
         o = self._ontology(v)
         a, b = self._resolve_type(v, from_cls), self._resolve_type(v, to_cls)
         if o is None or a not in o.classes or b not in o.classes:
-            return {"error": f"Unknown class {from_cls if a not in (o.classes if o else {}) else to_cls!r}; call describe_ontology or list_entity_types"}
+            return {"error": self._unknown_class(o, from_cls if a not in (o.classes if o else {}) else to_cls)}
         edges: dict[str, list[tuple[str, str, str]]] = {}
         for p in o.object_properties.values():
             for d in _doms(p):
@@ -536,7 +547,7 @@ class GraphTools:
         o = self._ontology(v)
         iri = self._resolve_type(v, cls)
         if o is not None and iri not in o.classes:
-            return {"error": f"Unknown class {cls!r}; call list_entity_types"}
+            return {"error": self._unknown_class(o, cls)}
         res = lambda name: (self._resolve_property(o, name) if o is not None else None) or name
 
         def steps(x):

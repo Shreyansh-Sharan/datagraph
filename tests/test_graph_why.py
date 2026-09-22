@@ -41,3 +41,10 @@ def test_group_by_is_a_path_and_says_so_when_given_two_dimensions(db):
     assert "one dimension" in out["error"] and "hired" in out["error"]
     ok = tools.graph_aggregate("hr", "Employee", group_by=["works in", "name"])          # a real path: department, then its name
     assert {r["group"] for r in ok["rows"]} == {"SALES", "RESEARCH", None}
+
+
+def test_unknown_class_names_the_closest_classes(db):
+    reg, store, v = built_domain(db)
+    tools = GraphTools(reg, store)
+    for err in (tools.class_schema("hr", "Emp")["error"], tools.ontology_paths("hr", "Emp", "Department")["error"], tools.graph_aggregate("hr", "Emp")["error"]):
+        assert err.startswith("Unknown class 'Emp'") and "Employee" in err and "Department" not in err
