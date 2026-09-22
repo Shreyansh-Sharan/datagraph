@@ -382,6 +382,17 @@ describe("Spotlight and Ask", () => {
     expect(await screen.findByRole("log", { name: "Conversation" })).toHaveTextContent(/Which rules are failing\?/);
     expect(screen.getByRole("log", { name: "Conversation" })).toHaveTextContent(/dim_customer scores 90%/);
   });
+  it("renders the assistant's Markdown and draws the chart it describes", async () => {
+    renderAt("#/d/rgm/ask?v=3", new MockApi({ latency: 5 }));
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText("Ask a question"), "Chart sales by year{Enter}");
+    const log = screen.getByRole("log", { name: "Conversation" });
+    expect(await within(log).findByRole("img", { name: "Sales by year" })).toBeInTheDocument();      // the ```chart block becomes a chart
+    expect(within(log).getByText("2024", { selector: "strong" })).toBeInTheDocument();                // **bold** is rendered, not shown raw
+    expect(within(log).queryByText(/\*\*/)).toBeNull();
+    expect(within(log).getByRole("table")).toBeInTheDocument();
+    expect(within(log).queryByText(/```/)).toBeNull();
+  });
   it("holds a thread in Ask, shows the tool trace and keeps the list of conversations", async () => {
     renderAt("#/d/rgm/ask?v=3", new MockApi({ latency: 5 }));
     const user = userEvent.setup();

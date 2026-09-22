@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Icon } from "@/components/icons";
+import { Markdown } from "@/components/Markdown";
 import { Spinner } from "@/components/ui";
 import { useApp } from "@/state/app";
 import { useAssistantContext } from "@/state/assistant";
@@ -77,7 +78,7 @@ export function Spotlight() {
             {tools.length > 0 && <div className="spot-tools">{tools.map(x => <span key={x.id} className="pill outline mono" title={x.result.slice(0, 400)}>{x.name}</span>)}</div>}
             {live && <div className="muted small row" style={{ gap: 8 }}><Spinner blue />{live}</div>}
             {error && <div className="notice error">{error}</div>}
-            {answer && <div className="spot-a">{answer}</div>}
+            {answer && <div className="spot-a"><Markdown text={answer} /></div>}
             {answer && conversation && <div className="spot-foot"><button type="button" className="btn sm" onClick={() => { navigate(ctx.domain ? `/d/${encodeURIComponent(ctx.domain)}/ask?c=${conversation}` : `/?c=${conversation}`); setOpen(false); }}>Continue in Ask</button><span className="muted small">Type to ask a follow-up</span></div>}
           </div>
         )}

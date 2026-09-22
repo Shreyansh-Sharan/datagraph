@@ -176,8 +176,13 @@ table); the answer streams back as server-sent events (`tool_call`, `tool_result
 `done`). On the server the model only sees the MCP tool catalogue and calls the tools through the
 same server that `/mcp` exposes, as the signed-in caller, so it can read the graph, the profile,
 data quality, the glossary and builds, and act: profile a table, run or add rules, start a build,
-preview a SELECT. Each answer shows the tools it used. Threads live in `conversations` and
-`messages` per user.
+preview a SELECT, and change the design of the working draft (add a class, map it, add an
+attribute, add or remove a relationship with its foreign key or link table) before starting the
+build that loads it. Each answer shows the tools it used. Answers are Markdown, rendered by
+`components/Markdown.tsx` (marked + DOMPurify); a fenced ```chart block holding
+`{"type": "bar" | "line", "title", "unit", "series": [{"name", "points": [{"x", "y"}]}]}` is drawn
+by `components/Chart.tsx` as an SVG chart, so "chart sales by year" gets a chart under the text.
+Threads live in `conversations` and `messages` per user.
 
 ### The version mechanism
 

@@ -128,6 +128,32 @@ def create_mcp_server(tools: GraphTools, name: str = "ontoforge") -> MCPServer:
     def start_build(domain: str | None = None, full: bool = False) -> dict:
         return tools.start_build(domain, full)
 
+    @server.tool(description="Add a class to the ontology of the domain's working draft (optionally under a parent). Then map_class ties it to a table.")
+    def add_class(name: str, label: str | None = None, description: str | None = None, parent: str | None = None, domain: str | None = None) -> dict:
+        return tools.add_class(domain, name, label, description, parent)
+
+    @server.tool(description="Add a relationship from one class to another in the ontology, and map it when its key is given: fk_column names the foreign-key column, sitting on the source class's table (fk_on 'from', the default) or on the target class's table (fk_on 'to'); or link_table with source_key and target_key when a separate table joins the two. A build then loads it.")
+    def add_relationship(name: str, from_cls: str, to_cls: str, label: str | None = None, description: str | None = None, fk_column: str | None = None, fk_on: str = "from",
+                         link_table: str | None = None, source_key: list[str] | None = None, target_key: list[str] | None = None, domain: str | None = None) -> dict:
+        return tools.add_relationship(domain, name, from_cls, to_cls, label, description, fk_column, fk_on, link_table, source_key, target_key)
+
+    @server.tool(description="Map an existing relationship onto the rows: fk_column on the source's table (fk_on 'from') or on the target's table (fk_on 'to'), or link_table + source_key + target_key. Both classes must be mapped first.")
+    def map_relationship(relationship: str, fk_column: str | None = None, fk_on: str = "from", link_table: str | None = None, source_key: list[str] | None = None,
+                         target_key: list[str] | None = None, domain: str | None = None) -> dict:
+        return tools.map_relationship(domain, relationship, fk_column, fk_on, link_table, source_key, target_key)
+
+    @server.tool(description="Add an attribute (datatype property) to a class and, with column, bind it to that column of the class's table. datatype: string | integer | decimal | double | boolean | date | dateTime.")
+    def add_attribute(cls: str, name: str, column: str | None = None, datatype: str | None = None, label: str | None = None, description: str | None = None, domain: str | None = None) -> dict:
+        return tools.add_attribute(domain, cls, name, column, datatype, label, description)
+
+    @server.tool(description="Map a class onto a table of the domain's snapshot: each row is one instance identified by key_columns. Keeps the attribute bindings when the table is unchanged.")
+    def map_class(cls: str, table: str, key_columns: list[str], domain: str | None = None) -> dict:
+        return tools.map_class(domain, cls, table, key_columns)
+
+    @server.tool(description="Remove a relationship from the ontology and its mapping. A build then drops its triples.")
+    def remove_relationship(relationship: str, domain: str | None = None) -> dict:
+        return tools.remove_relationship(domain, relationship)
+
     @server.tool(description="Run one read-only SELECT against the domain's source warehouse and return up to `limit` rows. Table names as the mapping spells them.")
     def preview_sql(sql: str, domain: str | None = None, limit: int = 20) -> dict:
         return tools.preview_sql(domain, sql, limit)

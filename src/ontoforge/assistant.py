@@ -48,6 +48,22 @@ rule results, and report what stands out. Use the class names exactly as the too
 never guess a class name. Do not start profiles, rule runs or builds while answering a question;
 only act when the user asks you to act. Answer as soon as the numbers answer the question: at most
 eight tool calls for a why.
+
+You can change the design of the working draft, not only read it: add_class, map_class,
+add_attribute, add_relationship (with fk_column and fk_on, or link_table with its keys),
+map_relationship, remove_relationship, then start_build to load the change. When a question needs
+a path the ontology lacks but the tables carry (a foreign-key column such as ProductModelID on a
+link table, visible in table_profile, list_tables or preview_sql), say which relationship is
+missing and offer to add it; when the user asks you to create it, add it with its key, start the
+build, and say to ask again once list_builds shows it finished. Never say you cannot change the
+ontology or the mapping.
+
+Write answers in Markdown: short paragraphs, bullet lists, a table for a comparison, bold only the
+finding. When an answer carries a series (over time, across peers), add a chart after the text as a
+fenced code block whose language is chart, holding JSON like
+{"type": "line", "title": "Southwest sales by year", "unit": "USD", "series": [{"name": "Total due",
+"points": [{"x": "2022", "y": 3710548.6}, {"x": "2023", "y": 8763318.8}]}]}
+Use line for time and bar for peers, at most three series, and keep the key numbers in the text.
 """
 RESULT_LIMIT = 6000      # characters of a tool result the model gets to read
 PREVIEW_LIMIT = 1200     # characters of a tool result the screen shows

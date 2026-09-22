@@ -12,6 +12,8 @@ export interface MockOptions { sourceKind?: SourceKind; role?: Role; catalogDeni
 
 const clone = <T>(x: T): T => JSON.parse(JSON.stringify(x));
 
+const CHART_ANSWER = "Orders by year, measured by revenue:\n\n| Year | Orders | Revenue |\n|---|---|---|\n| 2023 | 1,240 | 3.1M |\n| 2024 | 1,910 | 4.8M |\n\n**2024** is the strongest year: 54% more revenue on 54% more orders.\n\n```chart\n{\"type\":\"bar\",\"title\":\"Sales by year\",\"unit\":\"USD\",\"series\":[{\"name\":\"Revenue\",\"points\":[{\"x\":\"2023\",\"y\":3100000},{\"x\":\"2024\",\"y\":4800000}]}]}\n```";
+
 export class MockApi implements DatagraphApi {
   private domainsState: DomainSummary[] = clone(D.DOMAINS);
   private commentStore: Record<string, Comment[]> = Object.fromEntries(Object.entries(D.COMMENTS).map(([k, v]) => [k, v.map(([who, when, text]) => ({ who, when, text }))]));
@@ -404,7 +406,8 @@ export class MockApi implements DatagraphApi {
     const push = (m: Omit<ChatMessage, "id" | "created_at">) => thread!.messages.push({ id: ++this.msgId, created_at: new Date().toISOString(), ...m });
     push({ role: "user", content: message, tool_calls: null, tool_call_id: null, name: null });
     const t = message.toLowerCase(); const domain = ctx.domain ?? "rgm";
-    const tool = /build/.test(t) ? { name: "start_build", arguments: { domain }, result: JSON.stringify({ id: "run-mock", status: "running" }) }
+    const tool = /chart|year|trend|sales/.test(t) ? { name: "graph_aggregate", arguments: { domain, cls: "Order", measure: "revenue", group_by: "orderDate", group_kind: "year" }, result: JSON.stringify({ rows: [{ group: "2023", count: 1240, sum: 3100000 }, { group: "2024", count: 1910, sum: 4800000 }] }) }
+      : /build/.test(t) ? { name: "start_build", arguments: { domain }, result: JSON.stringify({ id: "run-mock", status: "running" }) }
       : /profile/.test(t) ? { name: "table_profile", arguments: { domain, table: ctx.table ?? "rgm.gold.dim_customer" }, result: JSON.stringify({ row_count: 612, missing_cells: 0.03, row_key: ["customer_id"] }) }
       : /quality|rule/.test(t) ? { name: "table_quality", arguments: { domain, table: ctx.table ?? "rgm.gold.dim_customer" }, result: JSON.stringify({ score: 0.8975, summary: { passing: 2, warning: 1, failing: 1 } }) }
       : { name: "search_entities", arguments: { query: message, domain }, result: JSON.stringify([{ iri: "http://polestar.ai/rgm/Customer/10482", label: "Carrefour", types: ["Customer"] }]) };
@@ -414,7 +417,7 @@ export class MockApi implements DatagraphApi {
     await this.wait(null, ms);
     onEvent?.({ type: "tool_result", id: "call_1", name: tool.name, result: tool.result });
     push({ role: "tool", content: tool.result, tool_calls: null, tool_call_id: "call_1", name: tool.name });
-    const answer = tool.name === "start_build" ? `Build started on ${domain}; watch it on the Build screen.` : tool.name === "table_profile" ? "dim_customer has 612 rows, 3% empty cells and customer_id as its row key." : tool.name === "table_quality" ? "dim_customer scores 90%: two rules pass, one warns, one fails (credit limit within range)." : `I found Carrefour, a Customer in ${domain}.`;
+    const answer = tool.name === "graph_aggregate" ? CHART_ANSWER : tool.name === "start_build" ? `Build started on ${domain}; watch it on the Build screen.` : tool.name === "table_profile" ? "dim_customer has 612 rows, 3% empty cells and customer_id as its row key." : tool.name === "table_quality" ? "dim_customer scores 90%: two rules pass, one warns, one fails (credit limit within range)." : `I found Carrefour, a Customer in ${domain}.`;
     await this.wait(null, ms);
     onEvent?.({ type: "text", text: answer });
     push({ role: "assistant", content: answer, tool_calls: null, tool_call_id: null, name: null });

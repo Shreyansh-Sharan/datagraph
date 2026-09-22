@@ -3,13 +3,14 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Icon } from "@/components/icons";
+import { Markdown } from "@/components/Markdown";
 import { Button, Skeleton, Spinner } from "@/components/ui";
 import { useApp, useLoad } from "@/state/app";
 import { useAssistantContext } from "@/state/assistant";
 import { relTime } from "@/api/format";
 import type { ChatEvent, ChatMessage, Conversation, DomainSummary, ToolTrace } from "@/api";
 
-const SUGGESTIONS = ["What is in this domain?", "Profile the biggest table", "Which rules are failing?", "Start a build", "What does the glossary say about revenue?", "Show me 5 customers"];
+const SUGGESTIONS = ["What is in this domain?", "Chart sales by year", "Why is the largest region inconsistent?", "Which rules are failing?", "Add the relationship the tables carry but the ontology lacks", "Start a build"];
 type Turn = { id: string; role: "user" | "assistant"; text: string; tools: ToolTrace[]; pending?: boolean; live?: string | null; error?: string | null };
 
 /** At home it spans every domain; inside a domain it is scoped to it (the context travels with each question). */
@@ -94,7 +95,7 @@ export function Ask({ inDomain, domain: domainProp }: { inDomain?: boolean; doma
                 </details>)}
               {t.live && <div className="muted small row" style={{ gap: 8 }}><Spinner blue />{t.live}</div>}
               {t.error && <div className="notice error">{t.error}</div>}
-              {t.text && <div className="chat-bubble">{t.text}</div>}
+              {t.text && <div className="chat-bubble">{t.role === "assistant" ? <Markdown text={t.text} /> : t.text}</div>}
             </div>))}
           <div ref={bottom} />
         </div>

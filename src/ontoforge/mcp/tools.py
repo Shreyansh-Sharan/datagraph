@@ -19,9 +19,9 @@ from graphql import graphql_sync, print_schema
 
 from ontoforge.constants import MCP_TOOLS
 from ontoforge.graphql import build_schema
-from ontoforge.mapping import MappingSpec, mapping_status
-from ontoforge.ontology import DatatypeProperty, Ontology
-from ontoforge.registry import Domain, DomainVersion, NotFound, Registry, Status
+from ontoforge.mapping import AttributeBinding, ClassMapping, MappingSpec, MappingSpecError, RelationMapping, mapping_status
+from ontoforge.ontology import XSD, DatatypeProperty, ObjectProperty, OntoClass, Ontology
+from ontoforge.registry import Domain, DomainVersion, NotFound, Registry, RegistryError, Status
 from ontoforge.store import TripleStore
 
 
@@ -44,6 +44,9 @@ def _plain(v):
     if isinstance(v, (UUID, datetime, Decimal)):
         return str(v) if not isinstance(v, datetime) else v.isoformat()
     return v
+
+
+_NEXT_BUILD = "start_build to load it into the graph (incremental: only the tables it touches are read)."
 
 
 class GraphTools:
@@ -202,6 +205,228 @@ class GraphTools:
             return {"error": self._unknown(domain)}
         columns, rows = self._need("sources").for_version(v.id).query(sql, max(1, min(int(limit), 100)))
         return {"columns": columns, "rows": _plain([list(r) for r in rows])}
+
+    # -- design: the assistant changes the working draft, not only reads it ---------------------------
+
+    def add_class(self, domain: str | None, name: str, label: str | None = None, description: str | None = None, parent: str | None = None) -> dict:
+        d, v, o, err = self._draft(domain)
+        if err:
+            return {"error": err}
+        if self._class_of(o, name):
+            return {"error": f"Class {name!r} already exists as {self._class_of(o, name)}"}
+        parents: tuple[str, ...] = ()
+        if parent:
+            piri = self._class_of(o, parent)
+            if not piri:
+                return {"error": self._unknown_class(o, parent)}
+            parents = (piri,)
+        c = o.add_class(OntoClass(o.mint(name, capitalize=True), label or name, description, parents))
+        if (err := self._save(v, ontology=o)):
+            return {"error": err}
+        return {"class": c.iri, "label": c.label, "mapped": False,
+                "next": "map_class(cls, table, key_columns) to tie it to a table, add_attribute for its columns, add_relationship for its links, then start_build."}
+
+    def add_relationship(self, domain: str | None, name: str, from_cls: str, to_cls: str, label: str | None = None, description: str | None = None,
+                         fk_column: str | None = None, fk_on: str = "from", link_table: str | None = None,
+                         source_key: list[str] | None = None, target_key: list[str] | None = None) -> dict:
+        """A relationship between two classes in the ontology, and, when a key is given, its mapping."""
+        d, v, o, err = self._draft(domain)
+        if err:
+            return {"error": err}
+        src, tgt = self._class_of(o, from_cls), self._class_of(o, to_cls)
+        if not src or not tgt:
+            return {"error": self._unknown_class(o, from_cls if not src else to_cls)}
+        if (have := self._property_of(o, name)):
+            return {"error": f"Relationship {name!r} already exists as {have}; map_relationship maps it, remove_relationship removes it"}
+        p = ObjectProperty(o.mint(name), label or name, description, domain=src, range=tgt)
+        spec = rel = None
+        if fk_column or link_table:
+            spec, rel, err = self._relation_spec(d, v, o, p, fk_column, fk_on, link_table, source_key, target_key)
+            if err:
+                return {"error": err}
+        o.add_object_property(p)
+        if (err := self._save(v, ontology=o, mapping=spec)):
+            return {"error": err}
+        if rel is None:
+            return {"property": p.iri, "from": src, "to": tgt, "mapped": False,
+                    "next": "map_relationship(relationship, fk_column, fk_on='from'|'to') or with link_table + source_key + target_key, then start_build."}
+        return {"property": p.iri, "from": src, "to": tgt, "mapped": True, "relation": _plain(asdict(rel)), "next": _NEXT_BUILD}
+
+    def map_relationship(self, domain: str | None, relationship: str, fk_column: str | None = None, fk_on: str = "from", link_table: str | None = None,
+                         source_key: list[str] | None = None, target_key: list[str] | None = None) -> dict:
+        """How the rows carry a relationship: a foreign-key column on the source ('from') or the target ('to') table, or a link table with a key to each side."""
+        d, v, o, err = self._draft(domain)
+        if err:
+            return {"error": err}
+        iri = self._property_of(o, relationship)
+        if not iri or iri not in o.object_properties:
+            return {"error": f"Unknown relationship {relationship!r}; class_schema lists a class's relationships"}
+        spec, rel, err = self._relation_spec(d, v, o, o.object_properties[iri], fk_column, fk_on, link_table, source_key, target_key)
+        if err:
+            return {"error": err}
+        if (err := self._save(v, mapping=spec)):
+            return {"error": err}
+        return {"property": iri, "mapped": True, "relation": _plain(asdict(rel)), "next": _NEXT_BUILD}
+
+    def _relation_spec(self, d, v, o: Ontology, p: ObjectProperty, fk_column, fk_on, link_table, source_key, target_key):
+        """The mapping spec with the relation for property p, or (None, None, error). Nothing is saved here."""
+        iri = p.iri
+        src, tgt = (p.all_domains[0] if p.all_domains else None), p.range
+        spec = MappingSpec.from_dict(v.mapping) if v.mapping else MappingSpec(base_iri=d.base_iri)
+        by_class = {c.class_iri: c for c in spec.classes}
+        if src not in by_class or tgt not in by_class:
+            missing = o.local_name(src if src not in by_class else tgt)
+            return None, None, f"Class {missing} is not mapped to a table yet; call map_class first"
+        sm, tm = by_class[src], by_class[tgt]
+        if link_table:
+            if not source_key or not target_key:
+                return None, None, "A link table needs source_key (its columns naming the source row) and target_key (naming the target row)"
+            table, err = self._table(v, link_table)
+            if err:
+                return None, None, err
+            cols, err = self._columns_of(v, table, list(source_key) + list(target_key))
+            if err:
+                return None, None, err
+            rel = RelationMapping(iri, src, tgt, table=table, source_key=tuple(cols[:len(source_key)]), target_key=tuple(cols[len(source_key):]))
+        elif fk_column:
+            if fk_on not in ("from", "to"):
+                return None, None, "fk_on is 'from' (the column sits on the source class's table) or 'to' (on the target class's table)"
+            table = tm.table if fk_on == "to" else sm.table
+            if not table:
+                return None, None, f"{o.local_name(tgt if fk_on == 'to' else src)} is mapped to a query, not a table; use link_table"
+            cols, err = self._columns_of(v, table, [fk_column])
+            if err:
+                return None, None, err
+            rel = (RelationMapping(iri, src, tgt, table=table, source_key=(cols[0],), target_key=tm.key_columns) if fk_on == "to"
+                   else RelationMapping(iri, src, tgt, target_key=(cols[0],)))
+        else:
+            return None, None, "Give fk_column (with fk_on 'from' or 'to') or link_table with source_key and target_key"
+        rels = tuple(r for r in spec.relations if not (r.property_iri == iri and r.source_class == src)) + (rel,)
+        spec = MappingSpec(spec.base_iri, spec.classes, rels)
+        try:
+            spec.to_r2rml()
+        except MappingSpecError as exc:
+            return None, None, str(exc)
+        return spec, rel, None
+
+    def add_attribute(self, domain: str | None, cls: str, name: str, column: str | None = None, datatype: str | None = None,
+                      label: str | None = None, description: str | None = None) -> dict:
+        """An attribute of a class in the ontology and, when a column is given, its binding in the mapping. datatype: string, integer, decimal, double, boolean, date, dateTime."""
+        d, v, o, err = self._draft(domain)
+        if err:
+            return {"error": err}
+        ciri = self._class_of(o, cls)
+        if not ciri:
+            return {"error": self._unknown_class(o, cls)}
+        rng = XSD + (datatype or "string").replace(XSD, "")
+        iri = self._property_of(o, name)
+        if iri and iri in o.object_properties:
+            return {"error": f"{name!r} is a relationship, not an attribute"}
+        if not iri:
+            iri = o.add_datatype_property(DatatypeProperty(o.mint(name), label or name, description, domain=ciri, range=rng)).iri
+            if (err := self._save(v, ontology=o)):
+                return {"error": err}
+        out = {"property": iri, "class": ciri, "column": None, "next": "add_attribute again with column to bind it, then start_build."}
+        if column:
+            spec = MappingSpec.from_dict(v.mapping) if v.mapping else None
+            cm = next((c for c in (spec.classes if spec else ()) if c.class_iri == ciri), None)
+            if cm is None:
+                return {**out, "mapping_error": f"{o.local_name(ciri)} is not mapped to a table yet; call map_class first"}
+            cols, err = self._columns_of(v, cm.table, [column]) if cm.table else ([column], None)
+            if err:
+                return {**out, "mapping_error": err}
+            attrs = tuple(a for a in cm.attributes if a.property_iri != iri) + (AttributeBinding(iri, cols[0], datatype=rng),)
+            classes = tuple(ClassMapping(c.class_iri, c.table, c.sql_query, c.key_columns, c.iri_template, attrs, c.excluded) if c.class_iri == ciri else c for c in spec.classes)
+            if (err := self._save(v, mapping=MappingSpec(spec.base_iri, classes, spec.relations))):
+                return {"error": err}
+            out.update(column=cols[0], next="start_build to load it into the graph.")
+        return out
+
+    def map_class(self, domain: str | None, cls: str, table: str, key_columns: list[str]) -> dict:
+        """Tie a class to a table: each row is one instance, identified by the key columns."""
+        d, v, o, err = self._draft(domain)
+        if err:
+            return {"error": err}
+        ciri = self._class_of(o, cls)
+        if not ciri:
+            return {"error": self._unknown_class(o, cls)}
+        table, err = self._table(v, table)
+        if err:
+            return {"error": err}
+        cols, err = self._columns_of(v, table, list(key_columns or []))
+        if err or not cols:
+            return {"error": err or "key_columns must name at least one column"}
+        spec = MappingSpec.from_dict(v.mapping) if v.mapping else MappingSpec(base_iri=d.base_iri)
+        old = next((c for c in spec.classes if c.class_iri == ciri), None)
+        cm = ClassMapping(ciri, table=table, key_columns=tuple(cols), attributes=old.attributes if old and old.table == table else (), excluded=old.excluded if old else ())
+        spec = MappingSpec(spec.base_iri, tuple(c for c in spec.classes if c.class_iri != ciri) + (cm,), spec.relations)
+        try:
+            spec.to_r2rml()
+        except MappingSpecError as exc:
+            return {"error": str(exc)}
+        if (err := self._save(v, mapping=spec)):
+            return {"error": err}
+        return {"class": ciri, "table": table, "key_columns": list(cols), "next": "add_attribute(cls, name, column) for its columns, add_relationship for its links, then start_build."}
+
+    def remove_relationship(self, domain: str | None, relationship: str) -> dict:
+        d, v, o, err = self._draft(domain)
+        if err:
+            return {"error": err}
+        iri = self._property_of(o, relationship)
+        if not iri or iri not in o.object_properties:
+            return {"error": f"Unknown relationship {relationship!r}"}
+        del o.object_properties[iri]
+        spec = MappingSpec.from_dict(v.mapping) if v.mapping else None
+        unmapped = bool(spec and any(r.property_iri == iri for r in spec.relations))
+        if unmapped:
+            spec = MappingSpec(spec.base_iri, spec.classes, tuple(r for r in spec.relations if r.property_iri != iri))
+        if (err := self._save(v, ontology=o, mapping=spec if unmapped else None)):
+            return {"error": err}
+        return {"removed": iri, "unmapped": unmapped, "next": "start_build to drop its triples from the graph."}
+
+    def _draft(self, domain: str | None):
+        """The working draft, its ontology (a new one for an empty domain) — or an error."""
+        d, v = self._working(domain)
+        if v is None:
+            return None, None, None, self._unknown(domain)
+        if v.status != Status.DRAFT:
+            return d, v, None, f"Version {v.version} of {d.name!r} is {v.status.value}, not a draft; create a new version to change the design"
+        o = self._ontology(v) or Ontology(iri=f"{d.base_iri.rstrip('/')}/ontology", label=d.name)
+        return d, v, o, None
+
+    def _save(self, v: DomainVersion, ontology: Ontology | None = None, mapping: MappingSpec | None = None) -> str | None:
+        try:
+            self.registry.update_content(v.id, actor=self._actor(), ontology_ttl=ontology.to_turtle() if ontology else None,
+                                         mapping=mapping.to_dict() if mapping else None)
+        except (RegistryError, ValueError) as exc:
+            return str(exc)
+        return None
+
+    @staticmethod
+    def _class_of(o: Ontology, name: str) -> str | None:
+        for iri, c in o.classes.items():
+            if iri == name or o.local_name(iri).lower() == name.strip().lower() or (c.label or "").lower() == name.strip().lower():
+                return iri
+        return None
+
+    def _property_of(self, o: Ontology, name: str) -> str | None:
+        return self._resolve_property(o, name.strip())
+
+    def _columns_of(self, v: DomainVersion, table: str, wanted: list[str]) -> tuple[list[str], str | None]:
+        """The snapshot's spelling of the wanted columns, or an error naming what the table has; unchecked without a snapshot."""
+        if self.metadata is None:
+            return list(wanted), None
+        try:
+            have = [c["name"] for c in self.metadata.get(v.id, table).columns]
+        except Exception:   # noqa: BLE001 - no snapshot: trust the caller, the build will tell
+            return list(wanted), None
+        by_lower = {c.lower(): c for c in have}
+        out = []
+        for w in wanted:
+            if w.lower() not in by_lower:
+                return [], f"{w!r} is not a column of {table}; it has {', '.join(have[:40])}"
+            out.append(by_lower[w.lower()])
+        return out, None
 
     # -- domain resolution ------------------------------------------------------
 
