@@ -62,6 +62,12 @@ class DatabricksCatalog(CatalogAdapter):
                               "AND table_name = ?", self._parts(table))
         return rows[0][0] if rows and rows[0][0] else None
 
+    def qualified(self, table: str, schema: str | None = None) -> str:
+        if table.count(".") == 2:
+            return table
+        catalog, sch = self._schema_parts(schema if schema or table.count(".") == 0 else table.rsplit(".", 1)[0])
+        return f"{catalog}.{sch}.{table.rsplit('.', 1)[-1]}"
+
     def _schema_parts(self, schema: str | None) -> tuple[str, str]:
         parts = (schema or "").split(".") if schema else []
         if len(parts) == 2:

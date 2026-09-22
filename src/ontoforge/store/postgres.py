@@ -49,6 +49,12 @@ class TripleStore:
             cur.execute("DELETE FROM triples WHERE domain_version_id = %s", (version_id,))
             return self._copy(cur, version_id, rows, inferred=False)
 
+    def analyze(self) -> None:
+        """Refresh the planner's statistics on the triples table: after a load a version's rows are
+        unknown to the planner, and it picks nested loops over full scans for every join."""
+        with self.db.transaction() as cur:
+            cur.execute("ANALYZE triples")
+
     def replace_tables(self, version_id: UUID, tables: list[str] | None, rows: Iterable[Row]) -> int:
         """Replace the triples of the given source tables (every table when None) from a stream of rows
         that carry their source table as a seventh value; atomic."""
@@ -217,7 +223,7 @@ class TripleStore:
         predicate IRI, or "^" + IRI to walk the relationship backwards."""
         jparams: list = []                      # bound in the JOINs, which come first in the statement
         wparams: list = [version_id, RDF_TYPE, class_iri]
-        where = ["i.domain_version_id = %s AND i.predicate = %s AND i.object = %s AND i.subject NOT LIKE '\\_:%%'"]
+        where = ["i.domain_version_id = %s AND i.predicate = %s AND i.object_key = md5(%s) AND i.subject NOT LIKE '\\_:%%'"]   # object_key: the (predicate, object) index
         joins: list[str] = []
         n = 0
         for f in filters or []:
@@ -240,6 +246,7 @@ class TripleStore:
         sql = (f"SELECT {gexpr} AS grp, count(DISTINCT i.subject) AS n, sum(x.v), avg(x.v), min(x.v), max(x.v) FROM triples i {' '.join(joins)} "
                f"CROSS JOIN LATERAL (SELECT {mexpr} AS v) x WHERE {' AND '.join(where)} GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT {int(limit)}")
         with self.db.transaction() as cur:
+            cur.execute("SET LOCAL statement_timeout = '90s'")   # a bad plan fails with a message instead of holding the caller for ever
             rows = cur.execute(sql, jparams + wparams).fetchall()
             iris = [r[0] for r in rows if isinstance(r[0], str) and r[0].startswith(("http://", "https://", "urn:"))]
             labels = {e.iri: e.label for e in self._entities(cur, version_id, iris)} if iris else {}

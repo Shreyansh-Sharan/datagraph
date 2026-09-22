@@ -7,7 +7,7 @@ import { Icon } from "@/components/icons";
 import { forget, memo } from "@/api/cache";
 import { useApp, useLoad } from "@/state/app";
 import { useDomain, useGo, useParam, useSetParams } from "@/state/domain";
-import { tableName, type CatalogTable } from "@/api";
+import { tableName, type CatalogTable, type SourceKind } from "@/api";
 
 type Tab = "columns";
 type Status = "all" | "in" | "out" | "unmapped";
@@ -23,9 +23,9 @@ const typing = (el: EventTarget | null) => el instanceof HTMLElement && (el.tagN
 
 export function Metadata() {
   const { api, config, say } = useApp();
-  const { domain, version, editable } = useDomain();
+  const { domain, version, editable, sourceKind } = useDomain();
   const go = useGo();
-  const dbx = config.sourceKind === "databricks";
+  const dbx = sourceKind === "databricks";
   const caps = config.capabilities;
   const [schemaParam] = useParam("schema", "");
   const [tableParam] = useParam("table", "");
@@ -76,7 +76,7 @@ export function Metadata() {
   const tcls = useLoad(() => table ? api.tableClass(domain.name, full0(schema, table), version?.version) : Promise.resolve(null), [domain.name, schema, table, version?.version]);
   const cols = detail.data?.columns ?? [];
   const cls = tcls.data ?? current?.t.cls ?? null;
-  const full = detail.data?.fullName ?? (schema.includes(".") ? full0(schema, table) : tableName(config.sourceKind, domain.catalog, schema, table));
+  const full = detail.data?.fullName ?? (schema.includes(".") ? full0(schema, table) : tableName(sourceKind as SourceKind, domain.catalog, schema, table));
   const keyCols = cols.filter(c => c.key === "pk").map(c => c.name);
   // -- ticking and the snapshot -----------------------------------------------------------------
   const importable = (r: Row) => editable && !r.t.imported;

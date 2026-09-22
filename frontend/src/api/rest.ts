@@ -292,9 +292,16 @@ export class RestApi extends MockApi {
   override async refreshSnapshot(domain: string, version: number): Promise<RefreshChange[]> {
     return this.req<RefreshChange[]>("POST", `/versions/${this.vid(domain, version)}/metadata/refresh`);
   }
+  private factsOf = new Map<string, Promise<{ kind: string; catalog: string | null }>>();
+  /** The domain's own source kind and catalog (remembered): table names are spelled by the source the domain reads, not the deployment's. */
+  private sourceOf(domain: string): Promise<{ kind: string; catalog: string | null }> {
+    let p = this.factsOf.get(domain);
+    if (!p) { p = this.sourceFacts(domain).then(f => ({ kind: f.kind, catalog: f.catalog })).catch(async () => { const cfg = this.cfg ?? await this.config(); return { kind: cfg.sourceKind, catalog: cfg.catalog ?? null }; }); this.factsOf.set(domain, p); }
+    return p;
+  }
   override async tableDetail(domain: string, schema: string, table: string): Promise<TableDetail> {
-    const cfg = this.cfg ?? await this.config();
-    const full = schema.includes(".") ? `${schema}.${table}` : cfg.sourceKind === "databricks" && cfg.catalog ? tableName("databricks", cfg.catalog, schema, table) : `${schema}.${table}`;
+    const src = await this.sourceOf(domain);
+    const full = schema.includes(".") ? `${schema}.${table}` : src.kind === "databricks" && src.catalog ? tableName("databricks", src.catalog, schema, table) : `${schema}.${table}`;
     const t = await this.req<{ comment: string | null; columns: { name: string; type: string; comment: string | null }[]; primary_key: string[]; foreign_keys: { columns: string[] }[] }>("GET", `/catalog/tables/${encodeURIComponent(full)}?domain=${encodeURIComponent(domain)}`);
     const pk = new Set(t.primary_key ?? []); const fk = new Set((t.foreign_keys ?? []).flatMap(f => f.columns));
     return { name: table, fullName: full, comment: t.comment ?? "", columns: t.columns.map(c => ({ name: c.name, type: c.type, comment: c.comment ?? "", key: pk.has(c.name) ? "pk" : fk.has(c.name) ? "fk" : null, keyInferred: false })) };

@@ -9,10 +9,10 @@ const BLUE = "#2249FF", ORANGE = "#FF7000";
 const RUN_DOT: Record<string, string> = { succeeded: BLUE, failed: ORANGE, cancelled: "#B3B3B7", running: ORANGE, queued: "#CFCFD2" };
 
 export function Build() {
-  const { api, config, say } = useApp();
-  const { domain, version, editable } = useDomain();
+  const { api, say } = useApp();
+  const { domain, version, editable, sourceKind } = useDomain();
   const go = useGo();
-  const dbx = config.sourceKind === "databricks";
+  const dbx = sourceKind === "databricks";
   const history = useLoad(() => api.builds(domain.name, version!.version), [domain.name, version?.version]);
   const checklist = useLoad(() => api.checklist(domain.name, version!.version), [domain.name, version?.version]);
   // Drift re-reads every mapped table from the source, so it is its own row and never holds the rest of the list back.
@@ -100,7 +100,7 @@ export function Build() {
           </Card>
           <Card>
             <h2 className="h2" style={{ marginBottom: 10 }}>Warehouse publish</h2>
-            <KV k="Adapter" v={config.sourceKind} /><KV k="Materialization" v={dbx ? domain.materialization : "view"} /><KV k="Target schema" v={dbx ? domain.target : `${domain.name}_graph`} />
+            <KV k="Adapter" v={sourceKind} /><KV k="Materialization" v={dbx ? domain.materialization : "view"} /><KV k="Target schema" v={dbx ? domain.target : `${domain.name}_graph`} />
             <p className="muted-3" style={{ margin: "10px 0 0", fontSize: 11.5 }}>Read-only facts of the deployment.</p>
           </Card>
         </div>

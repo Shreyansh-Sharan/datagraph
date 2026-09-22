@@ -86,6 +86,22 @@ One shared table, keyed by domain version:
 `/graphql` (+ `/graphql/schema`), `/catalog/tables`, `/autodraft`, `/llm/draft-ontology`,
 `/llm/suggest-mapping`, `/llm/assist`. Interactive docs at `/docs` when serving.
 
+## Sources: Databricks and Postgres alike
+
+A domain reads one or more connections of the connection module (`mf-studio-connectors`), of kind
+`databricks` or `postgres`; the deployment's own source (`ONTOFORGE_SOURCE_KIND`) is the fallback.
+Everything downstream is written once against the two ports: the catalog (`catalog/`: schemas,
+tables, columns, keys) and the SQL dialect (`dialects/`: quoting, `count_if`, `regex_match`,
+`hours_ago`, `days_before`, quantiles, distinct counts). Snapshots, drafting, mapping, builds
+(incremental, with per-table signatures), profiles, data-quality rules of every kind, the glossary,
+the graph tools and the assistant therefore run unchanged on a Postgres schema. The `retail`
+domain in the demo is a Postgres schema of 20,000 orders read through a hub connection; the
+`adventureworks` domain is Databricks. Table names are spelled as the source spells them,
+`schema.table` on Postgres and `catalog.schema.table` on Databricks, in snapshots, mappings and
+rules alike; a draft qualifies the names it finds so the two always meet. After each load the
+build refreshes the planner's statistics on the triple table, without which every graph query on
+a freshly loaded version crawls.
+
 ## Operations
 
 - **Auth** — `ONTOFORGE_AUTH_MODE=header` trusts an identity header (default `X-Actor`; on Databricks

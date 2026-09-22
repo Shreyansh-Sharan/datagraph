@@ -58,3 +58,15 @@ def test_draft_refuses_tables_without_columns():
 
     with pytest.raises(AutodraftError, match="ghost"):
         draft_from_catalog(Cat(), ontology_iri="http://d/x", base_iri="http://d/x/")
+
+
+def test_draft_names_tables_with_their_schema_when_one_is_given(db):
+    """A snapshot is imported as schema.table; the draft must map the same names, or the two never meet."""
+    seed_tables(db)
+    sch = db.schema
+    onto, spec = draft_from_catalog(PostgresCatalog(db), ontology_iri="http://d/hr", base_iri="http://d/hr/", schema=sch)
+    assert {c.table for c in spec.classes} >= {f"{sch}.employees", f"{sch}.departments"}
+    assert all(r.table is None or r.table.startswith(f"{sch}.") for r in spec.relations)
+    assert len(spec.relations) >= 2 and {r.target_class for r in spec.relations} >= {"http://d/hr#Department"}   # the foreign keys still meet their classes
+    onto2, spec2 = draft_from_catalog(PostgresCatalog(db, default_schema=sch), ontology_iri="http://d/hr", base_iri="http://d/hr/", tables=["employees"])
+    assert [c.table for c in spec2.classes] == [f"{sch}.employees"]

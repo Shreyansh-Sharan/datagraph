@@ -133,14 +133,16 @@ def infer_keys(catalog: CatalogAdapter, tables: list[str]) -> dict[str, Inferred
 
 def draft_from_catalog(catalog: CatalogAdapter, *, ontology_iri: str, base_iri: str,
                        tables: list[str] | None = None, schema: str | None = None, infer: bool = True) -> tuple[Ontology, MappingSpec]:
-    tables = tables if tables is not None else catalog.list_tables(schema)
+    tables = [catalog.qualified(t, schema) for t in (tables if tables is not None else catalog.list_tables(schema))]
     onto = Ontology(iri=ontology_iri, label=Ontology.local_name(ontology_iri) or "Draft")
     inferred = infer_keys(catalog, tables) if infer else {}
     meta = {}
     for t in tables:
         if not catalog.column_types(t):
             raise AutodraftError(f"Table {t!r} was not found in the catalog or has no columns")
-        pk, fks = catalog.primary_key(t), catalog.foreign_keys(t)
+        pk = catalog.primary_key(t)
+        own = t.rsplit(".", 1)[0] if "." in t else schema   # references are spelled like the tables they point at
+        fks = [(cols, catalog.qualified(ref, own), rcols) for cols, ref, rcols in catalog.foreign_keys(t)]
         if infer and not pk and not fks and t in inferred:
             pk, fks = inferred[t].primary_key, inferred[t].foreign_keys
         meta[t] = _TableMeta(t, catalog.column_types(t), pk, fks)

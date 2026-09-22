@@ -35,6 +35,7 @@ interface DomainState {
   versions: VersionInfo[];
   version: VersionInfo | null;      // selected (null when the domain has none)
   editable: boolean;                // draft + builder rank
+  sourceKind: string;               // the domain's own source: "postgres" | "databricks" (the deployment default until its facts arrive)
   setVersion: (n: number) => void;
   reload: () => void;
   patch: (d: DomainSummary) => void;
@@ -73,10 +74,12 @@ export function useSetParams(): (patch: Record<string, string | number | null | 
 }
 
 export function DomainProvider({ children }: { children: ReactNode }) {
-  const { api, rank } = useApp();
+  const { api, rank, config } = useApp();
   const { name = "" } = useParams();
   const [sp, setSp] = useSearchParams();
   const { data, error, loading, reload } = useLoad(() => api.domain(name), [name]);
+  const facts = useLoad(() => api.sourceFacts(name).catch(() => null), [name]);
+  const sourceKind = facts.data?.kind || config.sourceKind;
   const [local, setLocal] = useLocalDomain(data);
 
   const domain = local ?? data;
@@ -87,11 +90,11 @@ export function DomainProvider({ children }: { children: ReactNode }) {
     const version = versions.find(v => v.version === wanted) ?? versions[0] ?? null;
     return {
       domain, versions, version,
-      editable: !!version && version.status === "draft" && rank >= 1,
+      editable: !!version && version.status === "draft" && rank >= 1, sourceKind,
       setVersion: n => { const q = new URLSearchParams(sp); q.set("v", String(n)); setSp(q); },
       reload, patch: d => setLocal(d),
     };
-  }, [domain, sp, setSp, rank, reload, setLocal]);
+  }, [domain, sp, setSp, rank, reload, setLocal, sourceKind]);
 
   // Children always render: the top bar shows the domain crumb while it loads, and DomainShell shows the skeleton or the error.
   return <LoadCtx.Provider value={{ loading: !value && !error && loading, error }}><Ctx.Provider value={value}>{children}</Ctx.Provider></LoadCtx.Provider>;

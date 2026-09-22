@@ -12,10 +12,10 @@ const BLUE = "#2249FF", ORANGE = "#FF7000", DARK = "#1636E0";
 
 export function Mapping() {
   const { api, config, say } = useApp();
-  const { domain, version, editable } = useDomain();
+  const { domain, version, editable, sourceKind } = useDomain();
   const [clsId, setCls] = useParam("cls", "");
   const [panel, setPanel] = useParam("panel", "status");
-  const dbx = config.sourceKind === "databricks";
+  const dbx = sourceKind === "databricks";
   const v = version?.version ?? 0;
   const classes = useLoad(() => api.ontology(domain.name, v), [domain.name, v]);
   const mapping = useLoad(() => api.mapping(domain.name, v), [domain.name, v]);

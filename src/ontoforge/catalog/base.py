@@ -19,6 +19,13 @@ class CatalogAdapter(ABC):
     def list_tables(self, schema: str | None = None) -> list[str]:
         return []
 
+    def qualified(self, table: str, schema: str | None = None) -> str:
+        """The table's full name as snapshots and mappings spell it: schema.table when a schema is known."""
+        if "." in table:
+            return table
+        sch = schema or getattr(self, "default_schema", None)
+        return f"{sch}.{table}" if sch else table
+
     def list_tables_detailed(self, schema: str | None = None) -> list[dict]:
         """[{name, columns, comment}] for a schema; the default derives it table by table."""
         return [{"name": t, "columns": len(self.column_details(t)), "comment": self.table_comment(t)} for t in self.list_tables(schema)]

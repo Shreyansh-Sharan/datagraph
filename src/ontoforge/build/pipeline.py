@@ -130,6 +130,7 @@ class BuildPipeline:
                         count = self._load_tables(version_id, compiled, plan, on_rows)
                         steps[-1]["detail"] = {"triples": count}
             with step("finalize"):
+                self.store.analyze()   # the planner must know the new rows, or graph queries on this version crawl
                 counted = self.store.count(version_id)
                 if not self.publish:
                     self.registry.save_build_state(version_id, mapping_hash, plan.signatures_after, _select_hashes(compiled))
