@@ -6,6 +6,12 @@ plain text or JSON strings — what an LLM client can consume directly.
 """
 from __future__ import annotations
 
+from contextvars import ContextVar
+from dataclasses import asdict, is_dataclass
+from datetime import datetime
+from decimal import Decimal
+from uuid import UUID
+
 import json
 from dataclasses import asdict
 
@@ -19,10 +25,130 @@ from ontoforge.registry import Domain, DomainVersion, NotFound, Registry, Status
 from ontoforge.store import TripleStore
 
 
+ACTOR: ContextVar[str | None] = ContextVar("ontoforge_mcp_actor", default=None)   # who is calling: set by the API guard and by the assistant
+
+
+def _plain(v):
+    """JSON-safe copies of dataclasses, UUIDs, datetimes and Decimals, recursively."""
+    if is_dataclass(v):
+        return _plain(asdict(v))
+    if isinstance(v, dict):
+        return {str(k): _plain(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_plain(x) for x in v]
+    if isinstance(v, (UUID, datetime, Decimal)):
+        return str(v) if not isinstance(v, datetime) else v.isoformat()
+    return v
+
+
 class GraphTools:
-    def __init__(self, registry: Registry, store: TripleStore, metadata=None, attachments=None) -> None:
+    def __init__(self, registry: Registry, store: TripleStore, metadata=None, attachments=None, services=None) -> None:
         self.registry, self.store, self.metadata, self.attachments = registry, store, metadata, attachments
+        self.services = services            # the app's state: profiles, tabledq, glossary, scheduler, sources
         self.current: str | None = None   # domain selected with select_domain (per server instance)
+
+    # -- the working version and the caller ----------------------------------------------------------
+
+    def _working(self, domain: str | None):
+        """The version design work happens on: the newest draft, else what is served."""
+        d = self._domain(domain)
+        if d is None:
+            return None, None
+        return d, (self.registry.latest_version(d.id, Status.DRAFT) or self.registry.served_version(d.id))
+
+    @staticmethod
+    def _actor() -> str:
+        actor = ACTOR.get()
+        if not actor:
+            raise ValueError("This action needs a signed-in caller")
+        return actor
+
+    def _need(self, name: str):
+        svc = getattr(self.services, name, None) if self.services is not None else None
+        if svc is None:
+            raise ValueError(f"The {name} service is not available on this server")
+        return svc
+
+    # -- profile, quality, glossary, builds, SQL ------------------------------------------------------
+
+    def table_profile(self, domain: str | None, table: str) -> dict:
+        d, v = self._working(domain)
+        if v is None:
+            return {"error": self._unknown(domain)}
+        prof = self._need("profiles").get(v.id, table)
+        if prof is None:
+            return {"error": f"{table} has no profile yet; call run_profile to compute one"}
+        out = _plain(prof.to_dict())
+        for c in out["columns"]:
+            c.pop("histogram", None); c["values"] = c.get("values", [])[:8]
+        return out
+
+    def run_profile(self, domain: str | None, table: str) -> dict:
+        d, v = self._working(domain)
+        if v is None:
+            return {"error": self._unknown(domain)}
+        prof = self._need("profiles").run(v.id, table, actor=self._actor())
+        return {"table": table, "row_count": prof.row_count, "columns": len(prof.columns), "row_key": prof.row_key, "missing_cells": prof.missing_cells}
+
+    def table_quality(self, domain: str | None, table: str) -> dict:
+        d, v = self._working(domain)
+        if v is None:
+            return {"error": self._unknown(domain)}
+        st = self._need("tabledq").status(v.id, table)
+        return {"table": table, "score": st["score"], "summary": st["summary"], "last_run": st["last_run"],
+                "rules": [{"id": r["id"], "name": r["name"], "kind": r["kind"], "column": r["column_name"], "params": r["params"], "threshold": r["threshold"], "enabled": r["enabled"],
+                           "pass_rate": (r["last"] or {}).get("pass_rate"), "status": (r["last"] or {}).get("status"), "error": (r["last"] or {}).get("error")} for r in st["rules"]],
+                "columns": [c for c in st["columns"] if c["score"] is not None and c["score"] < 0.95]}
+
+    def run_quality_rules(self, domain: str | None, table: str) -> dict:
+        d, v = self._working(domain)
+        if v is None:
+            return {"error": self._unknown(domain)}
+        run = self._need("tabledq").run(v.id, table, actor=self._actor())
+        return {"run": _plain(run.to_dict()), "quality": self.table_quality(domain, table)}
+
+    def add_quality_rule(self, domain: str | None, table: str, name: str, kind: str, column: str | None = None,
+                         params: dict | None = None, threshold: float = 0.95) -> dict:
+        d, v = self._working(domain)
+        if v is None:
+            return {"error": self._unknown(domain)}
+        rule = self._need("tabledq").add_rule(v.id, table, actor=self._actor(), name=name, kind=kind, column=column, params=params or {}, threshold=threshold)
+        return _plain(rule.to_dict())
+
+    def suggest_quality_rules(self, domain: str | None, table: str) -> dict:
+        d, v = self._working(domain)
+        if v is None:
+            return {"error": self._unknown(domain)}
+        return _plain(self._need("tabledq").auto_suggest(v.id, table, actor=self._actor()))
+
+    def failing_rows(self, rule_id: str, limit: int = 10) -> dict:
+        columns, rows = self._need("tabledq").failures(UUID(rule_id), limit)
+        return {"columns": columns, "rows": _plain([list(r) for r in rows])}
+
+    def glossary(self, domain: str | None, table: str | None = None, q: str | None = None) -> list[dict]:
+        d = self._domain(domain)
+        if d is None:
+            return [{"error": self._unknown(domain)}]
+        return [_plain(e.to_dict()) for e in self._need("glossary").list(d.id, table=table, q=q)]
+
+    def list_builds(self, domain: str | None, limit: int = 5) -> list[dict]:
+        d, v = self._working(domain)
+        if v is None:
+            return [{"error": self._unknown(domain)}]
+        return [_plain(r) for r in self.registry.list_builds(v.id)[:limit]]
+
+    def start_build(self, domain: str | None, full: bool = False) -> dict:
+        d, v = self._working(domain)
+        if v is None:
+            return {"error": self._unknown(domain)}
+        return _plain(self._need("scheduler").submit(v.id, actor=self._actor(), full=full))
+
+    def preview_sql(self, domain: str | None, sql: str, limit: int = 20) -> dict:
+        d, v = self._working(domain)
+        if v is None:
+            return {"error": self._unknown(domain)}
+        columns, rows = self._need("sources").for_version(v.id).query(sql, max(1, min(int(limit), 100)))
+        return {"columns": columns, "rows": _plain([list(r) for r in rows])}
 
     # -- domain resolution ------------------------------------------------------
 

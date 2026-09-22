@@ -33,7 +33,9 @@ from ontoforge.config import Settings, load_settings
 from ontoforge.db import Database, run_migrations
 from ontoforge.llm import AnthropicProvider, AzureOpenAIProvider, LLMOutputError, LLMProvider, LLMUnavailable
 from ontoforge.mapping import MappingSpecError
+from ontoforge.assistant import Assistant
 from ontoforge.mcp import GraphTools, create_mcp_server
+from ontoforge.mcp.tools import ACTOR
 from ontoforge.metadata import MetadataError, MetadataService
 from ontoforge.profiling import ProfileService
 from ontoforge.tabledq import TableQuality
@@ -107,9 +109,10 @@ def create_app(db: Database, source_db: Database | None = None, settings: Settin
 
 def _mcp_mount(app: FastAPI):
     from mcp.server.transport_security import TransportSecuritySettings
-    tools = GraphTools(app.state.registry, app.state.store, app.state.metadata, app.state.attachments)
+    tools = GraphTools(app.state.registry, app.state.store, app.state.metadata, app.state.attachments, services=app.state)
     server = create_mcp_server(tools)
     app.state.mcp_server = server
+    app.state.assistant = Assistant(server, app.state.llm, app.state.db)
     return server.streamable_http_app(streamable_http_path="/mcp", json_response=True, stateless_http=True,
                                       transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False))
 
@@ -119,7 +122,8 @@ def _guarded(app: FastAPI, inner):
     async def guarded(scope, receive, send):
         if scope["type"] == "http":
             try:
-                principal_from_headers(app.state.settings, app.state.principals, Headers(scope=scope))
+                principal = principal_from_headers(app.state.settings, app.state.principals, Headers(scope=scope))
+                ACTOR.set(principal.name)   # tools that act do so as the caller
             except AuthError as exc:
                 body = json.dumps({"detail": str(exc)}).encode()
                 await send({"type": "http.response.start", "status": 401,

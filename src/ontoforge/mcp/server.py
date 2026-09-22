@@ -72,4 +72,48 @@ def create_mcp_server(tools: GraphTools, name: str = "ontoforge") -> MCPServer:
     def query_graphql(query: str, domain: str | None = None, variables: dict | None = None) -> str:
         return tools.query_graphql(domain, query, variables)
 
+    @server.tool(description="Profile of a table in the domain's working version: rows, missing cells, row key, per-column nulls, distinct values, ranges, top values, hints. Call run_profile first if there is none.")
+    def table_profile(table: str, domain: str | None = None) -> dict:
+        return tools.table_profile(domain, table)
+
+    @server.tool(description="Profile a table now (reads the source; seconds to minutes). Returns the headline numbers.")
+    def run_profile(table: str, domain: str | None = None) -> dict:
+        return tools.run_profile(domain, table)
+
+    @server.tool(description="Data quality of a table: score, rules with their last pass rate and status, columns scoring under 95%.")
+    def table_quality(table: str, domain: str | None = None) -> dict:
+        return tools.table_quality(domain, table)
+
+    @server.tool(description="Run every enabled data-quality rule of a table against the source now and return the new scores.")
+    def run_quality_rules(table: str, domain: str | None = None) -> dict:
+        return tools.run_quality_rules(domain, table)
+
+    @server.tool(description="Add a data-quality rule. kind: not_null | unique | in_set {values} | range {min,max} | regex {pattern} | referential {ref_table, ref_column} | freshness {hours} | row_count {min,max} | custom {predicate}. threshold is the pass fraction that counts as passing.")
+    def add_quality_rule(table: str, name: str, kind: str, column: str | None = None, params: dict | None = None, threshold: float = 0.95, domain: str | None = None) -> dict:
+        return tools.add_quality_rule(domain, table, name, kind, column, params, threshold)
+
+    @server.tool(description="Derive data-quality rules from the table's profile (keys, never-null columns, code sets, numeric ranges, row-count band); no AI involved.")
+    def suggest_quality_rules(table: str, domain: str | None = None) -> dict:
+        return tools.suggest_quality_rules(domain, table)
+
+    @server.tool(description="A sample of the source rows that break a row-level data-quality rule (by rule id from table_quality).")
+    def failing_rows(rule_id: str, limit: int = 10) -> dict:
+        return tools.failing_rows(rule_id, limit)
+
+    @server.tool(description="Business terms and KPI metrics of the domain's glossary, optionally for one table or matching a search text.")
+    def glossary(domain: str | None = None, table: str | None = None, q: str | None = None) -> list[dict]:
+        return tools.glossary(domain, table, q)
+
+    @server.tool(description="Recent builds of the domain's working version: status, duration, triples, the plan (which tables were read).")
+    def list_builds(domain: str | None = None, limit: int = 5) -> list[dict]:
+        return tools.list_builds(domain, limit)
+
+    @server.tool(description="Start a build of the domain's working version (incremental unless full=true). Returns the run to watch with list_builds.")
+    def start_build(domain: str | None = None, full: bool = False) -> dict:
+        return tools.start_build(domain, full)
+
+    @server.tool(description="Run one read-only SELECT against the domain's source warehouse and return up to `limit` rows. Table names as the mapping spells them.")
+    def preview_sql(sql: str, domain: str | None = None, limit: int = 20) -> dict:
+        return tools.preview_sql(domain, sql, limit)
+
     return server

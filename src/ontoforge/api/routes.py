@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import json
+
+import asyncio
+
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 import re
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi.responses import StreamingResponse
 from fastapi.responses import PlainTextResponse
 from graphql import graphql_sync, print_schema
 from pydantic import BaseModel, Field
@@ -1554,4 +1559,63 @@ def glossary_update(term_id: UUID, body: TermPatch, request: Request, me: Princi
 @router.delete("/glossary/{term_id}", status_code=204)
 def glossary_delete(term_id: UUID, request: Request, me: Principal = Depends(builder)):
     _st(request).glossary.delete(term_id, actor=me.name)
+    return Response(status_code=204)
+
+
+# -- the assistant --------------------------------------------------------------------------------
+
+class ChatIn(BaseModel):
+    message: str
+    conversation_id: UUID | None = None
+    context: dict = {}
+
+
+@router.post("/assistant/chat")
+async def assistant_chat(body: ChatIn, request: Request, me: Principal = Depends(viewer),
+                         stream: bool = Query(default=True, description="server-sent events as the answer forms; false returns the finished answer")):
+    """Ask the assistant. It answers through the MCP tools, acting as the caller where a tool acts."""
+    st = _st(request)
+    if st.llm is None:
+        raise LLMUnavailable("No LLM provider configured (set ONTOFORGE_LLM_PROVIDER)")
+    if not body.message.strip():
+        raise ValueError("Say something")
+    if not stream:
+        return await st.assistant.chat(actor=me.name, message=body.message, context=body.context, conversation_id=body.conversation_id)
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def produce():
+        try:
+            result = await st.assistant.chat(actor=me.name, message=body.message, context=body.context, conversation_id=body.conversation_id, on_event=queue.put_nowait)
+            queue.put_nowait({"type": "done", **result})
+        except Exception as exc:  # noqa: BLE001 - the stream reports the failure instead of dying
+            queue.put_nowait({"type": "error", "error": f"{type(exc).__name__}: {exc}"})
+        finally:
+            queue.put_nowait(None)
+
+    async def events():
+        task = asyncio.create_task(produce())
+        try:
+            while True:
+                event = await queue.get()
+                if event is None:
+                    break
+                yield f"data: {json.dumps(event, default=str)}\n\n"
+        finally:
+            await task
+    return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.get("/assistant/conversations")
+def assistant_conversations(request: Request, me: Principal = Depends(viewer), domain: str | None = None):
+    return _st(request).assistant.conversations(me.name, domain=domain)
+
+
+@router.get("/assistant/conversations/{conversation_id}")
+def assistant_conversation(conversation_id: UUID, request: Request, me: Principal = Depends(viewer)):
+    return _st(request).assistant.conversation(conversation_id, actor=me.name)
+
+
+@router.delete("/assistant/conversations/{conversation_id}", status_code=204)
+def assistant_delete(conversation_id: UUID, request: Request, me: Principal = Depends(viewer)):
+    _st(request).assistant.delete(conversation_id, actor=me.name)
     return Response(status_code=204)
