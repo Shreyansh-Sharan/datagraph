@@ -33,7 +33,8 @@ def test_list_domain_versions_and_design_status(tools):
     assert versions[0]["version"] == 1 and versions[0]["status"] == "draft" and versions[0]["built"] is True
     status = t.get_design_status("hr")
     assert status["ontology"] is True and status["mapping"]["completion"] > 0 and status["built"] is True
-    assert status["triples"] > 0 and status["build_ready"] is True and status["drift_issues"] == 0
+    assert status["triples"] > 0 and status["build_ready"] is True
+    assert status["drift_checked"] is False and status["drift_issues"] is None   # this build carried no metadata service
 
 
 def test_list_entity_types_and_entity_context(tools):

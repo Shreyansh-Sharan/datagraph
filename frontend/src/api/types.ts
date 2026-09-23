@@ -127,6 +127,7 @@ export interface OntoCheck { severity: "error" | "warning" | "info"; code: strin
 // -- mapping --------------------------------------------------------------------------
 export interface ClassMapping { table?: [string, string]; fullName?: string; sql?: string; key: string; state: MappingState; cols: Record<string, string>; rels?: Record<string, string>; excluded?: string[] }
 export interface AiProgress { progress: string; startedAt: string | null; progressAt: string | null; status: "running" | "succeeded" | "failed" }   // what a long AI task is doing right now
+export interface DriftReport { checked: boolean; issues: DriftIssue[]; at: string | null }   // checked false: nothing has looked yet
 export interface DriftIssue { kind: string; table: string; column: string | null; detail: string; mapping_ref: string; severity: string }
 export interface MappingKpis { completion: number; classesMapped: [number, number]; attributes: [number, number]; relationships: [number, number]; excluded: number }
 export interface TablePreview { columns: string[]; rows: (string | null)[][] }
@@ -255,7 +256,7 @@ export interface DatagraphApi {
   mapRelation(domain: string, version: number, cls: string, rel: string, sourceKey: string[], targetKey: string[]): Promise<void>;
   unmapClass(domain: string, version: number, cls: string): Promise<void>;
   excludeUnmapped(domain: string, version: number): Promise<void>;
-  drift(domain: string, version: number, opts?: { live?: boolean }): Promise<DriftIssue[]>;   // what the last build found; live re-reads the source (slow)
+  drift(domain: string, version: number, opts?: { live?: boolean }): Promise<DriftReport>;   // what the last build found; live re-reads the source (slow)
   r2rml(domain: string, version: number): Promise<string>;
   suggestMapping(domain: string, version: number, onProgress?: (p: AiProgress) => void): Promise<{ classes: number; relations: number; skipped: string[] }>;   // skipped: suggestions naming things the ontology or tables do not have
   suggestRelations(domain: string, version: number, onProgress?: (p: AiProgress) => void): Promise<{ added: number; declared: number; byName: number; ai: number; skipped: string[]; unmappable: string[] }>;   // fills unmapped relationships: declared keys, matching names, then the AI per pair of tables

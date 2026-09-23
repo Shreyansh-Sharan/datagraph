@@ -392,7 +392,7 @@ describe("build (rest)", () => {
         [`GET /api/versions/${vid}/builds`]: [run], [`GET /api/builds/${rid}`]: run, [`POST /api/versions/${vid}/builds`]: run,
         [`GET /api/versions/${vid}/ontology`]: { classes: [{}, {}, {}, {}] }, [`GET /api/versions/${vid}/ontology/checks`]: [{ severity: "error" }, { severity: "warning" }],
         [`GET /api/versions/${vid}/mapping/status`]: { completion: 0.25, summary: { classes: 4, mapped_classes: 1, complete_classes: 0, attributes: 9, mapped_attributes: 2, excluded_attributes: 1, relations: 2, mapped_relations: 0, excluded_relations: 0 }, classes: [] },
-        [`GET /api/versions/${vid}/mapping/drift`]: [{ table: "t" }], [`GET /api/versions/${vid}/metadata`]: [{ table: "a" }, { table: "b" }],
+        [`GET /api/versions/${vid}/mapping/drift`]: { checked: true, at: null, issues: [{ table: "t" }] }, [`GET /api/versions/${vid}/metadata`]: [{ table: "a" }, { table: "b" }],
       };
       return new Response(JSON.stringify(routes[key] ?? { detail: `no route ${key}` }), { status: key in routes ? 200 : 404 });
     }) as typeof fetch;
@@ -461,7 +461,7 @@ describe("mapping editor (rest)", () => {
         "GET /api/domains/cards": [{ name: "aw", version_count: 1, active_version: null, latest_version: { version: 1, status: "draft" }, triples: 0, last_build: null, source: { kind: "databricks", connection: null, catalog: null, schema: null, schemas: [] }, source_count: 0, mcp: { exposed: true, disabled_tools: [] } }],
         [`GET /api/versions/${vid}/ontology`]: onto,
         [`GET /api/versions/${vid}/mapping/status`]: { completion: 0.4, summary: {}, classes: [{ class_iri: EX + "Customer", state: "complete" }, { class_iri: EX + "Order", state: "unmapped" }] },
-        [`GET /api/versions/${vid}/mapping/drift`]: [{ kind: "missing-column", table: "adventurework2022.sales.customer", column: "name", detail: "column name no longer exists", mapping_ref: "Customer.customerName", severity: "error" }],
+        [`GET /api/versions/${vid}/mapping/drift?live=true`]: { checked: true, at: "2026-09-20T09:00:00Z", issues: [{ kind: "missing-column", table: "adventurework2022.sales.customer", column: "name", detail: "column name no longer exists", mapping_ref: "Customer.customerName", severity: "error" }] },
         [`GET /api/versions/${vid}/metadata`]: [{ table: "adventurework2022.sales.customer", comment: null, columns: [{ name: "customerid", type: "int", comment: null }, { name: "name", type: "string", comment: null }], primary_key: ["customerid"], foreign_keys: [] }, { table: "adventurework2022.sales.salesorderheader", comment: null, columns: [{ name: "salesorderid", type: "int", comment: null }, { name: "customerid", type: "int", comment: null }, { name: "orderdate", type: "date", comment: null }], primary_key: ["salesorderid"], foreign_keys: [] }],
       };
       if (key === `GET /api/versions/${vid}/mapping`) return new Response(JSON.stringify(spec));
@@ -503,7 +503,9 @@ describe("mapping editor (rest)", () => {
   });
   it("lists drift, exports R2RML, suggests with AI and offers snapshot tables with their columns", async () => {
     const a = api(); await a.domain("aw");
-    expect((await a.drift("aw", 1))[0]).toMatchObject({ kind: "missing-column", column: "name", mapping_ref: "Customer.customerName" });
+    const drifted = await a.drift("aw", 1, { live: true });
+    expect(drifted.checked).toBe(true);
+    expect(drifted.issues[0]).toMatchObject({ kind: "missing-column", column: "name", mapping_ref: "Customer.customerName" });
     expect(await a.r2rml("aw", 1)).toMatch(/^@prefix rr:/);
     expect(await a.suggestMapping("aw", 1)).toEqual({ classes: 2, relations: 1, skipped: [] });
     const snap = await a.snapshot("aw", 1);
@@ -525,7 +527,7 @@ describe("mapping editor (mock)", () => {
     expect((await api.mapping("rgm", 3)).Sale.excluded).toEqual(["netRevenue"]);
     await api.unmapClass("rgm", 3, "Channel");
     expect((await api.mapping("rgm", 3)).Channel).toBeUndefined();
-    expect((await api.drift("rgm", 3)).length).toBeGreaterThan(0);
+    expect((await api.drift("rgm", 3)).issues.length).toBeGreaterThan(0);
     expect(await api.r2rml("rgm", 3)).toMatch(/rr:/);
   });
 });

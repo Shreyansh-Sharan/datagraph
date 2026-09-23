@@ -181,11 +181,12 @@ def test_drift_answers_from_the_last_build_unless_asked_to_look_live(db):
     src = PostgresSource(db)
     meta = MetadataService(reg, src.catalog, db)
     meta.import_tables(v.id, ["employees", "departments"], actor="alice")
-    assert drift_from_last_build(reg, v.id) == []                                  # nothing built yet: nothing found
+    assert drift_from_last_build(reg, v.id) == {"checked": False, "issues": [], "at": None}   # nothing built yet: nobody has looked
     pipeline = BuildPipeline(reg, TripleStore(db), src, metadata=meta)
     assert pipeline.run(v.id, actor="alice").status == "succeeded"
-    assert drift_from_last_build(reg, v.id) == []
+    checked = drift_from_last_build(reg, v.id)
+    assert checked["checked"] is True and checked["issues"] == []                   # a build looked and found nothing
     with db.transaction() as cur:
         cur.execute("ALTER TABLE employees DROP COLUMN hired")
-    assert drift_from_last_build(reg, v.id) == []                                  # the last build saw no drift; only a live check or the next build will
+    assert drift_from_last_build(reg, v.id)["issues"] == []                        # the last build saw no drift; only a live check or the next build will
     assert [i.column for i in meta.drift(v.id)] == ["hired"]

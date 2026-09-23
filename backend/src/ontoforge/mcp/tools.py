@@ -908,11 +908,12 @@ class GraphTools:
             mapping = {"completion": st.completion, "classes": st.summary["classes"], "complete_classes": st.summary["complete_classes"]}
         build = self.registry.latest_build(v.id)
         from ontoforge.metadata import drift_from_last_build
-        drift = len(drift_from_last_build(self.registry, v.id))   # what the last build found; a live check is a build's or check_drift's job
+        checked = drift_from_last_build(self.registry, v.id)   # what the last build found; a live check is a build's or check_drift's job
+        drift = len(checked["issues"]) if checked["checked"] else None   # None: nothing has looked yet
         return {"domain": domain or self.current, "version": v.version, "status": v.status.value,
                 "ontology": onto is not None, "classes": len(onto.classes) if onto else 0, "mapping": mapping,
                 "build_ready": bool(onto and v.mapping), "built": bool(build and build.status == "succeeded"),
-                "last_build": build.status if build else None, "triples": self.store.count(v.id), "drift_issues": drift}
+                "last_build": build.status if build else None, "triples": self.store.count(v.id), "drift_issues": drift, "drift_checked": checked["checked"]}
 
     def _ontology(self, version: DomainVersion) -> Ontology | None:
         return Ontology.from_turtle(version.ontology_ttl) if version.ontology_ttl else None

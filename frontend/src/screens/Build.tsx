@@ -22,12 +22,13 @@ export function Build() {
   const [liveDrift, setLiveDrift] = useState<{ n: number; error: string | null } | null>(null);
   const checkDrift = async () => {
     setChecking(true); setLiveDrift(null);
-    try { const issues = await api.drift(domain.name, version!.version, { live: true }); setLiveDrift({ n: issues.length, error: null }); say(issues.length ? `${issues.length} drift issue${issues.length === 1 ? "" : "s"} found` : "No drift: the source matches the mapping"); }
+    try { const r = await api.drift(domain.name, version!.version, { live: true }); setLiveDrift({ n: r.issues.length, error: null }); say(r.issues.length ? `${r.issues.length} drift issue${r.issues.length === 1 ? "" : "s"} found` : "No drift: the source matches the mapping"); }
     catch (e) { setLiveDrift({ n: 0, error: e instanceof Error ? e.message : String(e) }); }
     finally { setChecking(false); }
   };
-  const driftCount = liveDrift && !liveDrift.error ? liveDrift.n : drift.data?.length ?? 0;
-  const driftItem = { label: "Schema drift", value: checking ? "checking the source…" : liveDrift?.error ? "could not check the source" : drift.loading ? "…" : `${driftCount} issue${driftCount === 1 ? "" : "s"}${liveDrift && !liveDrift.error ? " · checked now" : drift.data ? " · last build" : ""}`, ok: !checking && !liveDrift?.error && !drift.error && driftCount === 0, pending: drift.loading || checking, go: { screen: "metadata" } as { screen: string; arg?: string } };
+  const everChecked = !!(liveDrift && !liveDrift.error) || !!drift.data?.checked;
+  const driftCount = liveDrift && !liveDrift.error ? liveDrift.n : drift.data?.issues.length ?? 0;
+  const driftItem = { label: "Schema drift", value: checking ? "checking the source…" : liveDrift?.error ? "could not check the source" : drift.loading ? "…" : !everChecked ? "not checked yet" : `${driftCount} issue${driftCount === 1 ? "" : "s"}${liveDrift && !liveDrift.error ? " · checked now" : " · last build"}`, ok: !checking && !liveDrift?.error && !drift.error && everChecked && driftCount === 0, pending: drift.loading || checking, go: { screen: "metadata" } as { screen: string; arg?: string } };
   const items = [...(checklist.data ?? []).map(c => ({ ...c, pending: false })), ...(checklist.data ? [driftItem] : [])];
   const [live, setLive] = useState<BuildRun | null>(null);
   const [lost, setLost] = useState<string | null>(null);

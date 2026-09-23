@@ -2,7 +2,7 @@
 // Methods with a settled contract call the API; the rest fall through to the mock so the
 // app stays usable while integration proceeds. Replace fallbacks method by method.
 import { forget, memo } from "./cache";
-import type { Analytics, ApiKey, Constraint, DatagraphApi, Lock, OntoCheck, Rule, AssistantContext, ChatEvent, ChatMessage, ChatResult, Conversation, DqRule, DqRun, DqStatus, FailingRows, GlossaryEntry, RuleInput, TableProfile, TermInput, AiProgress, AuditEntry, BuildRun, GraphSample, SearchOptions, BuildStep, CatalogTable, ChecklistItem, DriftIssue, MappingKpis, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, RefreshChange, SnapshotTable, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus, DqKindInfo, DqOverview, NotificationFeed } from "./types";
+import type { Analytics, ApiKey, Constraint, DatagraphApi, Lock, OntoCheck, Rule, AssistantContext, ChatEvent, ChatMessage, ChatResult, Conversation, DqRule, DqRun, DqStatus, FailingRows, GlossaryEntry, RuleInput, TableProfile, TermInput, AiProgress, AuditEntry, BuildRun, GraphSample, SearchOptions, BuildStep, CatalogTable, ChecklistItem, MappingKpis, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, RefreshChange, SnapshotTable, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus, DqKindInfo, DqOverview, DriftReport, NotificationFeed } from "./types";
 import { tableName } from "./types";
 import { humanAction, relTime } from "./format";
 
@@ -580,7 +580,7 @@ export class RestApi implements DatagraphApi {
     await this.req("DELETE", `/versions/${this.vid(domain, version)}/mapping/classes?class_iri=${encodeURIComponent(iri)}`);
   }
   async excludeUnmapped(domain: string, version: number): Promise<void> { await this.req("POST", `/versions/${this.vid(domain, version)}/mapping/exclude-unmapped`); }
-  async drift(domain: string, version: number, opts?: { live?: boolean }): Promise<DriftIssue[]> { return this.req<DriftIssue[]>("GET", `/versions/${this.vid(domain, version)}/mapping/drift${opts?.live ? "?live=true" : ""}`, undefined, false, opts?.live ? 0 : undefined); }
+  async drift(domain: string, version: number, opts?: { live?: boolean }): Promise<DriftReport> { return this.req<DriftReport>("GET", `/versions/${this.vid(domain, version)}/mapping/drift${opts?.live ? "?live=true" : ""}`, undefined, false, opts?.live ? 0 : undefined); }
   async r2rml(domain: string, version: number): Promise<string> { return this.req<string>("GET", `/versions/${this.vid(domain, version)}/mapping/r2rml`, undefined, true); }
   async suggestMapping(domain: string, version: number, onProgress?: (p: AiProgress) => void): Promise<{ classes: number; relations: number; skipped: string[] }> {
     const r = await this.aiJob<{ classes: number; relations: number; skipped?: string[] }>(`/versions/${this.vid(domain, version)}/llm/suggest-mapping`, {}, onProgress);

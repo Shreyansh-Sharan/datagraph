@@ -1227,8 +1227,10 @@ def metadata_remove(version_id: UUID, table: str, request: Request, me: Principa
 @router.get("/versions/{version_id}/mapping/drift")
 def mapping_drift(version_id: UUID, request: Request, live: bool = Query(default=False, description="true re-reads every mapped table from the source now (slow); false answers with what the last build found")):
     """Schema drift: the last build's finding by default, the source re-read on request."""
+    from datetime import datetime, timezone
     if live:
-        return _st(request).metadata.drift(version_id)
+        return {"checked": True, "issues": [asdict(i) for i in _st(request).metadata.drift(version_id)],
+                "at": datetime.now(timezone.utc).isoformat()}
     _st(request).registry.get_version(version_id)
     return drift_from_last_build(_st(request).registry, version_id)
 

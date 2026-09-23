@@ -132,7 +132,24 @@ def test_metadata_endpoints(db):
         with db.transaction() as cur:
             cur.execute("ALTER TABLE employees ADD COLUMN email text")
         assert c.post(f"/versions/{v['id']}/metadata/refresh").json()[0]["added"] == ["email"]
-        assert c.get(f"/versions/{v['id']}/mapping/drift").json() == []
+        assert c.get(f"/versions/{v['id']}/mapping/drift").json() == {"checked": False, "issues": [], "at": None}
         assert c.delete(f"/versions/{v['id']}/metadata/employees").status_code == 409
         assert c.delete(f"/versions/{v['id']}/metadata/departments").status_code == 409  # Department is mapped too
         assert c.get(f"/versions/{v['id']}/metadata", headers={"X-Actor": "viewer-only"}).status_code == 200
+
+
+def test_drift_says_when_it_was_never_checked(db):
+    """"No drift" and "nobody looked" are different answers, and a screen must be able to tell."""
+    from ontoforge.metadata import drift_from_last_build
+    from ontoforge.registry import Registry
+
+    reg = Registry(db)
+    d = reg.create_domain("dr", base_iri="http://d/dr/")
+    v = reg.create_version(d.id, actor="a")
+    assert drift_from_last_build(reg, v.id) == {"checked": False, "issues": [], "at": None}
+
+    run = reg.start_build(v.id, actor="a")
+    reg.finish_build(run.id, status="succeeded", triple_count=0,
+                     steps=[{"name": "drift", "detail": {"issues": [{"kind": "missing-column", "table": "t"}], "tables": 1}}])
+    out = drift_from_last_build(reg, v.id)
+    assert out["checked"] is True and len(out["issues"]) == 1 and out["at"]

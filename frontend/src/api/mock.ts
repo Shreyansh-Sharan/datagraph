@@ -2,7 +2,7 @@
 // UI behaves like the real thing (lifecycle transitions, builds with live steps, comments).
 import * as D from "./mockData";
 import { compileClassSql, tableName } from "./types";
-import type { Notification, NotificationFeed, AiProgress, AssistantContext, ChatEvent, ChatMessage, ChatResult, ColumnKind, ColumnProfile, ColumnRole, Conversation, DqResult, DqRule, DqRun, DqStatus, FailingRows, GlossaryEntry, RuleInput, TableProfile, TermInput, DomainSource, DriftIssue, GraphSample, SearchOptions, RefreshChange, SnapshotTable, SourceFactsEntry, SourceInput,
+import type { Notification, NotificationFeed, AiProgress, AssistantContext, ChatEvent, ChatMessage, ChatResult, ColumnKind, ColumnProfile, ColumnRole, Conversation, DqResult, DqRule, DqRun, DqStatus, FailingRows, GlossaryEntry, RuleInput, TableProfile, TermInput, DomainSource, DriftReport, GraphSample, SearchOptions, RefreshChange, SnapshotTable, SourceFactsEntry, SourceInput,
   Analytics, ApiKey, AuditEntry, BuildRun, BuildStep, CatalogTable, ChecklistItem, ClassMapping, Comment, Config, ConnResult, Constraint,
   DatagraphApi, DomainSummary, EntityDetail, GraphStatus, Lock, MappingKpis, Me, NewDomainInput, OntoCheck,
   OntoClass, Principal, Role, Rule, SearchHit, SourceKind, TableDetail, TablePreview, Task, TriplePage, TripleQuery,
@@ -523,8 +523,9 @@ export class MockApi implements DatagraphApi {
   async excludeUnmapped(domain: string, _version: number): Promise<void> {
     for (const [cls, m] of Object.entries(this.mapOf(domain))) { const ex = new Set(m.excluded ?? []); for (const a of this.attrsOf(cls)) if (!m.cols[a]) ex.add(a); for (const r of this.relsOf(cls)) if (!m.rels?.[r.name]) ex.add(r.name); m.excluded = [...ex].sort(); }
   }
-  async drift(_domain: string, _version: number, _opts?: { live?: boolean }): Promise<DriftIssue[]> {
-    return [{ kind: "missing-column", table: "rgm.gold.fct_sales", column: "channel_id", detail: "fct_sales.channel_id has no target table", mapping_ref: "Sale.viaChannel", severity: "error" }];
+  async drift(_domain: string, _version: number, _opts?: { live?: boolean }): Promise<DriftReport> {
+    return { checked: true, at: new Date().toISOString(),
+             issues: [{ kind: "missing-column", table: "rgm.gold.fct_sales", column: "channel_id", detail: "fct_sales.channel_id has no target table", mapping_ref: "Sale.viaChannel", severity: "error" }] };
   }
   async r2rml(domain: string, _version: number): Promise<string> {
     const d = this.dom(domain);

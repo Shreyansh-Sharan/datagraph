@@ -66,7 +66,7 @@ export function Mapping() {
   };
   const bind = (attr: string, col: string | null) => sel && edit("bind", () => api.bindAttribute(domain.name, v, sel.id, attr, col), col ? `${attr} → ${col}` : `${attr} unbound`);
   const exclude = (prop: string, on: boolean) => sel && edit("exclude", () => api.excludeProperty(domain.name, v, sel.id, prop, on), on ? `${prop} excluded from the mapping` : `${prop} back in the mapping`);
-  const showDrift = async () => { if (busy) return; setBusy("drift"); try { const d = await api.drift(domain.name, v); setDrift(d); say(d.length ? `${d.length} drift issue${d.length === 1 ? "" : "s"}` : "No drift: the source still matches the mapping"); } catch (e) { say(e instanceof Error ? e.message : String(e)); } finally { setBusy(null); } };
+  const showDrift = async () => { if (busy) return; setBusy("drift"); try { const r = await api.drift(domain.name, v, { live: true }); setDrift(r.issues); say(r.issues.length ? `${r.issues.length} drift issue${r.issues.length === 1 ? "" : "s"}` : "No drift: the source still matches the mapping"); } catch (e) { say(e instanceof Error ? e.message : String(e)); } finally { setBusy(null); } };
   const exportR2rml = async () => { try { const ttl = await api.r2rml(domain.name, v); const blob = new Blob([ttl], { type: "text/turtle" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `${domain.name}-v${v}.r2rml.ttl`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); say("R2RML exported"); } catch (e) { say(e instanceof Error ? e.message : String(e)); } };
   const suggest = async () => {
     setAiStatus({ progress: "Starting", since: Date.now() });

@@ -249,12 +249,17 @@ def snapshot_to_table_meta(snap: TableSnapshot, samples: list | None = None) -> 
             "foreign_keys": snap.foreign_keys, "samples": samples or []}
 
 
-def drift_from_last_build(registry, version_id: UUID) -> list[dict]:
-    """The drift issues the last build found, as its drift step recorded them: the answer screens and
-    tools show by default, because a live check re-reads every mapped table from the source and can
-    take minutes on a warehouse. [] when no build has run yet."""
+def drift_from_last_build(registry, version_id: UUID) -> dict:
+    """What the last build's drift step found: ``{"checked", "issues", "at"}``.
+
+    This is the answer screens and tools show by default, because a live check re-reads every
+    mapped table from the source and can take minutes on a warehouse. ``checked`` is false when no
+    build has looked yet, which is a different thing from a build that looked and found nothing.
+    """
     for run in registry.list_builds(version_id):
         for step in run.steps or []:
             if step.get("name") == "drift" and isinstance(step.get("detail"), dict):
-                return list(step["detail"].get("issues") or [])
-    return []
+                at = run.finished_at or run.started_at
+                return {"checked": True, "issues": list(step["detail"].get("issues") or []),
+                        "at": at.isoformat() if at else None}
+    return {"checked": False, "issues": [], "at": None}
