@@ -61,6 +61,10 @@ PY
 
 # 4. Serve
 if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then log "port $PORT is already in use — set ONTOFORGE_PORT"; exit 1; fi
-log "UI: http://127.0.0.1:$PORT/ui/   (schema $SCHEMA, default role $ONTOFORGE_AUTH_DEFAULT_ROLE)"
-[ "${1:-}" = "--open" ] && (sleep 2; open "http://127.0.0.1:$PORT/ui/") &
+# The app is frontend/, served by its own dev server. This API serves it only when a build is
+# configured, so point the browser at whichever one is actually there.
+if [ -n "${ONTOFORGE_UI_DIR:-}" ]; then WHERE="http://127.0.0.1:$PORT/ui/"; else WHERE="http://127.0.0.1:$PORT/docs"; fi
+log "API: http://127.0.0.1:$PORT   docs: /docs   MCP: /mcp   (schema $SCHEMA, default role $ONTOFORGE_AUTH_DEFAULT_ROLE)"
+[ -z "${ONTOFORGE_UI_DIR:-}" ] && log "UI: run 'make ui' for the dev server on http://127.0.0.1:5173/ui/"
+[ "${1:-}" = "--open" ] && (sleep 2; open "$WHERE") &
 exec .venv/bin/python -m ontoforge serve --host 127.0.0.1 --port "$PORT" --schema "$SCHEMA"

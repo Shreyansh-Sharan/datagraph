@@ -23,8 +23,9 @@ docs/       architecture decisions, the gap analysis, design notes
 One command starts Postgres in Docker, seeds a demo schema, serves the API and opens the browser:
 
 ```bash
-make start                 # http://127.0.0.1:8765/ui/  — Ctrl-C to stop
-make install-service       # macOS: start at login and keep running (make uninstall-service to remove)
+make start                 # the API on http://127.0.0.1:8765 — Ctrl-C to stop
+make ui                    # the app on http://127.0.0.1:5173/ui/, in a second terminal
+make install-service       # macOS: start the API at login and keep it running
 ```
 
 Step by step:
@@ -42,7 +43,8 @@ pytest                                     # 380 behaviour tests against the liv
 The React app runs against that API:
 
 ```bash
-cd frontend && pnpm install && pnpm run dev   # http://127.0.0.1:5173, proxying to :8765
+cd frontend && pnpm install       # only when the packages change; needs the Azure Artifacts token
+pnpm run dev                      # http://127.0.0.1:5173/ui/, proxying /api to :8765
 pnpm run typecheck && pnpm exec vitest run    # or `make test-ui` from the root
 ```
 
