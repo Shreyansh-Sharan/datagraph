@@ -245,6 +245,11 @@ export interface DatagraphApi {
   draftOntology(domain: string, version: number, opts: { ai: boolean; description?: string; tables?: string[] }, onProgress?: (p: AiProgress) => void): Promise<{ classes: number; properties: number; warnings: number }>;   // replaces the draft's ontology: with the AI provider from the snapshot, or heuristically from the tables
   ontologyChecks(domain: string, version: number): Promise<OntoCheck[]>;
   setClassDescription(domain: string, version: number, cls: string, description: string): Promise<void>;
+  addClassParent(domain: string, version: number, cls: string, parent: string): Promise<void>;
+  addClassAttribute(domain: string, version: number, cls: string, name: string, range: string): Promise<void>;
+  addClassRelationship(domain: string, version: number, cls: string, name: string, target: string): Promise<void>;
+  deleteClass(domain: string, version: number, cls: string): Promise<void>;                 // and every property that only it used
+  importOntology(domain: string, version: number, data: string, format: string, mode: "merge" | "replace"): Promise<{ classes: number; properties: number }>;
 
   mapping(domain: string, version: number): Promise<Record<string, ClassMapping>>;
   mappingKpis(domain: string, version: number): Promise<MappingKpis>;

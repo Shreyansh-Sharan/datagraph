@@ -112,3 +112,36 @@ def test_api_build_is_async_by_default_and_wait_is_optional(db):
         r = c.post(f"/versions/{v['id']}/builds", params={"wait": "true"})
         assert r.status_code == 200 and r.json()["status"] == "succeeded"
         assert c.post(f"/builds/{run_id}/cancel").status_code == 409  # already finished
+
+
+def test_cancelling_a_long_load_stops_part_way_through_the_rows(db):
+    """A build streaming millions of rows must stop when asked, not when the step happens to end."""
+    reg, store, v = prepared(db)
+    inner = PostgresSource(db)
+    seen, stop = {"rows": 0}, threading.Event()
+
+    class Remote:
+        """A warehouse: rows arrive over the wire, so the load streams instead of staying in SQL."""
+
+        dialect = inner.dialect
+        catalog = inner.catalog
+
+        def prepare(self):
+            inner.prepare()
+
+        def table_signature(self, table):
+            return inner.table_signature(table)
+
+        def stream(self, sql, batch=1000):
+            for row in inner.stream(sql, batch):
+                seen["rows"] += 1
+                if seen["rows"] == 3:
+                    stop.set()
+                time.sleep(0.005)
+                yield row
+
+    pipeline = BuildPipeline(reg, store, Remote(), progress_rows=1)
+    run = pipeline.run(v.id, actor="alice", cancel_check=stop.is_set)
+    assert run.status == "cancelled" and "during load" in run.error
+    assert seen["rows"] < 20, f"kept streaming {seen['rows']} rows after the cancel"
+    assert store.count(v.id) == 0                      # a cancelled load leaves nothing half-written

@@ -24,6 +24,13 @@ interface BackendSummary extends BackendVersion {
 interface BackendDomain { name: string; description: string | null; base_iri: string; review_quorum: number; active_version_id?: string | null; connection_id?: string | null; ai_connection_id?: string | null; default_catalog?: string | null; default_schema?: string | null; schemas?: string[]; sources?: { connection_id: string | null; catalog: string | null; schemas: string[] }[]; materialization?: string; target_schema?: string | null; mcp_policy?: { exposed?: boolean; disabled_tools?: string[] } }
 interface AiJob<T> { id: string; status: "running" | "succeeded" | "failed"; progress: string | null; started_at: string | null; progress_at: string | null; result: T | null; error: string | null }
 interface BackendSpec { base_iri: string; classes: { class_iri: string; table: string | null; sql_query: string | null; key_columns: string[]; iri_template: string | null; attributes: { property_iri: string; column: string; datatype: string | null; language: string | null }[]; excluded: string[] }[]; relations: { property_iri: string; source_class: string; target_class: string; source_key: string[] | null; target_key: string[] | null; table: string | null; sql_query: string | null; direction: string }[] }
+interface OntologyDoc {
+  iri: string;
+  classes: { iri: string; label?: string | null; description: string | null; parents?: string[] }[];
+  object_properties: { iri: string; label?: string | null; description?: string | null; domain?: string | null; range?: string | null; inverse_of?: string | null; characteristics?: string[]; sub_property_of?: string[]; chain?: string[][]; domains?: string[] }[];
+  datatype_properties: { iri: string; label?: string | null; description?: string | null; domain?: string | null; range?: string | null; functional?: boolean; domains?: string[] }[];
+}
+
 interface BackendCard { name: string; version_count: number; active_version: { version: number } | null; latest_version: { version: number; status: string } | null; triples: number; last_build: { status: string; finished_at: string | null; triple_count: number | null } | null; source: { kind: string; connection: string | null; catalog: string | null; schema: string | null }; mcp: { exposed: boolean; disabled_tools: string[] } }
 
 // One colour per class on the analytics bars; the palette repeats past its length.
@@ -199,6 +206,66 @@ export class RestApi implements DatagraphApi {
     if (!target) throw new ApiError(404, `The ontology has no class ${cls}`);
     target.description = description.trim() || null;
     await this.req("PUT", `/versions/${vid}/ontology/json`, doc);
+  }
+  /** The ontology document, the change applied to it, and the document written back. The draft
+   *  holds an edit lease, so one editor at a time is the rule that makes this safe. */
+  private async editOntology(domain: string, version: number, change: (doc: OntologyDoc) => void): Promise<void> {
+    const vid = this.vid(domain, version);
+    const doc = await this.req<OntologyDoc>("GET", `/versions/${vid}/ontology`);
+    change(doc);
+    await this.req("PUT", `/versions/${vid}/ontology/json`, doc);
+  }
+  private static find<T extends { iri: string }>(items: T[], name: string): T | undefined {
+    return items.find(x => RestApi.short(x.iri) === name || x.iri === name);
+  }
+  /** An IRI in the ontology's own namespace, taken from the terms it already has. */
+  private static mint(doc: OntologyDoc, name: string): string {
+    const known = doc.classes[0]?.iri ?? doc.datatype_properties[0]?.iri ?? `${doc.iri}#`;
+    return known.slice(0, Math.max(known.lastIndexOf("#"), known.lastIndexOf("/")) + 1) + name;
+  }
+  async addClassParent(domain: string, version: number, cls: string, parent: string): Promise<void> {
+    return this.editOntology(domain, version, doc => {
+      const target = RestApi.find(doc.classes, cls), above = RestApi.find(doc.classes, parent);
+      if (!target) throw new ApiError(404, `The ontology has no class ${cls}`);
+      if (!above) throw new ApiError(404, `The ontology has no class ${parent}`);
+      if (above.iri === target.iri) throw new ApiError(400, `${cls} cannot be its own parent`);
+      target.parents = [...new Set([...(target.parents ?? []), above.iri])];
+    });
+  }
+  async addClassAttribute(domain: string, version: number, cls: string, name: string, range: string): Promise<void> {
+    return this.editOntology(domain, version, doc => {
+      const target = RestApi.find(doc.classes, cls);
+      if (!target) throw new ApiError(404, `The ontology has no class ${cls}`);
+      const iri = RestApi.mint(doc, name);
+      const existing = doc.datatype_properties.find(p => p.iri === iri);
+      if (existing) existing.domains = [...new Set([...(existing.domains ?? []), ...(existing.domain ? [existing.domain] : []), target.iri])];
+      else doc.datatype_properties.push({ iri, label: name, description: null, domain: target.iri, range: range || "http://www.w3.org/2001/XMLSchema#string", functional: false, domains: [] });
+    });
+  }
+  async addClassRelationship(domain: string, version: number, cls: string, name: string, target: string): Promise<void> {
+    return this.editOntology(domain, version, doc => {
+      const from = RestApi.find(doc.classes, cls), to = RestApi.find(doc.classes, target);
+      if (!from) throw new ApiError(404, `The ontology has no class ${cls}`);
+      if (!to) throw new ApiError(404, `The ontology has no class ${target}`);
+      const iri = RestApi.mint(doc, name);
+      if (doc.object_properties.some(p => p.iri === iri)) throw new ApiError(409, `${name} is already a relationship here`);
+      doc.object_properties.push({ iri, label: name, description: null, domain: from.iri, range: to.iri, inverse_of: null, characteristics: [], sub_property_of: [], chain: [], domains: [] });
+    });
+  }
+  async deleteClass(domain: string, version: number, cls: string): Promise<void> {
+    return this.editOntology(domain, version, doc => {
+      const target = RestApi.find(doc.classes, cls);
+      if (!target) throw new ApiError(404, `The ontology has no class ${cls}`);
+      const gone = target.iri;
+      doc.classes = doc.classes.filter(c => c.iri !== gone).map(c => ({ ...c, parents: (c.parents ?? []).filter(p => p !== gone) }));
+      const orphan = (p: { domain?: string | null; domains?: string[]; range?: string | null }) =>
+        (p.domain === gone && !(p.domains ?? []).some(d => d !== gone)) || p.range === gone;
+      doc.datatype_properties = doc.datatype_properties.filter(p => !orphan(p)).map(p => ({ ...p, domains: (p.domains ?? []).filter(d => d !== gone) }));
+      doc.object_properties = doc.object_properties.filter(p => !orphan(p)).map(p => ({ ...p, domains: (p.domains ?? []).filter(d => d !== gone) }));
+    });
+  }
+  async importOntology(domain: string, version: number, data: string, format: string, mode: "merge" | "replace"): Promise<{ classes: number; properties: number }> {
+    return this.req("POST", `/versions/${this.vid(domain, version)}/ontology/import`, { data, format, mode }, false, 0);
   }
   async ontologyChecks(domain: string, version: number): Promise<OntoCheck[]> {
     const rows = await this.req<{ code: string; subject: string; message: string; severity: string }[]>("GET", `/versions/${this.vid(domain, version)}/ontology/checks`);

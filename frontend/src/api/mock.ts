@@ -634,11 +634,45 @@ export class MockApi implements DatagraphApi {
     for (const n of this.notes) if ((input.ids && input.ids.includes(n.id)) || (input.until != null && n.id <= input.until)) n.read = true;
     return { unread: this.notes.filter(n => !n.read).length };
   }
-  async setClassDescription(domain: string, version: number, cls: string, description: string): Promise<void> {
+  /** The classes as this session has them, so an edit is visible on the next read. */
+  private async classes(domain: string, version: number): Promise<OntoClass[]> {
     const list = await this.ontology(domain, version);
-    const c = list.find(x => x.id === cls);
-    if (!c) throw new Error(`The ontology has no class ${cls}`);
-    this.ontos[`${domain}:${version}`] = list.map(x => (x.id === cls ? { ...x, desc: description } : x));
+    this.ontos[domain] = list;
+    return list;
+  }
+  private async editClass(domain: string, version: number, cls: string, change: (c: OntoClass) => OntoClass): Promise<void> {
+    const list = await this.classes(domain, version);
+    if (!list.some(x => x.id === cls)) throw new Error(`The ontology has no class ${cls}`);
+    this.ontos[domain] = list.map(x => (x.id === cls ? change(x) : x));
+  }
+  async setClassDescription(domain: string, version: number, cls: string, description: string): Promise<void> {
+    return this.editClass(domain, version, cls, c => ({ ...c, desc: description }));
+  }
+  async addClassParent(domain: string, version: number, cls: string, parent: string): Promise<void> {
+    const list = await this.classes(domain, version);
+    if (!list.some(x => x.id === parent)) throw new Error(`The ontology has no class ${parent}`);
+    if (parent === cls) throw new Error(`${cls} cannot be its own parent`);
+    return this.editClass(domain, version, cls, c => ({ ...c, parents: [...new Set([...c.parents, parent])] }));
+  }
+  async addClassAttribute(domain: string, version: number, cls: string, name: string, range: string): Promise<void> {
+    return this.editClass(domain, version, cls, c => ({ ...c, attrs: [...c.attrs, { name, range: range || "xsd:string" }] }));
+  }
+  async addClassRelationship(domain: string, version: number, cls: string, name: string, target: string): Promise<void> {
+    const list = await this.classes(domain, version);
+    if (!list.some(x => x.id === target)) throw new Error(`The ontology has no class ${target}`);
+    return this.editClass(domain, version, cls, c => ({ ...c, rels: [...c.rels, { name, target }] }));
+  }
+  async deleteClass(domain: string, version: number, cls: string): Promise<void> {
+    const list = await this.classes(domain, version);
+    if (!list.some(x => x.id === cls)) throw new Error(`The ontology has no class ${cls}`);
+    this.ontos[domain] = list.filter(x => x.id !== cls)
+      .map(x => ({ ...x, parents: x.parents.filter(p => p !== cls), rels: x.rels.filter(r => r.target !== cls) }));
+  }
+  async importOntology(domain: string, version: number, data: string, _format: string, mode: "merge" | "replace"): Promise<{ classes: number; properties: number }> {
+    const list = mode === "replace" ? [] : await this.classes(domain, version);
+    const added = Math.max(1, (data.match(/owl:Class/g) ?? []).length);
+    this.ontos[domain] = list;
+    return { classes: list.length + added, properties: list.reduce((a, c) => a + c.attrs.length + c.rels.length, 0) };
   }
   async setRuleEnabled(_domain: string, _version: number, name: string, enabled: boolean): Promise<Rule[]> {
     this.ruleState[name] = enabled;

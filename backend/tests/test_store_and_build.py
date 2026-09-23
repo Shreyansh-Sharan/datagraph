@@ -175,10 +175,10 @@ def test_each_build_loads_from_the_source_it_was_given(db):
     loaded: dict = {}
     original = pipeline._load_tables
 
-    def record(version_id, compiled, plan, on_rows=None, source=None):
+    def record(version_id, compiled, plan, on_rows=None, source=None, cancelled=None):
         name = next(n for n, v in versions.items() if v.id == version_id)
         loaded[name] = source
-        return original(version_id, compiled, plan, on_rows, source)
+        return original(version_id, compiled, plan, on_rows, source, cancelled)
 
     pipeline._load_tables = record
     for name in ("alpha", "beta"):

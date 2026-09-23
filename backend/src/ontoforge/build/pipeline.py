@@ -61,6 +61,7 @@ class BuildPipeline:
         self.publish = publish if publish and publish.enabled else None
         self.metadata = metadata  # MetadataService, optional: adds a non-blocking drift step
         self.progress_rows = progress_rows  # the load step records its row count this often
+        self.cancel_rows = max(1, min(progress_rows, 1000))   # and looks for a cancel at least as often
 
     def source_for(self, version_id: UUID) -> SourceEngine:
         return self._source(version_id) if callable(self._source) else self._source
@@ -132,7 +133,7 @@ class BuildPipeline:
                     steps[-1]["detail"] = published
                     load_sql = f"SELECT {', '.join(COLUMNS)} FROM {self._quote(published['table'] or published['view'], source)}"
                 with step("load"):
-                    count = self._load(version_id, load_sql, on_rows, source)
+                    count = self._load(version_id, load_sql, on_rows, source, cancelled)
                     steps[-1]["detail"] = {"triples": count}
             else:
                 with step("load"):
@@ -140,7 +141,7 @@ class BuildPipeline:
                         count = 0
                         steps[-1]["detail"] = {"triples": 0, "skipped": True}
                     else:
-                        count = self._load_tables(version_id, compiled, plan, on_rows, source)
+                        count = self._load_tables(version_id, compiled, plan, on_rows, source, cancelled)
                         steps[-1]["detail"] = {"triples": count}
             with step("finalize"):
                 self.store.analyze()   # the planner must know the new rows, or graph queries on this version crawl
@@ -210,7 +211,8 @@ class BuildPipeline:
         after.update({t: sig for t, sig in signatures.items() if sig is not None})
         return BuildPlan(mode, reason, changed, unchanged, after, dropped)
 
-    def _load_tables(self, version_id: UUID, compiled, plan: "BuildPlan", on_rows: Callable[[int], None] | None = None, source: SourceEngine | None = None) -> int:
+    def _load_tables(self, version_id: UUID, compiled, plan: "BuildPlan", on_rows: Callable[[int], None] | None = None, source: SourceEngine | None = None,
+                     cancelled: Callable[[], bool] | None = None) -> int:
         """Replace the triples of the changed source tables (every table on a full build) from a
         SELECT whose rows carry their source table as a seventh column."""
         d = source.dialect
@@ -222,8 +224,10 @@ class BuildPipeline:
         if not parts:                                   # only tables to drop: nothing to read
             return self.store.replace_tables(version_id, tables, iter(()))
         if isinstance(source, PostgresSource) and source.db is self.store.db:
+            # Source and store share a database: one INSERT ... SELECT beats streaming rows out
+            # and back. It is a single statement, so a cancel lands when it ends, not during it.
             return self.store.replace_from_sql(version_id, sql, tables=tables, with_source=True)
-        return self.store.replace_tables(version_id, tables, self._counted(source.stream(sql), on_rows))
+        return self.store.replace_tables(version_id, tables, self._counted(source.stream(sql), on_rows, cancelled))
 
     # -- overridable stages ---------------------------------------------------
 
@@ -248,15 +252,24 @@ class BuildPipeline:
     def _quote(self, dotted: str, source: SourceEngine) -> str:
         return source.dialect.quote_table(dotted)
 
-    def _load(self, version_id: UUID, sql: str, on_rows: Callable[[int], None] | None = None, source: SourceEngine | None = None) -> int:
+    def _load(self, version_id: UUID, sql: str, on_rows: Callable[[int], None] | None = None, source: SourceEngine | None = None,
+              cancelled: Callable[[], bool] | None = None) -> int:
         if isinstance(source, PostgresSource) and source.db is self.store.db:
             return self.store.replace_from_sql(version_id, sql)   # one server-side statement: no rows pass through here
-        return self.store.replace(version_id, self._counted(source.stream(sql), on_rows))
+        return self.store.replace(version_id, self._counted(source.stream(sql), on_rows, cancelled))
 
-    def _counted(self, rows: Iterable[tuple], on_rows: Callable[[int], None] | None) -> Iterator[tuple]:
+    def _counted(self, rows: Iterable[tuple], on_rows: Callable[[int], None] | None,
+                 cancelled: Callable[[], bool] | None = None) -> Iterator[tuple]:
+        """Rows on their way into the store, counted, and stopped part-way when a cancel arrives.
+
+        A load of millions of rows is most of a build's wall clock. Checking only between steps
+        means a cancel is noticed when the load has already finished, which is no cancel at all.
+        """
         n = 0
         for row in rows:
             n += 1
+            if n % self.cancel_rows == 0 and cancelled and cancelled():
+                raise BuildCancelled(f"cancelled during load after {n:,} rows")
             if on_rows and n % self.progress_rows == 0:
                 on_rows(n)
             yield row

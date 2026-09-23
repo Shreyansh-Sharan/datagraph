@@ -738,3 +738,35 @@ describe("Actions that used to only show a message", () => {
     expect(await screen.findByLabelText("Switch role")).toBeInTheDocument();   // a mock build may impersonate
   });
 });
+
+describe("Ontology editor", () => {
+  it("adds a parent, an attribute and a relationship, and deletes a class", async () => {
+    const api = new MockApi();
+    renderAt("#/d/rgm/ontology?cls=Customer", api);
+    const user = userEvent.setup();
+    await screen.findByRole("heading", { level: 2, name: "Customer" });
+
+    await user.click(screen.getByRole("button", { name: "+ Add parent" }));
+    await user.selectOptions(await screen.findByLabelText("Parent class"), "Product");
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(screen.getByText("Product is now a parent of Customer")).toBeInTheDocument());
+    expect((await api.ontology("rgm", 3)).find(c => c.id === "Customer")?.parents).toContain("Product");
+
+    await user.click(screen.getAllByRole("link", { name: "+ Add" })[0]);
+    await user.type(await screen.findByLabelText("Name"), "loyaltyTier");
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(screen.getByText("loyaltyTier added to Customer")).toBeInTheDocument());
+    expect((await api.ontology("rgm", 3)).find(c => c.id === "Customer")?.attrs.map(a => a.name)).toContain("loyaltyTier");
+
+    await user.click(screen.getAllByRole("link", { name: "+ Add" })[1]);
+    await user.type(await screen.findByLabelText("Name"), "favours");
+    await user.selectOptions(screen.getByLabelText("Target class"), "Product");
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(screen.getByText("favours → Product added to Customer")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    await user.click(await screen.findByRole("button", { name: "Delete class" }));
+    await waitFor(() => expect(screen.getByText("Customer deleted")).toBeInTheDocument());
+    expect((await api.ontology("rgm", 3)).some(c => c.id === "Customer")).toBe(false);
+  });
+});

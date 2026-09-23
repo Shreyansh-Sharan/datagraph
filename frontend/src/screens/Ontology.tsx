@@ -48,6 +48,38 @@ export function Ontology() {
   const groups: StageGroup[] | undefined = hierarchical ? [...new Set(Object.values(roots))].sort().map(r => ({ id: r, label: r, color: colorFor(r) })) : undefined;
   const nodes: StageNode[] = list.map(c => ({ id: c.id, label: c.id, glyph: glyphOf(c.id), x: c.x, y: c.y, fill: colorFor(hierarchical ? roots[c.id] : c.id), border: c.id === sel?.id ? BLUE : undefined, selected: c.id === sel?.id, props: c.attrs.length + c.rels.length, title: c.iri, group: hierarchical ? roots[c.id] : undefined }));
 
+  const [adding, setAdding] = useState<null | { what: "parent" | "attribute" | "relationship"; name: string; extra: string }>(null);
+  const [confirmDelete, setConfirmDelete] = useState("");
+  const edit = async (what: string, run: () => Promise<unknown>) => {
+    setSaving(true);
+    try { await run(); classes.reload(); checks.reload(); say(what); }
+    catch (e) { say(e instanceof Error ? e.message : String(e)); }
+    finally { setSaving(false); }
+  };
+  const addNow = async () => {
+    if (!sel || !adding) return;
+    const name = adding.name.trim();
+    const v = version!.version;
+    if (adding.what === "parent") await edit(`${name} is now a parent of ${sel.id}`, () => api.addClassParent(domain.name, v, sel.id, name));
+    else if (adding.what === "attribute") await edit(`${name} added to ${sel.id}`, () => api.addClassAttribute(domain.name, v, sel.id, name, adding.extra.trim()));
+    else await edit(`${name} → ${adding.extra} added to ${sel.id}`, () => api.addClassRelationship(domain.name, v, sel.id, name, adding.extra.trim()));
+    setAdding(null);
+  };
+  const importFile = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".ttl,.jsonld,.json,.rdf,.xml,.owl";
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const format = /\.jsonld|\.json$/i.test(file.name) ? "json-ld" : /\.rdf|\.xml|\.owl$/i.test(file.name) ? "xml" : "turtle";
+      await edit(`Imported ${file.name}`, async () => {
+        const out = await api.importOntology(domain.name, version!.version, await file.text(), format, "merge");
+        say(`Imported ${file.name}: ${out.classes} classes, ${out.properties} properties`);
+      });
+    };
+    input.click();
+  };
   const saveClass = async () => {
     if (!sel) return;
     const box = document.getElementById("cls-desc") as HTMLTextAreaElement | null;
@@ -60,7 +92,7 @@ export function Ontology() {
     <>
       <div className="page-head">
         <div><h1>Ontology</h1><p>{list.length} classes, {edges.length} relationships. Click a class to edit it.</p></div>
-        <div className="actions"><Button disabled title="Not wired yet: draft from the tables, or import through the API">Import</Button><Button disabled={!editable} title={editable ? undefined : "Take the lease on a draft to change the ontology"} onClick={() => setDraft("ai")}>Draft with AI</Button><Button variant="primary" disabled={!editable} title={editable ? undefined : "Take the lease on a draft to change the ontology"} onClick={() => setDraft("tables")}>Draft from tables</Button></div>
+        <div className="actions"><Button disabled={!editable || saving} title={editable ? "Merge a Turtle, JSON-LD or RDF/XML file into this ontology" : "Take the lease on a draft to change the ontology"} onClick={importFile}>Import</Button><Button disabled={!editable} title={editable ? undefined : "Take the lease on a draft to change the ontology"} onClick={() => setDraft("ai")}>Draft with AI</Button><Button variant="primary" disabled={!editable} title={editable ? undefined : "Take the lease on a draft to change the ontology"} onClick={() => setDraft("tables")}>Draft from tables</Button></div>
       </div>
       <div style={{ marginBottom: 14 }}><Tabs<View> value={(view as View) || "map"} onChange={v => setView(v)} items={[{ id: "map", label: "Map" }, { id: "list", label: "Classes" }, { id: "checks", label: `Checks · ${checks.data?.length ?? 0}` }]} /></div>
       {running && <div className="notice" role="status" aria-live="polite" style={{ marginBottom: 14 }}><div className="row" style={{ gap: 8, fontWeight: 600 }}><Spinner blue />Drafting the ontology with AI · {running.progress} · {runningFor >= 60 ? `${Math.floor(runningFor / 60)} min ${runningFor % 60} s` : `${runningFor} s`}</div><div className="muted xs" style={{ marginTop: 4 }}>The map below is the current ontology; it is replaced when the draft finishes.</div></div>}
@@ -73,6 +105,40 @@ export function Ontology() {
           {editable && <div className="row" style={{ justifyContent: "center" }}><Button variant="primary" onClick={() => setDraft("ai")}>Draft with AI</Button><Button onClick={() => setDraft("tables")}>Draft from tables</Button></div>}
         </Card>
       )}
+      <Dialog title={adding ? `Add a ${adding.what} to ${sel?.id ?? ""}` : ""} open={!!adding && !!sel} onClose={() => setAdding(null)} width={460}
+              footer={<><Button onClick={() => setAdding(null)}>Cancel</Button>
+                        <Button variant="primary" disabled={saving || !adding?.name.trim() || (adding?.what === "relationship" && !adding.extra.trim())} onClick={() => void addNow()}>{saving && <Spinner />}Add</Button></>}>
+        <div style={{ display: "grid", gap: 12 }}>
+          {adding?.what === "parent" ? (
+            <div><Label>Parent class</Label>
+              <select className="select full" aria-label="Parent class" value={adding.name} onChange={e => setAdding(a => a && { ...a, name: e.target.value })}>
+                <option value="">Choose a class…</option>
+                {list.filter(c => c.id !== sel?.id && !sel?.parents.includes(c.id)).map(c => <option key={c.id} value={c.id}>{c.id}</option>)}
+              </select></div>
+          ) : (
+            <>
+              <div><Label>Name</Label><input className="input full" aria-label="Name" placeholder={adding?.what === "attribute" ? "orderDate" : "placedBy"} value={adding?.name ?? ""} onChange={e => setAdding(a => a && { ...a, name: e.target.value })} /></div>
+              {adding?.what === "attribute" ? (
+                <div><Label>Type</Label>
+                  <select className="select full mono" aria-label="Type" value={adding.extra} onChange={e => setAdding(a => a && { ...a, extra: e.target.value })}>
+                    {["xsd:string", "xsd:integer", "xsd:decimal", "xsd:boolean", "xsd:date", "xsd:dateTime"].map(t => <option key={t} value={t}>{t}</option>)}
+                  </select></div>
+              ) : (
+                <div><Label>Target class</Label>
+                  <select className="select full" aria-label="Target class" value={adding?.extra ?? ""} onChange={e => setAdding(a => a && { ...a, extra: e.target.value })}>
+                    <option value="">Choose a class…</option>
+                    {list.map(c => <option key={c.id} value={c.id}>{c.id}</option>)}
+                  </select></div>
+              )}
+            </>
+          )}
+        </div>
+      </Dialog>
+      <Dialog title={`Delete ${confirmDelete}`} open={!!confirmDelete} onClose={() => setConfirmDelete("")} width={460}
+              footer={<><Button onClick={() => setConfirmDelete("")}>Cancel</Button>
+                        <Button variant="danger" disabled={saving} onClick={() => { const gone = confirmDelete; setConfirmDelete(""); setCls(""); void edit(`${gone} deleted`, () => api.deleteClass(domain.name, version!.version, gone)); }}>{saving && <Spinner />}Delete class</Button></>}>
+        <p className="muted small">Its attributes and the relationships that only it used go with it. Classes that name it as a parent keep their other parents.</p>
+      </Dialog>
       <DraftDialog mode={draft} existing={list.length} onClose={() => setDraft(null)} onDraft={async (opts, onProgress) => drafted(await api.draftOntology(domain.name, version!.version, opts, onProgress))} tables={() => api.snapshot(domain.name, version!.version)} />
       {view === "map" && sel && (
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 340px", gap: 20, alignItems: "start" }}>
@@ -86,13 +152,13 @@ export function Ontology() {
             <Label>Description</Label>
             <textarea id="cls-desc" className="textarea full" rows={2} defaultValue={sel.desc} key={sel.id} disabled={!editable} style={{ marginBottom: 12 }} />
             <Label>Parents</Label>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>{sel.parents.map(p => <Pill key={p} tone="blue" size="lg" style={{ height: 24, fontSize: 12 }}>{p}</Pill>)}{editable && <Button dashed disabled title="Not wired yet: use the assistant or the MCP tools to change the ontology">+ Add parent</Button>}</div>
-            <div className="row between" style={{ alignItems: "baseline" }}><Label block={false}>Attributes</Label>{editable && <span className="muted-3 small" title="Not wired yet: use the assistant or the MCP tools to change the ontology">+ Add</span>}</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>{sel.parents.map(p => <Pill key={p} tone="blue" size="lg" style={{ height: 24, fontSize: 12 }}>{p}</Pill>)}{editable && <Button dashed disabled={saving} onClick={() => setAdding({ what: "parent", name: "", extra: "" })}>+ Add parent</Button>}</div>
+            <div className="row between" style={{ alignItems: "baseline" }}><Label block={false}>Attributes</Label>{editable && <a href="#" className="small" style={{ fontWeight: 600 }} onClick={e => { e.preventDefault(); setAdding({ what: "attribute", name: "", extra: "xsd:string" }); }}>+ Add</a>}</div>
             {sel.attrs.map(a => <div key={a.name} className="row between" style={{ padding: "7px 0", borderBottom: "1px solid var(--line-2)", fontSize: 12.5 }}><span>{a.name}</span><span className="mono" style={{ fontSize: 11, color: "var(--muted-2)" }}>{a.range}</span></div>)}
-            <div className="row between" style={{ alignItems: "baseline", marginTop: 14 }}><Label block={false}>Relationships</Label>{editable && <span className="muted-3 small" title="Not wired yet: use the assistant or the MCP tools to change the ontology">+ Add</span>}</div>
+            <div className="row between" style={{ alignItems: "baseline", marginTop: 14 }}><Label block={false}>Relationships</Label>{editable && <a href="#" className="small" style={{ fontWeight: 600 }} onClick={e => { e.preventDefault(); setAdding({ what: "relationship", name: "", extra: "" }); }}>+ Add</a>}</div>
             {sel.rels.map(r => <div key={r.name} className="row between" style={{ padding: "7px 0", borderBottom: "1px solid var(--line-2)", fontSize: 12.5 }}><span>{r.name}</span><span className="muted">→ {r.target}</span></div>)}
             {sel.rels.length === 0 && <p className="muted-2" style={{ fontSize: 12.5, margin: "8px 0" }}>No relationships from this class.</p>}
-            {editable && <div className="row" style={{ marginTop: 16 }}><Button variant="primary" size="sm" style={{ flex: 1, height: 32 }} disabled={saving} onClick={() => void saveClass()}>{saving && <Spinner />}Save description</Button><Button size="sm" variant="danger" style={{ height: 32 }} disabled title="Not wired yet: use the assistant or the MCP tools to change the ontology">Delete</Button></div>}
+            {editable && <div className="row" style={{ marginTop: 16 }}><Button variant="primary" size="sm" style={{ flex: 1, height: 32 }} disabled={saving} onClick={() => void saveClass()}>{saving && <Spinner />}Save description</Button><Button size="sm" variant="danger" style={{ height: 32 }} disabled={saving} onClick={() => setConfirmDelete(sel.id)}>Delete</Button></div>}
           </Card>
         </div>
       )}
