@@ -3,6 +3,7 @@ import { Link, Outlet, useLocation, useParams, useSearchParams } from "react-rou
 import { Icon } from "@/components/icons";
 import { Dot, EmptyState, Pill, Skeleton, Toast } from "@/components/ui";
 import { Spotlight } from "@/components/Spotlight";
+import { Bell } from "@/components/Bell";
 import { useApp, useLoad } from "@/state/app";
 import { DomainProvider, SECTIONS, sectionOf, useDomainLoad, useDomainOptional, useGo, type Screen } from "@/state/domain";
 import { STATUS_COLOR, STATUS_LABEL, type Role } from "@/api";
@@ -60,7 +61,7 @@ function TopBar() {
       </nav>
       <div className="spacer" />
       <button type="button" className="topnav spot-open" title="Ask the assistant (Cmd+K or Ctrl+K)" onClick={() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true }))}><Icon name="ask" />Ask<kbd>⌘K</kbd></button>
-      <Link className="topnav" to="/tasks" title="My tasks"><Icon name="tasks" />My tasks<span className="count-badge">3</span></Link>
+      <Bell />
       {can("admin") && <Link className="topnav" to="/admin" title="Admin"><Icon name="shield" />Admin</Link>}
       <SourceChip fallback={dbx ? `Databricks · ${config.catalog ?? "warehouse"}` : "Postgres"} />
       <span className="identity">

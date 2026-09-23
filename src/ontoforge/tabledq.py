@@ -17,6 +17,7 @@ from ontoforge.dialects import SqlDialect
 from ontoforge.llm.prompts import SUGGEST_DQ_RULES
 from ontoforge.llm.schemas import DQ_RULES_SCHEMA
 from ontoforge.metadata import MetadataService
+from ontoforge.notifications import NullNotifier, where
 from ontoforge.registry import Registry
 from ontoforge.registry.models import NotFound
 
@@ -241,6 +242,8 @@ def status_of(pass_rate: float | None, threshold: float) -> str:
 
 
 class TableQuality:
+    notifier = NullNotifier()   # app.py hands in the real one
+
     def __init__(self, registry: Registry, metadata: MetadataService, source: "SourceEngine | Callable[[UUID], SourceEngine]", db: Database) -> None:
         self.registry, self.metadata, self._source, self.db = registry, metadata, source, db
 
@@ -271,6 +274,9 @@ class TableQuality:
                 "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *",
                 (version_id, table, fields["name"], fields["column"], fields["kind"], fields["dimension"], Jsonb(fields["params"]), fields["threshold"],
                  owner, origin, enabled, actor)).fetchone()
+        dname, vno = where(self.registry, version_id)
+        self.notifier.emit(None, "dq.rule.added", title=f"Rule {fields['name']!r} added to {table.split('.')[-1]}", actor=actor, domain=dname, version=vno, table=table,
+                           link={"screen": "table", "tab": "dq", "schema": table.rsplit(".", 1)[0] if "." in table else "", "table": table.split(".")[-1]})
         return _rule(row)
 
     def update_rule(self, rule_id: UUID, *, actor: str, **changes) -> Rule:
@@ -387,7 +393,14 @@ class TableQuality:
         except Exception as exc:  # noqa: BLE001 - the run records its own failure
             with self.db.rows() as cur:
                 row = cur.execute("UPDATE dq_runs SET finished_at = now(), status = 'failed', error = %s WHERE id = %s RETURNING *", (f"{type(exc).__name__}: {exc}", run_id)).fetchone()
-        return _run(row)
+        out = _run(row)
+        dname, vno = where(self.registry, version_id)
+        short = table.split(".")[-1]
+        failing = sum(1 for x in results.values() if x["status"] in ("failing", "error"))
+        self.notifier.emit(None, "dq.run", title=f"Rules of {short} ran: {round(float(out.score) * 100) if out.score is not None else '—'}% " + (f"· {failing} failing" if failing else "· all passing") if out.status == "succeeded" else f"Rules of {short} failed to run",
+                           actor=actor, domain=dname, version=vno, table=table, body=out.error, link={"screen": "table", "tab": "dq", "schema": table.rsplit(".", 1)[0] if "." in table else "", "table": short},
+                           status="done" if out.status == "succeeded" else "failed")
+        return out
 
     def status(self, version_id: UUID, table: str) -> dict:
         """Everything the data-quality screen shows: rules with their latest result, the table's score

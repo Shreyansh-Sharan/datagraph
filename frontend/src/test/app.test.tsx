@@ -671,3 +671,32 @@ describe("Mapping screen · what is left to map", () => {
     expect(window.location.hash).toMatch(/cls=Channel/);
   });
 });
+
+describe("Notifications bell", () => {
+  it("counts what is unread, lists running work first, and a click deep-links and marks the row read", async () => {
+    renderAt("#/");
+    const user = userEvent.setup();
+    const bell = await screen.findByRole("button", { name: "Notifications, 2 unread" });
+    expect(bell).toHaveTextContent("2");
+    expect(screen.queryByText("My tasks")).toBeNull();                                               // the hard-coded badge is gone
+    await user.click(bell);
+    const menu = screen.getByRole("menu", { name: "Notifications" });
+    const rows = within(menu).getAllByRole("menuitem");
+    expect(rows[0]).toHaveTextContent("Building rgm v3");                                             // running work first, with its progress
+    expect(rows[0]).toHaveTextContent("step 3 of 7: load · 120,000 rows");
+    expect(within(menu).getByText("Needs you")).toBeInTheDocument();                                  // the review queue lives here too
+    expect(within(menu).getByRole("menuitem", { name: /Review rgm v2/ })).toBeInTheDocument();
+    await user.click(within(menu).getByRole("menuitem", { name: /Profile of sales_fact ready/ }));
+    expect(window.location.hash).toBe("#/d/rgm/table?v=3&schema=silver&table=sales_fact&tab=profile");
+    expect(await screen.findByRole("button", { name: "Notifications, 1 unread" })).toBeInTheDocument();
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+  it("marks everything read from the list and drops the badge", async () => {
+    renderAt("#/");
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Notifications, 2 unread" }));
+    await user.click(screen.getByRole("link", { name: "Mark all read" }));
+    const bell = await screen.findByRole("button", { name: "Notifications" });
+    expect(within(bell).queryByText("2")).toBeNull();
+  });
+});

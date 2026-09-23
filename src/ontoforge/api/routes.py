@@ -429,6 +429,25 @@ def my_tasks(request: Request, me: Principal = Depends(viewer)):
     return _st(request).registry.tasks_for(me.name)
 
 
+class ReadIn(BaseModel):
+    ids: list[int] | None = None
+    until: int | None = None
+
+
+@router.get("/notifications")
+def notifications(request: Request, me: Principal = Depends(viewer), since: int | None = Query(default=None, description="only rows newer than this id, plus running ones"),
+                  limit: int = Query(default=50, ge=1, le=200)):
+    """Every activity this caller may see, newest first: builds and jobs (running ones update in place), profiles, rule runs, design and lifecycle changes."""
+    return _st(request).notifier.feed(me.name, me.role.value, since=since, limit=limit)
+
+
+@router.post("/notifications/read")
+def notifications_read(body: ReadIn, request: Request, me: Principal = Depends(viewer)):
+    """Mark notifications read: by id, or everything up to an id."""
+    _st(request).notifier.mark_read(me.name, ids=body.ids, until=body.until)
+    return {"unread": _st(request).notifier.feed(me.name, me.role.value, limit=1)["unread"]}
+
+
 @router.get("/admin/locks")
 def admin_locks(request: Request, me: Principal = Depends(admin)):
     return _st(request).registry.list_locks()
@@ -1448,11 +1467,11 @@ class TermPatch(BaseModel):
     frequency: str | None = None
 
 
-def _run_job(request: Request, version_id: UUID, kind: str, background: bool, response: Response, actor: str, work):
+def _run_job(request: Request, version_id: UUID, kind: str, background: bool, response: Response, actor: str, work, label: str | None = None):
     """Run a source-reading task now, or in the background with a job to poll."""
     if not background:
         return work(lambda _msg: None)
-    job = _st(request).jobs.submit(kind, version_id, work, actor=actor)
+    job = _st(request).jobs.submit(kind, version_id, work, actor=actor, label=label)
     response.status_code = 202
     return job.to_dict()
 
@@ -1480,7 +1499,7 @@ def table_profile_run(version_id: UUID, table: str, request: Request, response: 
     st = _st(request)
     st.metadata.get(version_id, table)
     return _run_job(request, version_id, "profile", background, response, me.name,
-                    lambda report: st.profiles.run(version_id, table, actor=me.name, on_progress=report).to_dict())
+                    lambda report: st.profiles.run(version_id, table, actor=me.name, on_progress=report).to_dict(), label=table)
 
 
 @router.get("/versions/{version_id}/tables/{table}/dq")
@@ -1495,7 +1514,7 @@ def table_dq_run(version_id: UUID, table: str, request: Request, response: Respo
     st = _st(request)
     st.metadata.get(version_id, table)
     return _run_job(request, version_id, "dq-run", background, response, me.name,
-                    lambda report: st.tabledq.run(version_id, table, actor=me.name, on_progress=report).to_dict())
+                    lambda report: st.tabledq.run(version_id, table, actor=me.name, on_progress=report).to_dict(), label=table)
 
 
 @router.post("/versions/{version_id}/tables/{table}/dq/rules", status_code=201)

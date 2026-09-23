@@ -3,7 +3,7 @@
 // app stays usable while integration proceeds. Replace fallbacks method by method.
 import { MockApi } from "./mock";
 import { forget, memo } from "./cache";
-import type { AssistantContext, ChatEvent, ChatMessage, ChatResult, Conversation, DqRule, DqRun, DqStatus, FailingRows, GlossaryEntry, RuleInput, TableProfile, TermInput, AiProgress, AuditEntry, BuildRun, GraphSample, SearchOptions, BuildStep, CatalogTable, ChecklistItem, DriftIssue, MappingKpis, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, RefreshChange, SnapshotTable, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus, DqKindInfo, DqOverview } from "./types";
+import type { AssistantContext, ChatEvent, ChatMessage, ChatResult, Conversation, DqRule, DqRun, DqStatus, FailingRows, GlossaryEntry, RuleInput, TableProfile, TermInput, AiProgress, AuditEntry, BuildRun, GraphSample, SearchOptions, BuildStep, CatalogTable, ChecklistItem, DriftIssue, MappingKpis, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, RefreshChange, SnapshotTable, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus, DqKindInfo, DqOverview, NotificationFeed } from "./types";
 import { tableName } from "./types";
 import { humanAction, relTime } from "./format";
 
@@ -59,7 +59,7 @@ export class RestApi extends MockApi {
       try { const j = await res.json(); detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail ?? j); } catch { /* keep statusText */ }
       throw new ApiError(res.status, detail);
     }
-    if (method !== "GET") forget(this, "read:");   // a write may change what the remembered reads said
+    if (method !== "GET" && !path.startsWith("/notifications")) forget(this, "read:");   // a write may change what the remembered reads said; marking a notification read changes nothing
     if (res.status === 204) return undefined as T;
     return (text ? await res.text() : await res.json()) as T;
   }
@@ -164,6 +164,12 @@ export class RestApi extends MockApi {
       ...t.publishable.map(x => ({ title: `Publish ${x.domain} v${x.version}`, sub: `Quorum met · ${x.approvals} of ${x.quorum} approvals`, when: "now", icon: "check", go: { screen: "versions", domain: x.domain, version: x.version } })),
       ...t.drafts.filter(x => x.editor === me).map(x => ({ title: `Your draft ${x.domain} v${x.version}`, sub: "You hold the edit lease", when: "now", icon: "settings", go: { screen: "overview", domain: x.domain, version: x.version } })),
     ];
+  }
+  override async notifications(since?: number): Promise<NotificationFeed> {
+    return this.req("GET", `/notifications?limit=60${since != null ? `&since=${since}` : ""}`, undefined, false, 15_000);
+  }
+  override async markRead(input: { ids?: number[]; until?: number }): Promise<{ unread: number }> {
+    return this.req("POST", "/notifications/read", input);
   }
   override async audit(domain: string): Promise<AuditEntry[]> {
     const d = await this.domain(domain);

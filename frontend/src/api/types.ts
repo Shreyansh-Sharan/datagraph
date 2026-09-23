@@ -181,6 +181,11 @@ export interface Task { title: string; sub: string; when: string; icon: string; 
 export interface Principal { name: string; role: Role; seen: string }
 export interface ApiKey { name: string; prefix: string; role: Role }
 export interface Lock { what: string; who: string; exp: string }
+// -- notifications (the bell) ------------------------------------------------------------
+export type NotificationStatus = "running" | "done" | "failed" | "info";
+export interface NotificationLink { domain?: string; screen?: string; version?: number; schema?: string; table?: string; tab?: string; cls?: string }
+export interface Notification { id: number; kind: string; actor: string | null; via: string | null; domain: string | null; version: number | null; table: string | null; title: string; body: string | null; link: NotificationLink; status: NotificationStatus; progress: string | null; read: boolean; created_at: string; updated_at: string }
+export interface NotificationFeed { items: Notification[]; unread: number; latest_id: number | null }
 
 export interface NewDomainInput { name: string; description: string; base_iri: string; quorum: number; ai_connection_id?: string | null; sources?: SourceInput[] }
 
@@ -282,6 +287,8 @@ export interface DatagraphApi {
   principals(): Promise<Principal[]>;
   apiKeys(): Promise<ApiKey[]>;
   locks(): Promise<Lock[]>;
+  notifications(since?: number): Promise<NotificationFeed>;              // everything since the cursor, plus whatever is still running
+  markRead(input: { ids?: number[]; until?: number }): Promise<{ unread: number }>;
 }
 
 export const STATUS_LABEL: Record<VersionStatus, string> = { draft: "draft", in_review: "in review", published: "published", archived: "archived" };

@@ -632,3 +632,26 @@ table.fail .hit { background: #FFF1E8; color: var(--orange-text); }
 .todo-item { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid var(--line); border-radius: 999px; background: #fff; font: 600 12.5px var(--font); color: var(--ink); cursor: pointer; }
 .todo-item:hover { border-color: var(--blue); color: var(--blue-dark); }
 .todo-item .muted-2 { font-weight: 500; font-size: 11.5px; }
+
+/* -- the bell ------------------------------------------------------------------------- */
+.bell-wrap { position: relative; display: inline-flex; }
+.bell { position: relative; background: none; border: 0; padding: 4px 6px; border-radius: 6px; cursor: pointer; font: inherit; }
+.bell.on, .bell:hover { color: var(--blue); background: var(--surface-2); }
+.bell .count-badge { margin-left: -2px; }
+.bell-stale { position: absolute; right: 2px; bottom: 2px; width: 6px; height: 6px; border-radius: 50%; background: var(--orange); }
+.bell-menu { position: absolute; right: 0; top: 36px; width: 400px; max-height: min(72vh, 640px); overflow: auto; z-index: var(--z-dropdown); background: #fff; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 32px rgba(15, 23, 42, .12); text-align: left; }
+.bell-head { padding: 12px 16px 10px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: #fff; z-index: 1; }
+.bell-head strong { font-size: 13px; }
+.bell-head .row { gap: 12px; }
+.bell-section { padding: 10px 16px 4px; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted-3); }
+.bell-row { display: flex; gap: 10px; align-items: flex-start; width: 100%; padding: 9px 16px; background: none; border: 0; border-top: 1px solid var(--surface-2); text-align: left; cursor: pointer; font: inherit; color: var(--ink); }
+.bell-row:hover { background: var(--surface-2); }
+.bell-row.unread { background: var(--blue-soft); }
+.bell-row.unread:hover { background: var(--blue-border); }
+.bell-ic { width: 26px; height: 26px; border-radius: 50%; background: var(--surface-3); display: inline-flex; align-items: center; justify-content: center; flex: none; color: var(--muted); margin-top: 1px; }
+.bell-ic.running { background: var(--blue-soft); }
+.bell-ic.failed { background: #FFF1E8; color: #B84F00; }
+.bell-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.bell-title { font-size: 12.5px; font-weight: 600; line-height: 1.3; }
+.bell-body .xs { font-size: 11px; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; }
+.bell-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--orange); flex: none; margin-top: 6px; }

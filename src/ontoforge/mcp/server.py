@@ -283,6 +283,14 @@ def create_mcp_server(tools: GraphTools, name: str = "ontoforge") -> MCPServer:
     def remove_constraint(name: str, domain: str | None = None) -> dict:
         return tools.remove_constraint(domain, name)
 
+    @tool(description="What happened lately across the domains: builds and jobs with their progress, profiles, rule runs, design and lifecycle changes, newest first, with the caller's unread count. since: only newer than that id.")
+    def list_notifications(since: int | None = None, limit: int = 30) -> dict:
+        return tools.list_notifications(since, limit)
+
+    @tool(description="Mark notifications read: everything up to an id (until), or specific ids.")
+    def mark_notifications_read(until: int | None = None, ids: list[int] | None = None) -> dict:
+        return tools.mark_notifications_read(until, ids)
+
     @tool(description="Run one read-only SELECT against the domain's source warehouse and return up to `limit` rows. Table names as the mapping spells them.")
     def preview_sql(sql: str, domain: str | None = None, limit: int = 20) -> dict:
         return tools.preview_sql(domain, sql, limit)

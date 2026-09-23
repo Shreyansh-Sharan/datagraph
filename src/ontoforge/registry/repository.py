@@ -50,8 +50,9 @@ def clean_schemas(schemas: list[str]) -> list[str]:
 
 
 class Registry:
-    def __init__(self, db: Database) -> None:
+    def __init__(self, db: Database, notifier=None) -> None:
         self.db = db
+        self.notifier = notifier   # a Notifier: every audited action people care about becomes a notification
 
     # -- domains -------------------------------------------------------------
 
@@ -552,10 +553,11 @@ class Registry:
         return cur.execute("SELECT count(*) FROM audit_log WHERE domain_version_id = %s AND action = 'status.in_review'",
                            (version_id,)).fetchone()["count"]
 
-    @staticmethod
-    def _audit(cur, version_id: UUID | None, actor: str | None, action: str, detail: dict | None) -> None:
+    def _audit(self, cur, version_id: UUID | None, actor: str | None, action: str, detail: dict | None) -> None:
         cur.execute("INSERT INTO audit_log (domain_version_id, actor, action, detail) VALUES (%s, %s, %s, %s)",
                     (version_id, actor, action, Jsonb(detail) if detail is not None else None))
+        if self.notifier is not None:
+            self.notifier.from_audit(cur, action, actor=actor, version_id=version_id, detail=detail)
 
 
 class _DictCursor:

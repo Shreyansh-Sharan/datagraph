@@ -2,6 +2,7 @@ import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
 import { ConnectionsProvider } from "@polestar/connections";
 import type { DatagraphApi } from "@/api";
 import { AppProvider } from "@/state/app";
+import { NotificationsProvider } from "@/state/notifications";
 import { AppShell, DomainShell, PlainMain } from "@/layout/Shell";
 import { Home } from "@/screens/Home";
 import { Overview } from "@/screens/Overview";
@@ -26,6 +27,7 @@ import { CONNECTIONS_URL } from "@/config";
 export function App({ api, connectionsUrl = CONNECTIONS_URL }: { api: DatagraphApi; connectionsUrl?: string }) {
   return (
     <AppProvider api={api}>
+      <NotificationsProvider>
       <ConnectionsProvider baseUrl={connectionsUrl || "/hub"} headers={() => ({ "X-Actor": "alice" })}>
       <HashRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <Routes>
@@ -58,6 +60,7 @@ export function App({ api, connectionsUrl = CONNECTIONS_URL }: { api: DatagraphA
         </Routes>
       </HashRouter>
       </ConnectionsProvider>
+      </NotificationsProvider>
     </AppProvider>
   );
 }

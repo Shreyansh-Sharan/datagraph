@@ -36,6 +36,7 @@ from ontoforge.mapping import MappingSpecError
 from ontoforge.assistant import Assistant
 from ontoforge.mcp import GraphTools, create_mcp_server
 from ontoforge.mcp.tools import ACTOR, ROLE
+from ontoforge.notifications import VIA, Notifier
 from ontoforge.metadata import MetadataError, MetadataService
 from ontoforge.profiling import ProfileService
 from ontoforge.tabledq import TableQuality
@@ -65,7 +66,8 @@ def create_app(db: Database, source_db: Database | None = None, settings: Settin
     app.add_middleware(RequestLoggingMiddleware, identity_header=settings.auth_header)
     app.state.settings = settings
     app.state.db = db
-    app.state.registry = Registry(db)
+    app.state.notifier = Notifier(db)
+    app.state.registry = Registry(db, notifier=app.state.notifier)
     app.state.connections = _connections_backend(settings, hub_client)
     app.state.principals = Principals(db)
     app.state.store = TripleStore(db)
@@ -77,20 +79,23 @@ def create_app(db: Database, source_db: Database | None = None, settings: Settin
     app.state.profiles = ProfileService(app.state.registry, app.state.metadata, app.state.sources.for_version, db)
     app.state.tabledq = TableQuality(app.state.registry, app.state.metadata, app.state.sources.for_version, db)
     app.state.glossary = GlossaryService(app.state.registry, db)
+    for svc in (app.state.metadata, app.state.profiles, app.state.tabledq, app.state.glossary):
+        svc.notifier = app.state.notifier
     app.state.pipeline = BuildPipeline(app.state.registry, app.state.store, app.state.sources.for_version, publish=publish,
-                                       metadata=app.state.metadata)
+                                       metadata=app.state.metadata, notifier=app.state.notifier)
     app.state.scheduler = BuildScheduler(app.state.pipeline, app.state.registry, workers=settings.build_workers)
     app.state.reasoner = Reasoner(app.state.registry, app.state.store)
     app.state.analytics = GraphAnalytics(app.state.registry, app.state.store)
     app.state.attachments = AttachmentService(app.state.registry, app.state.sources.for_version, app.state.store)
     app.state.cohorts = CohortEngine(app.state.registry, app.state.store)
-    app.state.jobs = JobRunner(workers=settings.build_workers)
+    app.state.jobs = JobRunner(workers=settings.build_workers, notifier=app.state.notifier, registry=app.state.registry)
     app.state.llm = llm if llm is not None else _llm_provider(settings)   # the CLI's serve path passes none: build it from settings
     mcp_app = _mcp_mount(app)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.registry.fail_stale_builds()   # no worker survives a restart
+        app.state.notifier.fail_running("the API restarted while this was running", "job")
         async with mcp_app.router.lifespan_context(mcp_app):   # mounted apps don't get their lifespan run for them
             yield
         app.state.scheduler.shutdown(wait=False)
@@ -125,6 +130,7 @@ def _guarded(app: FastAPI, inner):
                 principal = principal_from_headers(app.state.settings, app.state.principals, Headers(scope=scope))
                 ACTOR.set(principal.name)   # tools that act do so as the caller
                 ROLE.set(principal.role.value)
+                VIA.set("mcp")
             except AuthError as exc:
                 body = json.dumps({"detail": str(exc)}).encode()
                 await send({"type": "http.response.start", "status": 401,

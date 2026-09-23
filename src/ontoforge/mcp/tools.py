@@ -214,6 +214,14 @@ class GraphTools:
             return {"error": self._unknown(domain)}
         return _plain(self._need("scheduler").submit(v.id, actor=self._actor(), full=full))
 
+    def list_notifications(self, since: int | None = None, limit: int = 30) -> dict:
+        """What happened lately across the domains the caller may see, newest first; running builds and jobs carry their progress."""
+        return _plain(self._need("notifier").feed(self._actor(), ROLE.get(), since=since, limit=limit))
+
+    def mark_notifications_read(self, until: int | None = None, ids: list[int] | None = None) -> dict:
+        self._need("notifier").mark_read(self._actor(), ids=ids, until=until)
+        return {"unread": self._need("notifier").feed(self._actor(), ROLE.get(), limit=1)["unread"]}
+
     def preview_sql(self, domain: str | None, sql: str, limit: int = 20) -> dict:
         if msg := self._disabled("preview_sql", domain):
             return {"error": msg}

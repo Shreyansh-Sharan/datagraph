@@ -15,6 +15,7 @@ from psycopg.types.json import Jsonb
 from ontoforge.db import Database
 from ontoforge.llm.provider import LLMProvider, LLMUnavailable
 from ontoforge.mcp.tools import ACTOR, ROLE
+from ontoforge.notifications import VIA
 from ontoforge.registry.models import NotFound
 
 SYSTEM = """\
@@ -99,7 +100,7 @@ class Assistant:
         tools = [{"name": t.name, "description": t.description or "", "input_schema": t.input_schema} for t in await self.server.list_tools()]
         system = SYSTEM + _context_lines(context)
         trace: list[dict] = []
-        token, rtoken = ACTOR.set(actor), ROLE.set(role)
+        token, rtoken, vtoken = ACTOR.set(actor), ROLE.set(role), VIA.set("assistant")
         try:
             for _ in range(self.max_steps):
                 reply = await asyncio.to_thread(self.llm.chat, system, msgs, tools)
@@ -130,6 +131,7 @@ class Assistant:
         finally:
             ACTOR.reset(token)
             ROLE.reset(rtoken)
+            VIA.reset(vtoken)
 
     async def _call(self, name: str, arguments: dict) -> str:
         """One MCP tool call, its result as text; an error becomes text too so the model can recover."""

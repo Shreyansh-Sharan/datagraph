@@ -10,6 +10,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from ontoforge.db import Database
+from ontoforge.notifications import NullNotifier, where
 from ontoforge.registry import Registry
 from ontoforge.registry.models import NotFound
 
@@ -46,6 +47,8 @@ class Term:
 
 
 class GlossaryService:
+    notifier = NullNotifier()
+
     def __init__(self, registry: Registry, db: Database) -> None:
         self.registry, self.db = registry, db
 
@@ -81,7 +84,14 @@ class GlossaryService:
                     (domain_id, f["kind"], f["name"], definition or "", f["status"], f["schema"], f["table"], Jsonb(f["columns"]), class_name, formula, unit, frequency, owner, actor, actor)).fetchone()
         except psycopg.errors.UniqueViolation:
             raise ValueError(f"A {kind} named {name!r} already exists in this glossary") from None
-        return _term(row)
+        term = _term(row)
+        try:
+            dname = self.registry.get_domain_by_id(domain_id).name
+        except Exception:  # noqa: BLE001
+            dname = None
+        self.notifier.emit(None, "glossary.added", title=f"{'Metric' if term.kind == 'metric' else 'Term'} {term.name!r} added to the glossary of {dname or '?'}", actor=actor, domain=dname, table=term.table_name,
+                           link={"screen": "table", "tab": "glossary", **({"schema": term.table_name.rsplit(".", 1)[0], "table": term.table_name.split(".")[-1]} if term.table_name and "." in term.table_name else {})}, status="done")
+        return term
 
     def update(self, term_id: UUID, *, actor: str, **changes) -> Term:
         t = self.get(term_id)

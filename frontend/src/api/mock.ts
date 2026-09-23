@@ -2,7 +2,7 @@
 // UI behaves like the real thing (lifecycle transitions, builds with live steps, comments).
 import * as D from "./mockData";
 import { compileClassSql, tableName } from "./types";
-import type { AiProgress, AssistantContext, ChatEvent, ChatMessage, ChatResult, ColumnKind, ColumnProfile, ColumnRole, Conversation, DqResult, DqRule, DqRun, DqStatus, FailingRows, GlossaryEntry, RuleInput, TableProfile, TermInput, DomainSource, DriftIssue, GraphSample, SearchOptions, RefreshChange, SnapshotTable, SourceFactsEntry, SourceInput,
+import type { Notification, NotificationFeed, AiProgress, AssistantContext, ChatEvent, ChatMessage, ChatResult, ColumnKind, ColumnProfile, ColumnRole, Conversation, DqResult, DqRule, DqRun, DqStatus, FailingRows, GlossaryEntry, RuleInput, TableProfile, TermInput, DomainSource, DriftIssue, GraphSample, SearchOptions, RefreshChange, SnapshotTable, SourceFactsEntry, SourceInput,
   Analytics, ApiKey, AuditEntry, BuildRun, BuildStep, CatalogTable, ChecklistItem, ClassMapping, Comment, Config, ConnResult, Constraint,
   DatagraphApi, DomainSummary, EntityDetail, GraphStatus, Lock, MappingKpis, Me, NewDomainInput, OntoCheck,
   OntoClass, Principal, Role, Rule, SearchHit, SourceKind, TableDetail, TablePreview, Task, TriplePage, TripleQuery,
@@ -620,4 +620,13 @@ export class MockApi implements DatagraphApi {
   async principals(): Promise<Principal[]> { return clone(D.PRINCIPALS); }
   async apiKeys(): Promise<ApiKey[]> { return clone(D.API_KEYS); }
   async locks(): Promise<Lock[]> { return clone(D.LOCKS); }
+  private notes: Notification[] = clone(D.NOTIFICATIONS);
+  async notifications(since?: number): Promise<NotificationFeed> {
+    const items = this.notes.filter(n => since == null || n.id > since || n.status === "running");
+    return { items: clone(items), unread: this.notes.filter(n => !n.read).length, latest_id: this.notes.length ? Math.max(...this.notes.map(n => n.id)) : null };
+  }
+  async markRead(input: { ids?: number[]; until?: number }): Promise<{ unread: number }> {
+    for (const n of this.notes) if ((input.ids && input.ids.includes(n.id)) || (input.until != null && n.id <= input.until)) n.read = true;
+    return { unread: this.notes.filter(n => !n.read).length };
+  }
 }

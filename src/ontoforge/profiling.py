@@ -18,6 +18,7 @@ from psycopg.types.json import Jsonb
 from ontoforge.build.source import SourceEngine
 from ontoforge.db import Database
 from ontoforge.metadata import MetadataService
+from ontoforge.notifications import NullNotifier, where
 from ontoforge.registry import Registry
 
 _NUMERIC = ("int", "decimal", "numeric", "double", "float", "real", "number", "long", "short", "byte", "serial", "money")
@@ -97,6 +98,8 @@ class TableProfile:
 
 
 class ProfileService:
+    notifier = NullNotifier()
+
     def __init__(self, registry: Registry, metadata: MetadataService, source: "SourceEngine | Callable[[UUID], SourceEngine]",
                  db: Database, sample_rows: int = 2_000_000) -> None:
         self.registry, self.metadata, self._source, self.db, self.sample_rows = registry, metadata, source, db, sample_rows
@@ -275,6 +278,9 @@ class ProfileService:
                 "last_modified = EXCLUDED.last_modified, duplicate_keys = EXCLUDED.duplicate_keys, columns = EXCLUDED.columns, "
                 "duplicate_rows = EXCLUDED.duplicate_rows, missing_cells = EXCLUDED.missing_cells, row_key = EXCLUDED.row_key",
                 (version_id, table, prof.profiled_at, actor, pct, row_count, size, modified, dups, Jsonb([asdict(c) for c in columns]), duprows, missing, Jsonb(row_key)))
+        dname, vno = where(self.registry, version_id)
+        self.notifier.emit(None, "profile.run", title=f"Profiled {table.split('.')[-1]}: {prof.row_count:,} rows" if prof.row_count is not None else f"Profiled {table.split('.')[-1]}",
+                           actor=actor, domain=dname, version=vno, table=table, link={"screen": "table", "tab": "profile", "schema": table.rsplit(".", 1)[0] if "." in table else "", "table": table.split(".")[-1]}, status="done")
         return prof
 
 

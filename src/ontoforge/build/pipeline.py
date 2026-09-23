@@ -54,8 +54,9 @@ class BuildCancelled(Exception):
 class BuildPipeline:
     def __init__(self, registry: Registry, store: TripleStore, source: "SourceEngine | Callable[[UUID], SourceEngine]",
                  *, progress_rows: int = 5000,
-                 publish: PublishConfig | None = None, metadata=None) -> None:
+                 publish: PublishConfig | None = None, metadata=None, notifier=None) -> None:
         self.registry, self.store = registry, store
+        self.notifier = notifier   # the build's notification row follows the steps
         self._source = source     # one engine, or a resolver giving the version's domain's engine
         self.publish = publish if publish and publish.enabled else None
         self.metadata = metadata  # MetadataService, optional: adds a non-blocking drift step
@@ -72,8 +73,15 @@ class BuildPipeline:
         ctx = {"run_id": str(run.id), "version_id": str(version_id)}
         log.info("build started", extra={"event": "build.started", **ctx})
 
+        NAMES = ["compile", "prepare", "plan", "drift", "publish", "load", "finalize"]
+
         def persist():   # what GET /builds/{id} returns while the run is still going
             self.registry.update_build_steps(run.id, steps)
+            if self.notifier and steps:
+                last = steps[-1]
+                rows = (last.get("detail") or {}).get("rows") if isinstance(last.get("detail"), dict) else None
+                where = f"step {NAMES.index(last['name']) + 1 if last['name'] in NAMES else len(steps)} of {len(NAMES)}: {last['name']}"
+                self.notifier.progress(("build", str(run.id)), f"{where} · {rows:,} rows" if rows else where)
 
         def on_step_done():
             persist()
@@ -111,6 +119,11 @@ class BuildPipeline:
                     watched = None if plan.mode == "full" else plan.changed     # a table that did not move cannot have drifted
                     issues = [asdict(i) for i in (self.metadata.drift(version_id, watched) if watched != [] else [])]
                     steps[-1]["detail"] = {"issues": issues, "tables": len(plan.changed)}
+                    if issues and self.notifier:
+                        from ontoforge.notifications import where
+                        dname, vno = where(self.registry, version_id)
+                        self.notifier.emit(None, "drift.found", title=f"Schema drift in {dname or '?'} v{vno}: {len(issues)} issue{'s' if len(issues) != 1 else ''}", actor=actor,
+                                           domain=dname, version=vno, body=", ".join(f"{i.get('table', '?')}.{i.get('column') or ''}".rstrip(".") for i in issues[:3]), link={"screen": "metadata"}, status="failed")
                     if issues:
                         log.warning("schema drift: %d issue(s)", len(issues), extra={"event": "build.drift", "issues": issues, **ctx})
             if self.publish:

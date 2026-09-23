@@ -1,5 +1,5 @@
 // Design data for the mock adapter (rgm / hr / finops as drawn in the Datagraph UI design).
-import type { Analytics, ApiKey, Constraint, DomainSummary, EntityDetail, GlossaryTerm, Lock, OntoClass, OntoCheck, Principal, Rule, Task } from "./types";
+import type { Analytics, ApiKey, Constraint, DomainSummary, EntityDetail, GlossaryTerm, Lock, Notification, OntoClass, OntoCheck, Principal, Rule, Task } from "./types";
 import type { ClassMapping, TablePreview } from "./types";
 
 const BASE = "http://polestar.ai/rgm";
@@ -143,6 +143,13 @@ export const TASKS: Task[] = [
   { title: "Review rgm v2", sub: "Submitted by marc · 2 of 3 approvals", when: "5 d", icon: "tasks", go: { screen: "versions", domain: "rgm", version: 2 } },
   { title: "Your lease on rgm v3 expires soon", sub: "42 minutes left · release or renew", when: "now", icon: "settings", go: { screen: "overview", domain: "rgm", version: 3 } },
   { title: "Build #9e02 failed on hr v4", sub: "compile: relation viaChannel on Sale has no target key", when: "3 d", icon: "build", go: { screen: "build", domain: "hr" } },
+];
+const ago = (seconds: number) => new Date(Date.now() - seconds * 1000).toISOString();
+export const NOTIFICATIONS: Notification[] = [
+  { id: 12, kind: "build.run", actor: "alice", via: null, domain: "rgm", version: 3, table: null, title: "Building rgm v3", body: null, link: { domain: "rgm", screen: "build", version: 3 }, status: "running", progress: "step 3 of 7: load · 120,000 rows", read: false, created_at: ago(95), updated_at: ago(4) },
+  { id: 11, kind: "profile.run", actor: "alice", via: null, domain: "rgm", version: 3, table: "silver.sales_fact", title: "Profile of sales_fact ready", body: "18 columns · 1,204,455 rows", link: { domain: "rgm", screen: "table", version: 3, schema: "silver", table: "sales_fact", tab: "profile" }, status: "done", progress: null, read: false, created_at: ago(600), updated_at: ago(540) },
+  { id: 10, kind: "status.in_review", actor: "marc", via: null, domain: "rgm", version: 2, table: null, title: "rgm v2 sent for review", body: null, link: { domain: "rgm", screen: "versions", version: 2 }, status: "info", progress: null, read: true, created_at: ago(5 * 86400), updated_at: ago(5 * 86400) },
+  { id: 9, kind: "dq.run", actor: "priya", via: "mcp", domain: "rgm", version: 3, table: "silver.customer", title: "Rules of customer run: 4 of 5 passing", body: "email_format failed at 91%", link: { domain: "rgm", screen: "table", version: 3, schema: "silver", table: "customer", tab: "dq" }, status: "done", progress: null, read: true, created_at: ago(2 * 86400), updated_at: ago(2 * 86400) },
 ];
 export const PRINCIPALS: Principal[] = [{ name: "alice", role: "admin", seen: "now" }, { name: "priya", role: "reviewer", seen: "1 h ago" }, { name: "marc", role: "builder", seen: "yesterday" }, { name: "svc-databricks-app", role: "viewer", seen: "2 min ago" }];
 export const API_KEYS: ApiKey[] = [{ name: "Insight Portal agent", prefix: "of_3k9…", role: "viewer" }, { name: "CI builder", prefix: "of_q1x…", role: "builder" }];

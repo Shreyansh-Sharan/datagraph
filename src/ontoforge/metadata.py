@@ -20,6 +20,7 @@ from ontoforge.catalog import CatalogAdapter
 from ontoforge.db import Database
 from ontoforge.mapping import MappingSpec
 from ontoforge.ontology import Ontology
+from ontoforge.notifications import NullNotifier, where
 from ontoforge.registry import Registry
 
 
@@ -65,6 +66,8 @@ class DriftIssue:
 
 
 class MetadataService:
+    notifier = NullNotifier()
+
     def __init__(self, registry: Registry, catalog: "CatalogAdapter | Callable[[UUID], CatalogAdapter]", db: Database) -> None:
         self.registry, self.db = registry, db
         self._catalog = catalog   # one catalog, or a resolver giving the version's domain's catalog
@@ -80,6 +83,9 @@ class MetadataService:
         out = [self._capture(version_id, t) for t in qualified]
         for snap in out:
             self._save(version_id, snap)
+        dname, vno = where(self.registry, version_id)
+        self.notifier.emit(None, "metadata.imported", title=f"{len(out)} table{'s' if len(out) != 1 else ''} snapshotted in {dname or '?'} v{vno}", actor=actor, domain=dname, version=vno,
+                           body=", ".join(s.table.split(".")[-1] for s in out[:5]) + (" …" if len(out) > 5 else ""), link={"screen": "metadata"}, status="done")
         return out
 
     def list(self, version_id: UUID) -> list[TableSnapshot]:
@@ -119,6 +125,10 @@ class MetadataService:
             self._save(version_id, TableSnapshot(new.table, new.comment or old.comment, merged, new.primary_key, new.foreign_keys))
             if change.changed:
                 changes.append(change)
+        if changes:
+            dname, vno = where(self.registry, version_id)
+            self.notifier.emit(None, "metadata.refreshed", title=f"Snapshot of {dname or '?'} v{vno} refreshed: {len(changes)} table{'s' if len(changes) != 1 else ''} changed", actor=actor,
+                               domain=dname, version=vno, body=", ".join(c.table.split(".")[-1] for c in changes[:5]), link={"screen": "metadata"}, status="done")
         return changes
 
     def set_comment(self, version_id: UUID, table: str, column: str | None, comment: str | None, *, actor: str) -> TableSnapshot:

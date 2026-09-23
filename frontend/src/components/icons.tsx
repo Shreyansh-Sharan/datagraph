@@ -26,6 +26,7 @@ export const ICON: Record<string, string> = {
   design: "M2.5 13.5l.8-3.2L10.6 3l2.4 2.4-7.3 7.3zM9.4 4.2l2.4 2.4M2.5 13.5h4",
   graph: "M11.5 2.5a1.8 1.8 0 1 0 0 3.6a1.8 1.8 0 1 0 0-3.6M4.5 6.2a1.8 1.8 0 1 0 0 3.6a1.8 1.8 0 1 0 0-3.6M11.5 9.9a1.8 1.8 0 1 0 0 3.6a1.8 1.8 0 1 0 0-3.6M6.1 7.2l3.8-2M6.1 8.8l3.8 2",
   back: "M13 8H3M7 4L3 8l4 4",
+  bell: "M8 1.5a4 4 0 0 0-4 4v2.7L2.5 10.8v.7h11v-.7L12 8.2V5.5a4 4 0 0 0-4-4zM6.4 13.5a1.6 1.6 0 0 0 3.2 0",
 };
 
 export function Icon({ name, size = 16, stroke = "currentColor", width = 1.6, style }: { name: string; size?: number; stroke?: string; width?: number; style?: React.CSSProperties }) {
