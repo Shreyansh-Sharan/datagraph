@@ -67,3 +67,22 @@ def test_databricks_settings_incomplete_is_an_error(db):
     app = create_app(db=db, settings=Settings(source_kind="databricks"))
     with pytest.raises(ValueError, match="DATABRICKS"):
         app.state.sources.env
+
+
+def test_the_source_facts_name_the_model_that_actually_answers(db):
+    """A domain can point at an AI connection the deployment does not use. Say which one runs."""
+    from fastapi.testclient import TestClient
+
+    from ontoforge.api import create_app
+    from ontoforge.config import Settings
+    from ontoforge.registry import Registry
+
+    reg = Registry(db)
+    reg.create_domain("ai", base_iri="http://d/ai/")
+    settings = Settings(llm_provider="anthropic", llm_model="claude-opus-5", auth_default_role="admin")
+    with TestClient(create_app(db=db, settings=settings)) as c:
+        ai = c.get("/domains/ai/source", headers={"X-Actor": "a"}).json()["ai"]
+        assert ai["in_use"] is True and ai["kind"] == "anthropic" and ai["deployment"] == "claude-opus-5"
+
+    with TestClient(create_app(db=db, settings=Settings(llm_provider="none", auth_default_role="admin"))) as c:
+        assert c.get("/domains/ai/source", headers={"X-Actor": "a"}).json()["ai"] is None

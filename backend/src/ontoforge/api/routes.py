@@ -372,13 +372,20 @@ def _source_facts(st, d: Domain) -> dict:
     facts["sources"] = sources
     facts.update({"auth_mode": settings.auth_mode, "auth_header": settings.auth_header, "materialization": d.materialization, "target_schema": d.target_schema,
                   "connections_backend": st.connections.source})
+    # Which model actually answers. The assistant runs on the deployment's provider, so a domain
+    # pointing at its own AI connection is a preference that is recorded, not one that is used
+    # yet: `in_use` says which of the two the Configure screen is looking at.
     a = lookup(d.ai_connection_id)
+    running = ({"connection": None, "kind": settings.llm_provider, "in_use": True,
+                "deployment": settings.azure_openai_deployment if settings.llm_provider == "azure_openai" else settings.llm_model}
+               if settings.llm_provider != "none" else None)
     if a:
-        facts["ai"] = {"connection": a["name"], "kind": a["kind"], "deployment": a["config"].get("deployment")}
+        facts["ai"] = {"connection": a["name"], "kind": a["kind"], "deployment": a["config"].get("deployment"),
+                       "in_use": False, "running": running}
     elif d.ai_connection_id:
         facts["ai"] = None
     else:
-        facts["ai"] = {"connection": None, "kind": settings.llm_provider, "deployment": settings.azure_openai_deployment if settings.llm_provider == "azure_openai" else settings.llm_model} if settings.llm_provider != "none" else None
+        facts["ai"] = running
     return facts
 
 

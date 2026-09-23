@@ -44,7 +44,7 @@ export function Settings({ embedded = false, only = "all", right }: { embedded?:
   const f = facts.data;
   const describe = (x: { connection: string | null; catalog: string | null; schemas: string[] }) => `${x.connection ?? "deployment default"} · ${x.catalog ?? "—"} · ${x.schemas.length ? x.schemas.join(", ") : "—"}`;
   const factSources = f ? (f.sources?.length ? f.sources : [{ connection: f.connection, catalog: f.catalog, schemas: f.schemas ?? (f.schema ? [f.schema] : []) }]) : [];
-  const sourceRows: [string, string][] = f ? [["Kind", f.kind], ...factSources.map((x, i) => [i === 0 ? "Primary source" : `Source ${i + 1}`, describe(x)] as [string, string]), ...(f.host ? [["Host", f.host] as [string, string]] : []), ["Auth mode", `${f.auth_mode} · ${f.auth_header}`], ["Materialization", f.materialization + (f.target_schema ? ` → ${f.target_schema}` : "")], ["AI", f.ai ? `${f.ai.connection ?? f.ai.kind} · ${f.ai.deployment ?? "—"}` : "none"]] : [];
+  const sourceRows: [string, string][] = f ? [["Kind", f.kind], ...factSources.map((x, i) => [i === 0 ? "Primary source" : `Source ${i + 1}`, describe(x)] as [string, string]), ...(f.host ? [["Host", f.host] as [string, string]] : []), ["Auth mode", `${f.auth_mode} · ${f.auth_header}`], ["Materialization", f.materialization + (f.target_schema ? ` → ${f.target_schema}` : "")], ["AI", f.ai ? `${f.ai.connection ?? f.ai.kind} · ${f.ai.deployment ?? "—"}` + (f.ai.in_use === false ? ` (the assistant runs on ${f.ai.running ? `${f.ai.running.kind} · ${f.ai.running.deployment ?? "—"}` : "no provider"})` : "") : "none"]] : [];
   const editSource = (i: number, patch: Partial<DomainSource>) => setSources(sources.map((x, j) => (j === i ? { ...x, ...patch } : x)));
 
   const test = async () => {
