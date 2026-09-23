@@ -14,12 +14,11 @@ pnpm run dev           # http://localhost:5173/ui/
 pnpm run typecheck && pnpm exec vitest run
 ```
 
-> **The lockfile is not committed yet.** `@polestar/connections` comes from a private Azure
-> Artifacts feed whose token has expired, so nothing can resolve it today, with npm or pnpm alike.
-> Renew it (the Azure Artifacts Credential Provider writes it to `~/.npmrc`), then run
-> `pnpm import && rm package-lock.json && pnpm install` once. `pnpm import` reads the npm lockfile
-> kept beside this file, so the pinned versions carry over exactly. Until then the image and the
-> pipeline, which both run `pnpm install --frozen-lockfile`, cannot build the UI.
+> **Installing needs a feed token.** `@polestar/connections` comes from a private Azure Artifacts
+> feed, and the token currently on this machine has expired, so `pnpm install` fails on that one
+> package. Renew it with the Azure Artifacts Credential Provider, which writes it to `~/.npmrc`;
+> in the pipeline `npmAuthenticate@0` writes it to `.npmrc` here. `pnpm-lock.yaml` is committed
+> and pins every version, so once the token works the install is exact and offline-repeatable.
 
 Environment (`.env.local`, see `.env.example`):
 
