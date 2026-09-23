@@ -175,6 +175,26 @@ class AnalyticsRun:
 
 
 @dataclass(frozen=True)
+class VersionBrief:
+    """A version without its content. The home screen counts versions and names the served one; it
+    has no use for every ontology and mapping, and reading them costs megabytes over the wire."""
+    id: UUID
+    version: int
+    status: "Status"
+
+
+@dataclass(frozen=True)
+class DomainCard:
+    """A domain as the home screen needs it: read for every domain in one go, not one at a time."""
+    domain: "Domain"
+    versions: list[VersionBrief]
+    latest: VersionBrief | None
+    active: VersionBrief | None
+    served: VersionBrief | None
+    build: "BuildRun | None"
+
+
+@dataclass(frozen=True)
 class AuditEntry:
     id: int
     domain_version_id: UUID | None

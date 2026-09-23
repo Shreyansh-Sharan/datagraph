@@ -141,3 +141,37 @@ def test_missing_ids_raise_not_found(reg):
     import uuid
     with pytest.raises(NotFound):
         reg.get_version(uuid.uuid4())
+
+
+def test_the_home_screen_reads_every_domain_in_a_handful_of_queries(db):
+    """One query per domain is invisible next door and unusable across a region."""
+    from ontoforge.registry import Registry, Status
+
+    reg = Registry(db)
+    for name in ("a", "b", "c", "d"):
+        d = reg.create_domain(name, base_iri=f"http://d/{name}/")
+        v1 = reg.create_version(d.id, actor="x")
+        reg.transition(v1.id, Status.IN_REVIEW, actor="x")
+        reg.add_review(v1.id, reviewer="y", approved=True)
+        reg.transition(v1.id, Status.PUBLISHED, actor="x")
+        reg.finish_build(reg.start_build(v1.id, actor="x").id, status="succeeded", triple_count=7)
+        reg.create_version(d.id, actor="x")
+
+    counted = []
+    original = reg._cur
+
+    def counting(*a, **k):
+        counted.append(1)
+        return original(*a, **k)
+
+    reg._cur = counting
+    try:
+        cards = reg.cards()
+    finally:
+        reg._cur = original
+
+    assert len(counted) == 1, f"{len(counted)} transactions for 4 domains"
+    assert [c.domain.name for c in cards] == ["a", "b", "c", "d"]
+    one = next(c for c in cards if c.domain.name == "a")
+    assert len(one.versions) == 2 and one.served.version == 1 and one.latest.version == 2
+    assert one.build.triple_count == 7 and one.build.status == "succeeded"

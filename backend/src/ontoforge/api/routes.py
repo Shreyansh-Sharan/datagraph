@@ -449,12 +449,8 @@ def domain_cards(request: Request):
     """One row per domain for the Home screen: versions, served graph size, last build, source, MCP."""
     st = _st(request)
     out = []
-    for d in st.registry.list_domains():
-        versions = st.registry.list_versions(d.id)
-        latest = max(versions, key=lambda v: v.version) if versions else None
-        active = next((v for v in versions if v.id == d.active_version_id), None)
-        served = st.registry.served_version(d.id) if versions else None
-        build = st.registry.latest_build(served.id) if served else None
+    for card in st.registry.cards():          # every domain in a few queries, not a few each
+        d, versions, latest, active, served, build = card.domain, card.versions, card.latest, card.active, card.served, card.build
         src = _source_facts(st, d)
         out.append({"name": d.name, "description": d.description, "base_iri": d.base_iri, "review_quorum": d.review_quorum,
                     "version_count": len(versions), "active_version": {"version": active.version} if active else None,

@@ -12,7 +12,7 @@ from ontoforge.constants import MCP_REGISTRY_TOOLS, MCP_TOOLS, MCP_DOMAIN_TOOLS
 from ontoforge.db import Database
 
 from .models import (
-    DOMAIN_SETTINGS, MATERIALIZATIONS, TRANSITIONS, AnalyticsRun, AuditEntry, Comment, Lock, Task, BuildRun, Domain, DomainVersion, LifecycleError, LockedError, NotFound, Review, Status,
+    DOMAIN_SETTINGS, MATERIALIZATIONS, TRANSITIONS, AnalyticsRun, AuditEntry, Comment, DomainCard, VersionBrief, Lock, Task, BuildRun, Domain, DomainVersion, LifecycleError, LockedError, NotFound, Review, Status,
 )
 
 
@@ -123,6 +123,46 @@ class Registry:
             if v.status is Status.PUBLISHED:
                 return v
         return self.latest_version(domain_id, status=Status.PUBLISHED) or self.latest_version(domain_id)
+
+    def cards(self) -> list["DomainCard"]:
+        """Every domain with its versions, the one served and that one's last build.
+
+        Three queries, not three per domain: the same reads one at a time are invisible against a
+        database in the next rack and take tens of seconds against a managed one across a region.
+        """
+        # One transaction, three statements. Every round trip is half a second to a database in
+        # another region, so the count of them is what the home screen's speed is made of.
+        with self._cur() as cur:
+            domains = [Domain(**r) for r in cur.execute("SELECT * FROM domains ORDER BY name")]
+            if not domains:
+                return []
+            ids = [d.id for d in domains]
+            by_domain: dict[UUID, list[VersionBrief]] = {i: [] for i in ids}
+            for r in cur.execute("SELECT id, domain_id, version, status FROM domain_versions "
+                                 "WHERE domain_id = ANY(%s) ORDER BY version DESC", (ids,)):
+                by_domain[r["domain_id"]].append(VersionBrief(r["id"], r["version"], Status(r["status"])))
+            served: dict[UUID, VersionBrief] = {}
+            for d in domains:
+                versions = by_domain[d.id]
+                pinned = next((v for v in versions if v.id == d.active_version_id and v.status is Status.PUBLISHED), None)
+                chosen = pinned or next((v for v in versions if v.status is Status.PUBLISHED), None) or (versions[0] if versions else None)
+                if chosen:
+                    served[d.id] = chosen
+            builds: dict[UUID, BuildRun] = {}
+            if served:
+                for r in cur.execute(
+                        "SELECT DISTINCT ON (domain_version_id) * FROM build_runs WHERE domain_version_id = ANY(%s) "
+                        "ORDER BY domain_version_id, started_at DESC", ([v.id for v in served.values()],)):
+                    builds[r["domain_version_id"]] = BuildRun(**r)
+        out = []
+        for d in domains:
+            versions = by_domain[d.id]
+            here = served.get(d.id)
+            out.append(DomainCard(domain=d, versions=versions,
+                                  latest=max(versions, key=lambda v: v.version) if versions else None,
+                                  active=next((v for v in versions if v.id == d.active_version_id), None),
+                                  served=here, build=builds.get(here.id) if here else None))
+        return out
 
     def delete_domain(self, domain_id: UUID) -> None:
         with self._cur() as cur:
