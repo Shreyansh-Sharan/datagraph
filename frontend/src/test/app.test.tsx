@@ -652,3 +652,17 @@ describe("Ontology screen · the table behind a class", () => {
     expect(within(asset).getByRole("link", { name: "Map it" })).toBeInTheDocument();
   });
 });
+
+
+describe("Mapping screen · what is left to map", () => {
+  it("lists the unmapped and partly mapped classes first and opens the table picker from the list", async () => {
+    renderAt("#/d/rgm/mapping?v=3", new MockApi({ latency: 5 }));
+    const user = userEvent.setup();
+    const todo = await screen.findByRole("region", { name: "To map" });
+    expect(await within(todo).findByRole("button", { name: "Map Channel" })).toBeInTheDocument();      // unmapped: map it to a table
+    expect(within(todo).getAllByText(/partly mapped/i).length).toBeGreaterThan(0);                    // partial classes are listed too
+    await user.click(within(todo).getByRole("button", { name: "Map Channel" }));
+    expect(await screen.findByRole("dialog", { name: "Map Channel to a table" })).toBeInTheDocument();
+    expect(window.location.hash).toMatch(/cls=Channel/);
+  });
+});

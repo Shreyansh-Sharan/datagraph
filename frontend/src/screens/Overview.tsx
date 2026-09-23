@@ -38,7 +38,7 @@ export function Overview({ defaultTab = "all" }: { defaultTab?: SettingsCard } =
   const issues = drift.data ?? [];
   const readiness = [
     { label: "Ontology", value: `${version?.stats.classes ?? 0} classes`, sub: checks.data ? `${errors} check error${errors === 1 ? "" : "s"}` : "checking…", ok: errors === 0, screen: "ontology" },
-    { label: "Mapping", value: version?.mappingPct != null ? `${version.mappingPct}%` : "—", sub: version?.mappingPct === 100 ? "all classes mapped" : "classes still unmapped", ok: version?.mappingPct === 100, screen: "mapping" },
+    { label: "Mapping", value: version?.mappingPct != null ? `${version.mappingPct}%` : "—", sub: version?.mappingPct === 100 ? "everything mapped" : "attributes or relationships still open", ok: version?.mappingPct === 100, screen: "mapping" },
     { label: "Build", value: lastBuild ? lastBuild.status[0].toUpperCase() + lastBuild.status.slice(1) : "never", sub: built ? `${lastBuild.triples} triples` : "—", ok: !!built, screen: "build" },
     { label: "Drift", value: drift.data ? (issues.length ? `${issues.length} issue${issues.length === 1 ? "" : "s"}` : "none") : "…", sub: issues[0] ? `${issues[0].table}${issues[0].column ? "." + issues[0].column : ""} ${issues[0].kind}` : "the source matches the mapping", ok: issues.length === 0, screen: "metadata" },
   ];

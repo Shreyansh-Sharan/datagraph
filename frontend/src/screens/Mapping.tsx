@@ -4,7 +4,7 @@ import { Icon } from "@/components/icons";
 import { Stage, glyphOf, type StageEdge, type StageNode } from "@/components/Stage";
 
 import { useApp, useLoad } from "@/state/app";
-import { useDomain, useParam } from "@/state/domain";
+import { useDomain, useParam, useSetParams } from "@/state/domain";
 import { STATE_COLOR, type DriftIssue, type SnapshotTable } from "@/api";
 
 type Panel = "status" | "data" | "sql";
@@ -15,6 +15,7 @@ export function Mapping() {
   const { domain, version, editable, sourceKind } = useDomain();
   const [clsId, setCls] = useParam("cls", "");
   const [panel, setPanel] = useParam("panel", "status");
+  const setParams = useSetParams();   // class and panel in one navigation: two setters in one handler would overwrite each other
   const dbx = sourceKind === "databricks";
   const v = version?.version ?? 0;
   const classes = useLoad(() => api.ontology(domain.name, v), [domain.name, v]);
@@ -117,9 +118,30 @@ export function Mapping() {
         {k && [["Completion", `${k.completion}%`, BLUE], ["Classes mapped", `${k.classesMapped[0]} / ${k.classesMapped[1]}`, "var(--ink)"], ["Attributes", `${k.attributes[0]} / ${k.attributes[1]}`, "var(--ink)"], ["Relationships", `${k.relationships[0]} / ${k.relationships[1]}`, "var(--ink)"], ["Excluded", String(k.excluded), "var(--muted)"]].map(([label, value, color]) => <Card key={label} className="kpi"><div className="label-caps" style={{ fontSize: 10.5 }}>{label}</div><div style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-.02em", color }}>{value}</div></Card>)}
       </div>
       <div className="bar" style={{ marginBottom: 20 }}><i style={{ width: `${k?.completion ?? 0}%` }} /></div>
+      {list.length > 0 && !mapping.loading && (() => {
+        const open = (c: typeof list[number]) => {   // what a partly mapped class still lacks, excluded properties aside
+          const mm = M[c.id]; const ex = new Set(mm?.excluded ?? []);
+          return { attrs: c.attrs.filter(a => !mm?.cols[a.name] && !ex.has(a.name)).length, rels: c.rels.filter(r => !mm?.rels?.[r.name] && !ex.has(r.name)).length };
+        };
+        const unmapped = list.filter(c => state(c.id) === "unmapped"), partial = list.filter(c => state(c.id) === "partial");
+        return (
+          <section className="todo" aria-label="To map">
+            <div className="row between" style={{ marginBottom: unmapped.length || partial.length ? 8 : 0 }}>
+              <h2 className="h2">To map</h2>
+              <span className="muted small">{unmapped.length + partial.length === 0 ? "Every class is mapped and complete." : `${unmapped.length} class${unmapped.length === 1 ? "" : "es"} without a table · ${partial.length} partly mapped`}</span>
+            </div>
+            {unmapped.length > 0 && <div className="todo-row"><span className="todo-k">No table</span>{unmapped.map(c => (
+              <button type="button" key={c.id} className="todo-item" aria-label={`Map ${c.id}`} onClick={() => { setParams({ cls: c.id, panel: "status" }); if (editable) setMapDialog(true); }}>
+                <Dot color={STATE_COLOR.unmapped} />{c.id}<span className="muted-2">{editable ? "map to a table →" : "unmapped"}</span></button>))}</div>}
+            {partial.length > 0 && <div className="todo-row"><span className="todo-k">Partly mapped</span>{partial.map(c => { const o = open(c); return (
+              <button type="button" key={c.id} className="todo-item" onClick={() => setParams({ cls: c.id, panel: "status" })}>
+                <Dot color={STATE_COLOR.partial} />{c.id}<span className="muted-2">{[o.attrs ? `${o.attrs} attribute${o.attrs === 1 ? "" : "s"}` : "", o.rels ? `${o.rels} relationship${o.rels === 1 ? "" : "s"}` : ""].filter(Boolean).join(", ") || "review"}</span></button>); })}</div>}
+          </section>
+        );
+      })()}
       {classes.error && <ErrorNotice error={classes.error} action={<span className="small">Draft the ontology first: the mapping binds its classes to tables.</span>} />}
       {classes.loading ? <Skeleton h={400} /> : list.length > 0 && (
-        <Stage nodes={nodes} edges={edges} height={520} dotted groups={groups} spotlight={!!clsId} onSelect={id => setCls(id)} onExpand={id => { setCls(id); setPanel("status"); }} />
+        <Stage nodes={nodes} edges={edges} height={520} dotted groups={groups} spotlight={!!clsId} onSelect={id => setCls(id)} onExpand={id => setParams({ cls: id, panel: "status" })} />
       )}
       {sel && (
         <Card flush style={{ marginTop: 16 }}>
