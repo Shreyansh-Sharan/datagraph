@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 from ontoforge.analytics import GraphAnalytics, interpret_run
 from ontoforge.api import create_app
 from ontoforge.config import Settings
-from ontoforge.llm import FakeProvider
+from tests.fakes import FakeProvider
 from ontoforge.quality import Constraint, ConstraintSet, QualityEngine
 from tests.hr_fixture import built_domain, BASE, EX
 

@@ -101,17 +101,17 @@ class BuildPipeline:
             with step("compile"):
                 version = self.registry.get_version(version_id)
                 r2rml = self._r2rml(version)
-                self.source = self.source_for(version_id)   # the domain's own connection, or the deployment's source
-                compiled = compile_mapping(r2rml, self.source.dialect, column_types=self._column_types(version_id))
+                source = self.source_for(version_id)   # the domain's own connection, or the deployment's source
+                compiled = compile_mapping(r2rml, source.dialect, column_types=self._column_types(version_id, source))
                 ttl = serialize_r2rml(r2rml)
                 self.registry.store_r2rml(version_id, ttl)
                 # The spec, canonically serialized: the Turtle carries fresh blank-node ids every time.
                 mapping_hash = hashlib.sha256((json.dumps(version.mapping, sort_keys=True) if version.mapping else (version.r2rml_ttl or "")).encode()).hexdigest()
                 steps[-1]["detail"] = {"selects": len(compiled.selects)}
             with step("prepare"):
-                self._prepare()
+                self._prepare(source)
             with step("plan"):
-                plan = self._plan(version_id, compiled, mapping_hash, full=full or bool(self.publish))
+                plan = self._plan(version_id, compiled, mapping_hash, source, full=full or bool(self.publish))
                 steps[-1]["detail"] = {"mode": plan.mode, "reason": plan.reason, "changed": plan.changed, "unchanged": len(plan.unchanged), "dropped": plan.dropped}
             if self.metadata is not None:
                 with step("drift"):
@@ -128,11 +128,11 @@ class BuildPipeline:
                         log.warning("schema drift: %d issue(s)", len(issues), extra={"event": "build.drift", "issues": issues, **ctx})
             if self.publish:
                 with step("publish"):
-                    published = self._publish(version, compiled.sql)
+                    published = self._publish(version, compiled.sql, source)
                     steps[-1]["detail"] = published
-                    load_sql = f"SELECT {', '.join(COLUMNS)} FROM {self._quote(published['table'] or published['view'])}"
+                    load_sql = f"SELECT {', '.join(COLUMNS)} FROM {self._quote(published['table'] or published['view'], source)}"
                 with step("load"):
-                    count = self._load(version_id, load_sql, on_rows)
+                    count = self._load(version_id, load_sql, on_rows, source)
                     steps[-1]["detail"] = {"triples": count}
             else:
                 with step("load"):
@@ -140,7 +140,7 @@ class BuildPipeline:
                         count = 0
                         steps[-1]["detail"] = {"triples": 0, "skipped": True}
                     else:
-                        count = self._load_tables(version_id, compiled, plan, on_rows)
+                        count = self._load_tables(version_id, compiled, plan, on_rows, source)
                         steps[-1]["detail"] = {"triples": count}
             with step("finalize"):
                 self.store.analyze()   # the planner must know the new rows, or graph queries on this version crawl
@@ -158,10 +158,10 @@ class BuildPipeline:
 
     # -- incremental planning and loading ----------------------------------------
 
-    def _column_types(self, version_id: UUID):
+    def _column_types(self, version_id: UUID, source: SourceEngine):
         """Column types for the compiler: from the version's snapshot when it holds the table (no
         warehouse round trip), from the catalog otherwise."""
-        live = self.source.catalog.resolver()
+        live = source.catalog.resolver()
         if self.metadata is None:
             return live
         snaps = {s.table.lower(): {c["name"].lower(): c.get("type") for c in s.columns} for s in self.metadata.list(version_id)}
@@ -172,7 +172,7 @@ class BuildPipeline:
             return live(lt, column)
         return resolve
 
-    def _plan(self, version_id: UUID, compiled, mapping_hash: str, *, full: bool) -> "BuildPlan":
+    def _plan(self, version_id: UUID, compiled, mapping_hash: str, source: SourceEngine, *, full: bool) -> "BuildPlan":
         """Which source tables must be read: all of them, or only those whose signature moved since the
         last successful load of this version with this mapping."""
         childs = list(dict.fromkeys(s.source_table for s in compiled.selects if s.source_table))
@@ -182,7 +182,7 @@ class BuildPipeline:
                 deps[sel.source_table].update(sel.tables)
         every = sorted({t for ts in deps.values() for t in ts})
         with ThreadPoolExecutor(max_workers=min(8, max(1, len(every)))) as pool:   # one statement per table: side by side, not in a row
-            signatures = dict(zip(every, pool.map(self.source.table_signature, every)))
+            signatures = dict(zip(every, pool.map(source.table_signature, every)))
         state = self.registry.build_state(version_id)
         selects = _select_hashes(compiled)
         remapped = [t for t in childs if state and state["selects"].get(t) != selects[t]] if state and state.get("selects") else []
@@ -210,10 +210,10 @@ class BuildPipeline:
         after.update({t: sig for t, sig in signatures.items() if sig is not None})
         return BuildPlan(mode, reason, changed, unchanged, after, dropped)
 
-    def _load_tables(self, version_id: UUID, compiled, plan: "BuildPlan", on_rows: Callable[[int], None] | None = None) -> int:
+    def _load_tables(self, version_id: UUID, compiled, plan: "BuildPlan", on_rows: Callable[[int], None] | None = None, source: SourceEngine | None = None) -> int:
         """Replace the triples of the changed source tables (every table on a full build) from a
         SELECT whose rows carry their source table as a seventh column."""
-        d = self.source.dialect
+        d = source.dialect
         wanted = set(plan.changed)
         parts = [f"SELECT {', '.join(COLUMNS)}, {d.string_literal(s.source_table) if s.source_table else d.null_text()} AS source_table FROM (\n{s.sql}\n) AS t{i}"
                  for i, s in enumerate(compiled.selects) if plan.mode == "full" or s.source_table in wanted]
@@ -221,37 +221,37 @@ class BuildPipeline:
         tables = None if plan.mode == "full" else plan.changed + plan.dropped
         if not parts:                                   # only tables to drop: nothing to read
             return self.store.replace_tables(version_id, tables, iter(()))
-        if isinstance(self.source, PostgresSource) and self.source.db is self.store.db:
+        if isinstance(source, PostgresSource) and source.db is self.store.db:
             return self.store.replace_from_sql(version_id, sql, tables=tables, with_source=True)
-        return self.store.replace_tables(version_id, tables, self._counted(self.source.stream(sql), on_rows))
+        return self.store.replace_tables(version_id, tables, self._counted(source.stream(sql), on_rows))
 
     # -- overridable stages ---------------------------------------------------
 
-    def _prepare(self) -> None:
-        self.source.prepare()
+    def _prepare(self, source: SourceEngine) -> None:
+        source.prepare()
 
-    def _publish(self, version, sql: str) -> dict:
+    def _publish(self, version, sql: str, source: SourceEngine) -> dict:
         """CREATE OR REPLACE VIEW <schema>.<domain>_v<n>_triples; optionally snapshot it into a TABLE."""
         cfg = self.publish
         domain = self.registry.get_domain_by_id(version.domain_id)
         base = f"{cfg.target_schema}.{safe_identifier(domain.name)}_v{version.version}_triples"
         view, table = base, (base + "_mat" if cfg.materialization == "table" else None)
-        self.source.ensure_schema(cfg.target_schema)
-        self.source.execute(f"CREATE OR REPLACE VIEW {self._quote(view)} AS\n{sql}")
+        source.ensure_schema(cfg.target_schema)
+        source.execute(f"CREATE OR REPLACE VIEW {self._quote(view, source)} AS\n{sql}")
         if table:
-            for stmt in self.source.dialect.create_table_as(self._quote(table), f"SELECT * FROM {self._quote(view)}"):
-                self.source.execute(stmt)
-            for stmt in self.source.dialect.post_materialize_sql(self._quote(table)):
-                self.source.execute(stmt)
+            for stmt in source.dialect.create_table_as(self._quote(table, source), f"SELECT * FROM {self._quote(view, source)}"):
+                source.execute(stmt)
+            for stmt in source.dialect.post_materialize_sql(self._quote(table, source)):
+                source.execute(stmt)
         return {"view": view, "table": table, "materialization": cfg.materialization}
 
-    def _quote(self, dotted: str) -> str:
-        return self.source.dialect.quote_table(dotted)
+    def _quote(self, dotted: str, source: SourceEngine) -> str:
+        return source.dialect.quote_table(dotted)
 
-    def _load(self, version_id: UUID, sql: str, on_rows: Callable[[int], None] | None = None) -> int:
-        if isinstance(self.source, PostgresSource) and self.source.db is self.store.db:
+    def _load(self, version_id: UUID, sql: str, on_rows: Callable[[int], None] | None = None, source: SourceEngine | None = None) -> int:
+        if isinstance(source, PostgresSource) and source.db is self.store.db:
             return self.store.replace_from_sql(version_id, sql)   # one server-side statement: no rows pass through here
-        return self.store.replace(version_id, self._counted(self.source.stream(sql), on_rows))
+        return self.store.replace(version_id, self._counted(source.stream(sql), on_rows))
 
     def _counted(self, rows: Iterable[tuple], on_rows: Callable[[int], None] | None) -> Iterator[tuple]:
         n = 0

@@ -30,7 +30,7 @@ def test_terms_and_metrics_crud_filters_and_search(db):
 
 def test_ai_suggests_terms_and_metrics_from_a_table_as_drafts(db):
     from ontoforge.build import PostgresSource
-    from ontoforge.llm import FakeProvider
+    from tests.fakes import FakeProvider
     from ontoforge.metadata import MetadataService
     from tests.hr_fixture import seed_tables
     seed_tables(db)

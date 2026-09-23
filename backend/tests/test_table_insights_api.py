@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from ontoforge.api import create_app
 from ontoforge.config import Settings
-from ontoforge.llm import FakeProvider
+from tests.fakes import FakeProvider
 from tests.hr_fixture import seed_tables, BASE
 
 ADMIN = Settings(auth_default_role="admin")

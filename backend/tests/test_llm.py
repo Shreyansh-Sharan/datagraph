@@ -8,8 +8,9 @@ from ontoforge.api import create_app
 from ontoforge.config import Settings
 from ontoforge.build import BuildPipeline, PostgresSource
 from ontoforge.catalog import PostgresCatalog
+from tests.fakes import FakeProvider
 from ontoforge.llm import (
-    AnthropicProvider, FakeProvider, LLMOutputError, MappingSuggester, OntologyAssistant, OntologyDrafter,
+    AnthropicProvider, LLMOutputError, MappingSuggester, OntologyAssistant, OntologyDrafter,
     describe_tables,
 )
 from ontoforge.registry import Registry

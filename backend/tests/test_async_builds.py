@@ -72,10 +72,10 @@ def test_cancel_stops_between_steps_and_keeps_old_triples(db):
     started, release = threading.Event(), threading.Event()
 
     class PausingPipeline(BuildPipeline):
-        def _prepare(self):
+        def _prepare(self, source):
             started.set()
             release.wait(5)
-            super()._prepare()
+            super()._prepare(source)
 
     sched = BuildScheduler(PausingPipeline(reg, store, PostgresSource(db)), reg)
     run = sched.submit(v.id, actor="a")

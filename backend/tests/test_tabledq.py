@@ -1,7 +1,7 @@
 """Data-quality rules on source tables: compiled to one pass per table, scored, kept as history."""
 from ontoforge.build import PostgresSource
 from ontoforge.dialects import DatabricksDialect
-from ontoforge.llm import FakeProvider
+from tests.fakes import FakeProvider
 from ontoforge.metadata import MetadataService
 from ontoforge.profiling import ProfileService
 from ontoforge.registry import Registry

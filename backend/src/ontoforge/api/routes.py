@@ -570,7 +570,12 @@ def import_ontology(version_id: UUID, body: OntologyImportIn, request: Request, 
         body.url, fmt = entry["url"], entry["format"]
     if body.url:
         import httpx
-        r = httpx.get(body.url, follow_redirects=True, timeout=60.0)
+
+        from ontoforge.ontology.merge import fetchable_hosts, may_fetch
+        if not may_fetch(body.url):
+            raise ValueError(f"{body.url} is not a known ontology source. The server fetches only over https from "
+                             f"{', '.join(sorted(h for h in fetchable_hosts() if h))}; for anything else, post the file itself as data.")
+        r = httpx.get(body.url, follow_redirects=False, timeout=60.0)
         r.raise_for_status()
         if len(r.content) > 64 * 1024 * 1024:
             raise ValueError("Ontology file exceeds 64 MB")

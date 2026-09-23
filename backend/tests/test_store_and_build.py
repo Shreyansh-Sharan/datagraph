@@ -146,3 +146,41 @@ def test_counts_total_and_inferred_in_one_pass(env):
     pipeline.run(v.id, actor="alice")
     store.add_inferred(v.id, [(EX + "x", EX + "knows", EX + "y", "iri", None, None)])
     assert store.counts(v.id) == (store.count(v.id), store.count(v.id, inferred=True)) == (store.count(v.id), 1)
+
+
+def test_a_build_keeps_its_source_to_itself(env):
+    """One pipeline serves every worker thread, so a run must carry its source, not park it on self."""
+    reg, store, pipeline, v = env
+    pipeline.run(v.id, actor="alice")
+    assert not hasattr(pipeline, "source"), "a per-build source on the shared pipeline crosses concurrent runs"
+
+
+def test_each_build_loads_from_the_source_it_was_given(db):
+    """One pipeline serves every domain, so the source must travel with the run, not on the object."""
+    from ontoforge.build import BuildPipeline, PostgresSource
+    from ontoforge.registry import Registry
+    from ontoforge.store import TripleStore
+
+    seed(db)
+    reg, store = Registry(db), TripleStore(db)
+    versions, engines = {}, {}
+    for name in ("alpha", "beta"):
+        d = reg.create_domain(name, base_iri=f"http://d/{name}/")
+        ver = reg.create_version(d.id, actor="alice")
+        reg.update_content(ver.id, actor="alice", mapping=spec())
+        versions[name] = ver
+        engines[name] = PostgresSource(db)
+
+    pipeline = BuildPipeline(reg, store, lambda vid: next(engines[n] for n, v in versions.items() if v.id == vid))
+    loaded: dict = {}
+    original = pipeline._load_tables
+
+    def record(version_id, compiled, plan, on_rows=None, source=None):
+        name = next(n for n, v in versions.items() if v.id == version_id)
+        loaded[name] = source
+        return original(version_id, compiled, plan, on_rows, source)
+
+    pipeline._load_tables = record
+    for name in ("alpha", "beta"):
+        assert pipeline.run(versions[name].id, actor="alice").status == "succeeded"
+    assert loaded["alpha"] is engines["alpha"] and loaded["beta"] is engines["beta"]

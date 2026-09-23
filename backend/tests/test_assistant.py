@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from ontoforge.api import create_app
 from ontoforge.assistant import Assistant
 from ontoforge.config import Settings
-from ontoforge.llm import FakeProvider
+from tests.fakes import FakeProvider
 from ontoforge.llm.provider import ChatReply, ToolCall
 from ontoforge.mcp import GraphTools, create_mcp_server
 from tests.hr_fixture import built_domain, seed_tables, ontology, mapping, BASE

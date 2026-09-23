@@ -24,6 +24,25 @@ INDUSTRY_ONTOLOGIES: dict[str, dict] = {
 }
 
 
+def fetchable_hosts() -> set[str]:
+    """The hosts the catalogue points at. Nothing else may be fetched on the server's behalf."""
+    from urllib.parse import urlparse
+
+    return {urlparse(e["url"]).hostname for e in INDUSTRY_ONTOLOGIES.values() if e.get("url")}
+
+
+def may_fetch(url: str) -> bool:
+    """A URL is fetchable only when it is https and its host is one the catalogue already names.
+
+    Anything else would make the server a proxy into its own network: a builder could read a
+    cloud metadata endpoint or an internal admin API by asking for it as an ontology.
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    return parsed.scheme == "https" and parsed.hostname in fetchable_hosts()
+
+
 def merge_ontologies(base: Ontology, incoming: Ontology) -> tuple[Ontology, dict]:
     """Add everything from ``incoming`` that ``base`` lacks. Existing terms in ``base`` win."""
     merged = Ontology.from_dict(base.to_dict())

@@ -62,3 +62,21 @@ def test_import_endpoint_merges_or_replaces(db):
         assert c.get(f"/versions/{v['id']}/ontology").json()["iri"] == "http://x/o"
         assert c.post(f"/versions/{v['id']}/ontology/import", json={"data": "garbage", "format": "turtle"}).status_code == 400
         assert c.get("/ontologies/industry").json()["fibo"]["licence"].startswith("MIT")
+
+
+def test_an_import_url_must_be_one_of_the_catalogue_hosts(db):
+    """A builder must not be able to make the server fetch an arbitrary address on its network."""
+    from fastapi.testclient import TestClient
+
+    from ontoforge.api import create_app
+    from ontoforge.config import Settings
+    from ontoforge.registry import Registry
+
+    reg = Registry(db)
+    d = reg.create_domain("hr", base_iri="http://d/hr/")
+    v = reg.create_version(d.id, actor="a")
+    with TestClient(create_app(db=db, settings=Settings(auth_default_role="admin"))) as c:
+        for url in ("http://169.254.169.254/latest/meta-data/", "http://localhost:8765/admin/api-keys", "file:///etc/passwd"):
+            r = c.post(f"/versions/{v.id}/ontology/import", json={"url": url, "format": "turtle"}, headers={"X-Actor": "a"})
+            assert r.status_code == 400, url
+            assert "known ontology" in r.json()["detail"], r.json()
