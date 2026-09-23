@@ -10,12 +10,52 @@ quietly mapping the registry database and looking like it worked.
 from __future__ import annotations
 
 from typing import Callable
+from urllib.parse import quote
 from uuid import UUID
 
 from ontoforge.build import DatabricksSource, PostgresSource, SourceEngine, databricks_connect_factory
 from ontoforge.config import Settings
 from ontoforge.db import Database
 from ontoforge.registry import Domain, Registry
+
+
+# What each connector usually calls a field, in the order to try. The hub's own schema decides
+# when it can be read; this is the fallback for a hub that cannot answer, and the vocabulary for
+# matching what it does say.
+_ALIASES = {"host": ("host", "hostname", "server"), "port": ("port",), "database": ("database", "dbname", "db"),
+            "user": ("username", "user", "login"), "sslmode": ("sslmode", "ssl_mode")}
+
+
+def postgres_url(cred: dict, spec: dict | None) -> str:
+    """The DSN for a Postgres connection, built from the field names its connector declares.
+
+    Guessing here is how a connection with a renamed or missing field quietly becomes a
+    connection to the app's own database: a missing host used to default to localhost. The
+    connector's own schema names the fields, including which one holds the secret, and anything
+    it marks required and does not carry is refused by name.
+    """
+    cfg = dict(cred.get("config") or {})
+    name = cred.get("name") or cred.get("id") or "the connection"
+    declared = {f["name"] for f in (spec or {}).get("fields", [])}
+    secret_field = (spec or {}).get("secret_field") or ""
+
+    def pick(role: str) -> str | None:
+        names = [n for n in _ALIASES[role] if not declared or n in declared] or list(_ALIASES[role])
+        return next((str(cfg[n]) for n in names if cfg.get(n) not in (None, "")), None)
+
+    host, database, user = pick("host"), pick("database"), pick("user")
+    password = str(cfg.get(secret_field) or cfg.get("password") or "")
+    missing = [role for role, value in (("host", host), ("database", database)) if not value]
+    required = {f["name"] for f in (spec or {}).get("fields", []) if f.get("required")}
+    missing += [f for f in sorted(required) if cfg.get(f) in (None, "") and f not in (secret_field, *(_ALIASES["host"] + _ALIASES["database"]))]
+    if missing:
+        raise ValueError(f"Connection {name!r} is missing {', '.join(dict.fromkeys(missing))}: "
+                         "fill it in the connection module before this source can be read.")
+
+    port = pick("port") or "5432"
+    url = f"postgresql://{quote(user or '', safe='')}:{quote(password, safe='')}@{host}:{port}/{database}"
+    sslmode = pick("sslmode")
+    return f"{url}?sslmode={sslmode}" if sslmode else url
 
 
 class SourceResolver:
@@ -55,13 +95,22 @@ class SourceResolver:
         key = (connection_id, c.get("updated_at"), catalog, schema)
         engine = self._cache.get(key)
         if engine is None:
-            engine = self._open(self.connections.credentials(connection_id), catalog, schema)
+            engine = self._open(self.connections.credentials(connection_id), catalog, schema, self._spec(c.get("kind")))
             self._cache = {k: e for k, e in self._cache.items() if k[0] != connection_id}   # one engine per connection
             self._cache[key] = engine
         return engine
 
+    def _spec(self, kind: str | None) -> dict | None:
+        """What the connection module says this connector's fields are called. None when it cannot say."""
+        if not kind:
+            return None
+        try:
+            return self.connections.spec(kind)
+        except Exception:  # noqa: BLE001 - the documented names are the fallback, not a failure
+            return None
+
     @staticmethod
-    def _open(cred: dict, catalog: str | None, schema: str | None) -> SourceEngine:
+    def _open(cred: dict, catalog: str | None, schema: str | None, spec: dict | None = None) -> SourceEngine:
         kind, cfg, name = cred["kind"], cred["config"], cred.get("name") or cred["id"]
         if kind == "databricks":
             if (cfg.get("auth_type") or "pat") != "pat" or not cfg.get("token"):
@@ -71,9 +120,5 @@ class SourceResolver:
             connect = databricks_connect_factory(host, str(cfg.get("http_path") or ""), str(cfg["token"]), cat, schema)
             return DatabricksSource(connect, cat, schema)
         if kind == "postgres":
-            user, pw = cfg.get("username") or cfg.get("user") or "", cfg.get("password") or ""
-            url = f"postgresql://{user}:{pw}@{cfg.get('host', 'localhost')}:{cfg.get('port', 5432)}/{cfg.get('database', '')}"
-            if cfg.get("sslmode"):
-                url += f"?sslmode={cfg['sslmode']}"
-            return PostgresSource(Database(url, schema=schema), schema)
+            return PostgresSource(Database(postgres_url(cred, spec), schema=schema), schema)
         raise ValueError(f"Connection {name} is a {kind} connection; datagraph can read Databricks and Postgres sources")

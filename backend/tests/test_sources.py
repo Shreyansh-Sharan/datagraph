@@ -90,3 +90,40 @@ def test_without_a_connection_module_the_deployment_source_is_the_source(db):
     d = reg.create_domain("local", base_iri="http://x/")
     env = PostgresSource(db)
     assert SourceResolver(Settings(), reg, NoConnectionModule(), lambda: env).for_domain(d.name) is env
+
+
+def _spec(kind, secret, fields):
+    return {"kind": kind, "label": kind, "category": "source", "secret_field": secret,
+            "fields": [{"name": n, "required": r} for n, r in fields]}
+
+
+def test_a_connection_missing_a_field_its_connector_declares_is_refused_by_name(db):
+    """Falling back to localhost turns a misconfigured connection into a silently wrong source."""
+    from ontoforge.sources import postgres_url
+
+    spec = _spec("postgres", "password", [("host", True), ("port", False), ("database", True), ("username", True), ("password", True)])
+    cred = {"id": "c1", "name": "Warehouse", "kind": "postgres", "config": {"username": "u", "password": "p"}}
+    with pytest.raises(ValueError) as caught:
+        postgres_url(cred, spec)
+    assert "Warehouse" in str(caught.value) and "host" in str(caught.value) and "database" in str(caught.value)
+
+
+def test_the_secret_is_the_field_the_connector_names_not_a_guess(db):
+    """A connector may call its secret anything; the hub says which field it is."""
+    from ontoforge.sources import postgres_url
+
+    spec = _spec("postgres", "pwd", [("host", True), ("database", True), ("user", True), ("pwd", True), ("sslmode", False)])
+    cred = {"id": "c2", "name": "Azure", "kind": "postgres",
+            "config": {"host": "db.example.com", "port": 6432, "database": "app", "user": "reader", "pwd": "s3cret", "sslmode": "require"}}
+    url = postgres_url(cred, spec)
+    assert url.startswith("postgresql://reader:s3cret@db.example.com:6432/app")
+    assert "sslmode=require" in url
+
+
+def test_without_a_spec_the_documented_field_names_are_still_accepted(db):
+    """The hub may be unreachable; the connector's usual names remain a reasonable last resort."""
+    from ontoforge.sources import postgres_url
+
+    cred = {"id": "c3", "name": "Local", "kind": "postgres",
+            "config": {"host": "127.0.0.1", "database": "app", "username": "u", "password": "p"}}
+    assert postgres_url(cred, None).startswith("postgresql://u:p@127.0.0.1:5432/app")
