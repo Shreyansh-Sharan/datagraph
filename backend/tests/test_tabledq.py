@@ -1,4 +1,5 @@
 """Data-quality rules on source tables: compiled to one pass per table, scored, kept as history."""
+import pytest
 from ontoforge.build import PostgresSource
 from ontoforge.dialects import DatabricksDialect
 from tests.fakes import FakeProvider
@@ -214,3 +215,23 @@ def test_version_wide_quality_overview(db):
     assert by["employees"]["score"] == 0.75 and by["employees"]["summary"]["failing"] + by["employees"]["summary"]["warning"] >= 1 and by["departments"]["score"] is None
     assert by["employees"]["dimensions"] == {"completeness": 1, "validity": 1} and by["employees"]["last_run_at"] and by["departments"]["last_run_at"] is None
     assert len(ov["rules"]) == 3 and {r["kind"] for r in ov["rules"]} == {"not_null", "in_set"} and sum(1 for r in ov["rules"] if r["last"]) == 2
+
+
+def test_a_table_with_no_rules_is_not_reported_as_all_passing(db):
+    """Nothing was measured, so nothing passed. Saying otherwise reads as a clean bill of health."""
+    from ontoforge.build import PostgresSource
+    from ontoforge.metadata import MetadataService
+    from ontoforge.registry import Registry
+    from ontoforge.tabledq import TableQuality
+    from tests.hr_fixture import seed_tables
+
+    seed_tables(db)
+    reg = Registry(db)
+    d = reg.create_domain("hr", base_iri="http://d/hr/")
+    v = reg.create_version(d.id, actor="a")
+    src = PostgresSource(db)
+    meta = MetadataService(reg, src.catalog, db)
+    meta.import_tables(v.id, ["employees"], actor="a")
+    dq = TableQuality(reg, meta, src, db)
+    with pytest.raises(ValueError, match="no rules"):
+        dq.run(v.id, "employees", actor="a")

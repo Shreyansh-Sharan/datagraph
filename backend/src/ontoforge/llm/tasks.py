@@ -19,17 +19,24 @@ TableMeta = dict
 
 def guarded_sampler(fetch: Callable[[str], list[tuple]]) -> Callable[[str], list[tuple]]:
     """Sample rows are a nicety: after the first failure (typically no SELECT grant) stop asking the
-    source, so a draft over many tables does not spend a round trip per table on the same error."""
-    state = {"ok": True}
+    source, so a draft over many tables does not spend a round trip per table on the same error.
+
+    The failure is kept on ``sample.failure`` rather than swallowed, because a draft made from
+    column names alone is a weaker answer and whoever reads it should know that is what they got.
+    """
+    state: dict = {"ok": True}
 
     def sample(table: str) -> list[tuple]:
         if not state["ok"]:
             return []
         try:
             return fetch(table)
-        except Exception:  # noqa: BLE001 - never fail a draft over samples
+        except Exception as exc:  # noqa: BLE001 - never fail a draft over samples, but say what happened
             state["ok"] = False
+            sample.failure = f"{type(exc).__name__}: {exc}"
             return []
+
+    sample.failure = None   # type: ignore[attr-defined]
     return sample
 
 

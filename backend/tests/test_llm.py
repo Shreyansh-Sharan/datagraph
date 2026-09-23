@@ -377,3 +377,15 @@ def test_azure_client_is_built_with_a_bounded_timeout(monkeypatch):
     assert seen["timeout"] == 180 and seen["max_retries"] == 1
     AzureOpenAIProvider(deployment="gpt-5.1", api_key="k", endpoint="https://x", api_version="v", timeout=30)
     assert seen["timeout"] == 30
+
+
+def test_a_draft_that_could_not_read_samples_says_so():
+    """Silently drafting from column names alone is a worse answer, and the report must admit it."""
+    from ontoforge.llm.tasks import guarded_sampler
+
+    def fetch(table):
+        raise PermissionError("SELECT denied on hr.employees")
+
+    sample = guarded_sampler(fetch)
+    assert sample("a") == [] and sample("b") == []          # it stops asking after the first refusal
+    assert sample.failure and "SELECT denied" in sample.failure

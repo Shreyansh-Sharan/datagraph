@@ -153,3 +153,32 @@ def test_drift_says_when_it_was_never_checked(db):
                      steps=[{"name": "drift", "detail": {"issues": [{"kind": "missing-column", "table": "t"}], "tables": 1}}])
     out = drift_from_last_build(reg, v.id)
     assert out["checked"] is True and len(out["issues"]) == 1 and out["at"]
+
+
+def test_a_catalog_that_cannot_be_read_is_not_reported_as_a_dropped_table(db):
+    """A timeout or a permission error is not the same news as "this table is gone"."""
+    from ontoforge.build import PostgresSource
+    from ontoforge.metadata import MetadataService
+    from ontoforge.registry import Registry
+    from tests.hr_fixture import mapping, seed_tables
+
+    seed_tables(db)
+    reg = Registry(db)
+    d = reg.create_domain("hr", base_iri="http://d/hr/")
+    v = reg.create_version(d.id, actor="a")
+    reg.update_content(v.id, actor="a", mapping=mapping().to_dict())
+    src = PostgresSource(db)
+    meta = MetadataService(reg, src.catalog, db)
+    meta.import_tables(v.id, ["employees", "departments"], actor="a")
+
+    class Unreadable:                       # the warehouse answers nothing at all
+        def __getattr__(self, name):
+            def boom(*a, **k):
+                raise TimeoutError("statement timeout")
+            return boom
+
+    meta.catalog_for = lambda _vid: Unreadable()
+    issues = meta.drift(v.id)
+    assert issues and all(i.kind == "unreadable" for i in issues), [i.kind for i in issues]
+    assert "statement timeout" in issues[0].detail
+    assert all(i.severity == "warning" for i in issues)     # unknown, not proven broken

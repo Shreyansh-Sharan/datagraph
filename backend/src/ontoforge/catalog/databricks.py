@@ -23,6 +23,35 @@ _DETAILS_SQL = (
 )
 
 
+# Unity Catalog publishes declared constraints here. They are informational (Databricks does not
+# enforce them), but a declared key is still the warehouse's own statement about the table, and
+# autodrafting a relation from it beats guessing from a column name.
+_PK_SQL = (
+    "SELECT k.column_name FROM system.information_schema.table_constraints c "
+    "JOIN system.information_schema.key_column_usage k "
+    "  ON k.constraint_catalog = c.constraint_catalog AND k.constraint_schema = c.constraint_schema "
+    " AND k.constraint_name = c.constraint_name "
+    "WHERE c.constraint_type = 'PRIMARY KEY' AND c.table_catalog = ? AND c.table_schema = ? AND c.table_name = ? "
+    "ORDER BY k.ordinal_position"
+)
+
+_FK_SQL = (
+    "SELECT c.constraint_name, k.column_name, u.table_catalog, u.table_schema, u.table_name, u.column_name "
+    "FROM system.information_schema.table_constraints c "
+    "JOIN system.information_schema.key_column_usage k "
+    "  ON k.constraint_catalog = c.constraint_catalog AND k.constraint_schema = c.constraint_schema "
+    " AND k.constraint_name = c.constraint_name "
+    "JOIN system.information_schema.referential_constraints r "
+    "  ON r.constraint_catalog = c.constraint_catalog AND r.constraint_schema = c.constraint_schema "
+    " AND r.constraint_name = c.constraint_name "
+    "JOIN system.information_schema.key_column_usage u "
+    "  ON u.constraint_catalog = r.unique_constraint_catalog AND u.constraint_schema = r.unique_constraint_schema "
+    " AND u.constraint_name = r.unique_constraint_name AND u.ordinal_position = k.ordinal_position "
+    "WHERE c.constraint_type = 'FOREIGN KEY' AND c.table_catalog = ? AND c.table_schema = ? AND c.table_name = ? "
+    "ORDER BY c.constraint_name, k.ordinal_position"
+)
+
+
 class DatabricksCatalog(CatalogAdapter):
     def __init__(self, run_query: QueryRunner, default_catalog: str | None = None,
                  default_schema: str | None = None) -> None:
@@ -31,6 +60,17 @@ class DatabricksCatalog(CatalogAdapter):
 
     def column_details(self, table: str) -> list[dict]:
         return [{"name": n, "type": t, "comment": c} for n, t, c in self.run_query(_DETAILS_SQL, self._parts(table))]
+
+    def primary_key(self, table: str) -> tuple[str, ...]:
+        return tuple(r[0] for r in self.run_query(_PK_SQL, self._parts(table)))
+
+    def foreign_keys(self, table: str) -> list[tuple[tuple[str, ...], str, tuple[str, ...]]]:
+        by_constraint: dict[str, tuple[list[str], str, list[str]]] = {}
+        for name, column, ref_cat, ref_schema, ref_table, ref_column in self.run_query(_FK_SQL, self._parts(table)):
+            cols, _, ref_cols = by_constraint.setdefault(name, ([], ".".join(p for p in (ref_cat, ref_schema, ref_table) if p), []))
+            cols.append(column)
+            ref_cols.append(ref_column)
+        return [(tuple(cols), ref, tuple(ref_cols)) for cols, ref, ref_cols in by_constraint.values()]
 
     def column_types(self, table: str) -> dict[str, str]:
         return {name: sql_type for name, sql_type in self.run_query(_COLUMNS_SQL, self._parts(table))}

@@ -49,6 +49,7 @@ class RefreshChange:
     removed: list[str] = field(default_factory=list)
     modified: list[dict] = field(default_factory=list)   # [{column, from, to}]
     keys_changed: bool = False
+    error: str | None = None                             # why the table could not be read, when it could not
 
     @property
     def changed(self) -> bool:
@@ -57,7 +58,7 @@ class RefreshChange:
 
 @dataclass(frozen=True)
 class DriftIssue:
-    kind: str            # missing-table | missing-column | type-changed
+    kind: str            # missing-table | missing-column | type-changed | unreadable
     table: str
     column: str | None
     detail: str
@@ -109,8 +110,9 @@ class MetadataService:
             change = RefreshChange(table=old.table)
             try:
                 new = self._capture(version_id, old.table)
-            except Exception:  # noqa: BLE001 - table gone or unreadable
+            except Exception as exc:  # noqa: BLE001
                 change.missing = True
+                change.error = f"{type(exc).__name__}: {exc}"   # why, so "gone" is not assumed
                 changes.append(change)
                 continue
             old_cols = {c["name"].lower(): c for c in old.columns}
@@ -166,14 +168,16 @@ class MetadataService:
         snapshots = {s.table.lower(): s for s in self.list(version_id)}
         issues: list[DriftIssue] = []
         live_cache: dict[str, dict[str, dict] | None] = {}
+        unreadable: dict[str, str] = {}      # table -> why the catalog could not answer
 
         def live(table: str) -> dict[str, dict] | None:
             key = table.lower()
             if key not in live_cache:
                 try:
                     live_cache[key] = {c["name"].lower(): c for c in catalog.column_details(table)} or None
-                except Exception:  # noqa: BLE001
+                except Exception as exc:  # noqa: BLE001 - a timeout or a denial is not a dropped table
                     live_cache[key] = None
+                    unreadable[key] = f"{type(exc).__name__}: {exc}"
             return live_cache[key]
 
         for table, ref, columns in _mapping_columns(spec):
@@ -181,7 +185,11 @@ class MetadataService:
                 continue
             cols = live(table)
             if cols is None:
-                issues.append(DriftIssue("missing-table", table, None, f"Table {table} is not in the catalog", ref))
+                why = unreadable.get(table.lower())
+                if why:   # the catalog refused or timed out: what the table looks like is unknown
+                    issues.append(DriftIssue("unreadable", table, None, f"Could not read {table} from the catalog ({why})", ref, "warning"))
+                else:
+                    issues.append(DriftIssue("missing-table", table, None, f"Table {table} is not in the catalog", ref))
                 continue
             snap = snapshots.get(table.lower())
             for col in columns:

@@ -63,3 +63,40 @@ def test_every_migration_table_is_excluded_from_catalog_listing(db):
             "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'")}
     assert created <= INTERNAL_TABLES, created - INTERNAL_TABLES
     assert PostgresCatalog(db).list_tables() == []
+
+
+class KeyRunner:
+    """Answers the constraint queries the way Unity Catalog does."""
+
+    def __init__(self, rows_by_sql):
+        self.rows_by_sql, self.calls = rows_by_sql, []
+
+    def __call__(self, sql, params):
+        self.calls.append((sql, params))
+        for marker, rows in self.rows_by_sql.items():
+            if marker in sql:
+                return rows
+        return []
+
+
+def test_databricks_reports_the_primary_key_unity_catalog_declares():
+    runner = KeyRunner({"PRIMARY KEY": [("empno",), ("hired",)]})
+    cat = DatabricksCatalog(runner, default_catalog="main", default_schema="hr")
+    assert cat.primary_key("emp") == ("empno", "hired")
+    sql, params = runner.calls[0]
+    assert "key_column_usage" in sql and "table_constraints" in sql and params == ("main", "hr", "emp")
+    assert "emp" not in sql.replace("key_column_usage", "")   # the table is bound, never interpolated
+
+
+def test_databricks_reports_foreign_keys_with_their_referenced_table():
+    runner = KeyRunner({"FOREIGN KEY": [("fk_dept", "deptno", "main", "hr", "dept", "deptno"),
+                                        ("fk_mgr", "manager", "main", "hr", "emp", "empno")]})
+    cat = DatabricksCatalog(runner, default_catalog="main", default_schema="hr")
+    assert cat.foreign_keys("emp") == [(("deptno",), "main.hr.dept", ("deptno",)),
+                                       (("manager",), "main.hr.emp", ("empno",))]
+
+
+def test_a_composite_foreign_key_keeps_its_column_order():
+    runner = KeyRunner({"FOREIGN KEY": [("fk", "a", "main", "hr", "t", "x"), ("fk", "b", "main", "hr", "t", "y")]})
+    cat = DatabricksCatalog(runner, default_catalog="main", default_schema="hr")
+    assert cat.foreign_keys("emp") == [(("a", "b"), "main.hr.t", ("x", "y"))]

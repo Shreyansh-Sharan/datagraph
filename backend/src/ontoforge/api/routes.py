@@ -1248,7 +1248,11 @@ def _tables(request: Request, tables: list[str] | None, schema: str | None, vers
     st = _st(request)
     snapshots = {s.table: s for s in st.metadata.list(version_id)} if version_id else {}
     src = st.sources.for_version(version_id) if version_id else st.sources.env
-    return describe_tables(src.catalog, tables, schema, sample_rows=guarded_sampler(lambda t: _samples(src, t)), snapshots=snapshots, on_progress=on_progress)
+    sampler = guarded_sampler(lambda t: _samples(src, t))
+    out = describe_tables(src.catalog, tables, schema, sample_rows=sampler, snapshots=snapshots, on_progress=on_progress)
+    if sampler.failure and on_progress:   # the model worked from column names alone; say so in the job
+        on_progress(f"No sample rows: {sampler.failure}. Drafting from names and types only.")
+    return out
 
 
 def _samples(src, table: str, n: int = 3) -> list[tuple]:

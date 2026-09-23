@@ -348,6 +348,10 @@ class TableQuality:
         say = on_progress or (lambda _m: None)
         self.metadata.get(version_id, table)
         rules = [r for r in self.list_rules(version_id, table) if r.enabled]
+        if not rules:
+            # Nothing measured is not the same as everything passing, and a stored run saying
+            # "—% · all passing" is exactly how a table with no checks looks like a healthy one.
+            raise ValueError(f"{table} has no rules to run: add one, or derive them from its profile")
         src = self.source_for(version_id)
         d = src.dialect
         tq = d.quote_table(table)
