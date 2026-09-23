@@ -33,6 +33,7 @@ from ontoforge.quality import ConstraintSet, QualityEngine, QualityError
 from ontoforge.rules import Rule, RuleEngine, RuleError, RuleSet
 from ontoforge.metadata import MetadataError
 from ontoforge.catalog import SnapshotCatalog
+from ontoforge.metadata import drift_from_last_build
 from ontoforge.tabledq import KIND_CATALOG
 from ontoforge.registry import Domain, DomainVersion, LifecycleError, NotFound, Status
 
@@ -396,7 +397,8 @@ def domain_cards(request: Request):
         out.append({"name": d.name, "description": d.description, "base_iri": d.base_iri, "review_quorum": d.review_quorum,
                     "version_count": len(versions), "active_version": {"version": active.version} if active else None,
                     "latest_version": {"version": latest.version, "status": latest.status.value} if latest else None,
-                    "triples": st.store.count(served.id) if served else 0,
+                    "triples": (build.triple_count if build and build.status == "succeeded" and build.triple_count is not None
+                                else st.store.count(served.id) if served else 0),   # the build already counted; counting millions of rows again is what made Home slow
                     "last_build": {"status": build.status, "finished_at": build.finished_at, "triple_count": build.triple_count} if build else None,
                     "source": {"kind": src["kind"], "connection": src["connection"], "catalog": src["catalog"], "schema": src["schema"], "schemas": src["schemas"]},
                     "source_count": len(d.sources),
@@ -1199,8 +1201,12 @@ def metadata_remove(version_id: UUID, table: str, request: Request, me: Principa
 
 
 @router.get("/versions/{version_id}/mapping/drift")
-def mapping_drift(version_id: UUID, request: Request):
-    return _st(request).metadata.drift(version_id)
+def mapping_drift(version_id: UUID, request: Request, live: bool = Query(default=False, description="true re-reads every mapped table from the source now (slow); false answers with what the last build found")):
+    """Schema drift: the last build's finding by default, the source re-read on request."""
+    if live:
+        return _st(request).metadata.drift(version_id)
+    _st(request).registry.get_version(version_id)
+    return drift_from_last_build(_st(request).registry, version_id)
 
 
 # -- llm -------------------------------------------------------------------------

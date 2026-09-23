@@ -237,3 +237,14 @@ def _dedupe(issues: list[DriftIssue]) -> list[DriftIssue]:
 def snapshot_to_table_meta(snap: TableSnapshot, samples: list | None = None) -> dict:
     return {"table": snap.table, "comment": snap.comment, "columns": snap.columns, "primary_key": snap.primary_key,
             "foreign_keys": snap.foreign_keys, "samples": samples or []}
+
+
+def drift_from_last_build(registry, version_id: UUID) -> list[dict]:
+    """The drift issues the last build found, as its drift step recorded them: the answer screens and
+    tools show by default, because a live check re-reads every mapped table from the source and can
+    take minutes on a warehouse. [] when no build has run yet."""
+    for run in registry.list_builds(version_id):
+        for step in run.steps or []:
+            if step.get("name") == "drift" and isinstance(step.get("detail"), dict):
+                return list(step["detail"].get("issues") or [])
+    return []

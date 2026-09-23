@@ -893,7 +893,8 @@ class GraphTools:
             st = mapping_status(onto, MappingSpec.from_dict(v.mapping))
             mapping = {"completion": st.completion, "classes": st.summary["classes"], "complete_classes": st.summary["complete_classes"]}
         build = self.registry.latest_build(v.id)
-        drift = len(self.metadata.drift(v.id)) if self.metadata else 0
+        from ontoforge.metadata import drift_from_last_build
+        drift = len(drift_from_last_build(self.registry, v.id))   # what the last build found; a live check is a build's or check_drift's job
         return {"domain": domain or self.current, "version": v.version, "status": v.status.value,
                 "ontology": onto is not None, "classes": len(onto.classes) if onto else 0, "mapping": mapping,
                 "build_ready": bool(onto and v.mapping), "built": bool(build and build.status == "succeeded"),

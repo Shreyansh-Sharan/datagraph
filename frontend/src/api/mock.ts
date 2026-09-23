@@ -523,7 +523,7 @@ export class MockApi implements DatagraphApi {
   async excludeUnmapped(domain: string, _version: number): Promise<void> {
     for (const [cls, m] of Object.entries(this.mapOf(domain))) { const ex = new Set(m.excluded ?? []); for (const a of this.attrsOf(cls)) if (!m.cols[a]) ex.add(a); for (const r of this.relsOf(cls)) if (!m.rels?.[r.name]) ex.add(r.name); m.excluded = [...ex].sort(); }
   }
-  async drift(_domain: string, _version: number): Promise<DriftIssue[]> {
+  async drift(_domain: string, _version: number, _opts?: { live?: boolean }): Promise<DriftIssue[]> {
     return [{ kind: "missing-column", table: "rgm.gold.fct_sales", column: "channel_id", detail: "fct_sales.channel_id has no target table", mapping_ref: "Sale.viaChannel", severity: "error" }];
   }
   async r2rml(domain: string, _version: number): Promise<string> {

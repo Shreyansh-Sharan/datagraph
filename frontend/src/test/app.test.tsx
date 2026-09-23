@@ -478,13 +478,18 @@ describe("Build screen", () => {
 
 
 describe("Build screen · checklist", () => {
-  it("shows the checklist before the drift check finishes, and its result after", async () => {
-    class SlowDrift extends MockApi { override async drift(d: string, v: number) { await new Promise(r => setTimeout(r, 300)); return super.drift(d, v); } }
+  it("shows the drift the last build found at once, and re-reads the source only when asked", async () => {
+    const live: boolean[] = [];
+    class SlowDrift extends MockApi { override async drift(d: string, v: number, o?: { live?: boolean }) { live.push(!!o?.live); if (o?.live) await new Promise(r => setTimeout(r, 300)); return super.drift(d, v, o); } }
     renderAt("#/d/rgm/build?v=3", new SlowDrift());
-    expect(await screen.findByText("Mapping completion")).toBeInTheDocument();      // the quick facts do not wait for the source
+    const user = userEvent.setup();
+    expect(await screen.findByText("Mapping completion")).toBeInTheDocument();
+    expect(await screen.findByText("1 issue · last build")).toBeInTheDocument();     // instant: what the last build recorded
+    expect(live).toEqual([false]);                                                   // the source was not read
+    await user.click(screen.getByRole("button", { name: "Check drift now" }));
     expect(screen.getByText("checking the source…")).toBeInTheDocument();
-    expect(await screen.findByText("1 issue", {}, { timeout: 2000 })).toBeInTheDocument();
-    expect(screen.queryByText("checking the source…")).toBeNull();
+    expect(await screen.findByText("1 issue · checked now", {}, { timeout: 2000 })).toBeInTheDocument();
+    expect(live).toEqual([false, true]);
   });
 });
 

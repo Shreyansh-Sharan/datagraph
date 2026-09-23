@@ -249,7 +249,7 @@ export interface DatagraphApi {
   mapRelation(domain: string, version: number, cls: string, rel: string, sourceKey: string[], targetKey: string[]): Promise<void>;
   unmapClass(domain: string, version: number, cls: string): Promise<void>;
   excludeUnmapped(domain: string, version: number): Promise<void>;
-  drift(domain: string, version: number): Promise<DriftIssue[]>;
+  drift(domain: string, version: number, opts?: { live?: boolean }): Promise<DriftIssue[]>;   // what the last build found; live re-reads the source (slow)
   r2rml(domain: string, version: number): Promise<string>;
   suggestMapping(domain: string, version: number, onProgress?: (p: AiProgress) => void): Promise<{ classes: number; relations: number; skipped: string[] }>;   // skipped: suggestions naming things the ontology or tables do not have
   suggestRelations(domain: string, version: number, onProgress?: (p: AiProgress) => void): Promise<{ added: number; declared: number; byName: number; ai: number; skipped: string[]; unmappable: string[] }>;   // fills unmapped relationships: declared keys, matching names, then the AI per pair of tables

@@ -43,10 +43,17 @@ export class RestApi extends MockApi {
   private authHeaders(): Record<string, string> {
     return this.ropts.token ? { Authorization: `Bearer ${this.ropts.token}` } : { [this.cfg?.authHeader ?? "X-Actor"]: this.ropts.actor ?? "alice" };
   }
-  private async req<T>(method: string, path: string, body?: unknown, text = false): Promise<T> {
+  /** timeoutMs: reads give up after 60 s by default so a stuck source never leaves a screen spinning; 0 disables it (long checks, writes and polling). */
+  private async req<T>(method: string, path: string, body?: unknown, text = false, timeoutMs?: number): Promise<T> {
     const headers: Record<string, string> = { Accept: text ? "text/plain" : "application/json", ...this.authHeaders() };
     if (body !== undefined) headers["Content-Type"] = "application/json";
-    const res = await fetch(this.base + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    const limit = timeoutMs ?? (method === "GET" ? 60_000 : 0);
+    const ctl = limit ? new AbortController() : null;
+    const timer = ctl ? setTimeout(() => ctl.abort(), limit) : null;
+    let res: Response;
+    try { res = await fetch(this.base + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: ctl?.signal }); }
+    catch (e) { if (ctl?.signal.aborted) throw new ApiError(0, `No answer from the server in ${Math.round(limit / 1000)} s`); throw e; }
+    finally { if (timer) clearTimeout(timer); }
     if (!res.ok) {
       let detail = res.statusText;
       try { const j = await res.json(); detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail ?? j); } catch { /* keep statusText */ }
@@ -84,10 +91,13 @@ export class RestApi extends MockApi {
       changes };
   }
   private async toDomain(d: BackendDomain, card?: BackendCard): Promise<DomainSummary> {
-    const vs = (await memo(this, `read:summary:${d.name}`, () => this.req<BackendSummary[]>("GET", `/domains/${encodeURIComponent(d.name)}/versions/summary`), 8000)).sort((a, b) => b.version - a.version);
-    const cfg = this.cfg ?? await this.config();
+    const [vsRaw, cfg, cards] = await Promise.all([   // the two slow reads side by side, not one after the other
+      memo(this, `read:summary:${d.name}`, () => this.req<BackendSummary[]>("GET", `/domains/${encodeURIComponent(d.name)}/versions/summary`), 8000),
+      this.cfg ?? this.config(),
+      card ? Promise.resolve(null) : memo(this, "read:cards", () => this.req<BackendCard[]>("GET", "/domains/cards"), 8000)]);
+    const vs = [...vsRaw].sort((a, b) => b.version - a.version);
     const versions = vs.map((v, i) => this.toVersion(d, v, vs[i + 1]));
-    const c = card ?? (await memo(this, "read:cards", () => this.req<BackendCard[]>("GET", "/domains/cards"), 8000)).find(x => x.name === d.name);
+    const c = card ?? cards?.find(x => x.name === d.name);
     this.materializations[d.name] = d.materialization ?? cfg.materialization;
     return { name: d.name, description: d.description ?? "", base_iri: d.base_iri, quorum: d.review_quorum, schema: d.schemas?.[0] ?? c?.source.schema ?? d.default_schema ?? "", schemas: d.schemas ?? (d.default_schema ? [d.default_schema] : []), sources: (d.sources ?? []).map(x => ({ connectionId: x.connection_id ?? null, catalog: x.catalog ?? null, schemas: [...(x.schemas ?? [])] })), catalog: c?.source.catalog ?? d.default_catalog ?? cfg.catalog ?? d.name,
       materialization: d.materialization ?? cfg.materialization, target: d.target_schema ?? "", mcpExposed: c?.mcp.exposed ?? d.mcp_policy?.exposed ?? true, disabledTools: c?.mcp.disabled_tools ?? d.mcp_policy?.disabled_tools ?? [],
@@ -427,7 +437,7 @@ export class RestApi extends MockApi {
     await this.req("DELETE", `/versions/${this.vid(domain, version)}/mapping/classes?class_iri=${encodeURIComponent(iri)}`);
   }
   override async excludeUnmapped(domain: string, version: number): Promise<void> { await this.req("POST", `/versions/${this.vid(domain, version)}/mapping/exclude-unmapped`); }
-  override async drift(domain: string, version: number): Promise<DriftIssue[]> { return this.req<DriftIssue[]>("GET", `/versions/${this.vid(domain, version)}/mapping/drift`); }
+  override async drift(domain: string, version: number, opts?: { live?: boolean }): Promise<DriftIssue[]> { return this.req<DriftIssue[]>("GET", `/versions/${this.vid(domain, version)}/mapping/drift${opts?.live ? "?live=true" : ""}`, undefined, false, opts?.live ? 0 : undefined); }
   override async r2rml(domain: string, version: number): Promise<string> { return this.req<string>("GET", `/versions/${this.vid(domain, version)}/mapping/r2rml`, undefined, true); }
   override async suggestMapping(domain: string, version: number, onProgress?: (p: AiProgress) => void): Promise<{ classes: number; relations: number; skipped: string[] }> {
     const r = await this.aiJob<{ classes: number; relations: number; skipped?: string[] }>(`/versions/${this.vid(domain, version)}/llm/suggest-mapping`, {}, onProgress);

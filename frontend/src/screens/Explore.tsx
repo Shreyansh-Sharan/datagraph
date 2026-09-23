@@ -45,7 +45,9 @@ export function Explore() {
   const [busy, setBusy] = useState<string | null>(null);
   const status = useLoad(() => api.graphStatus(domain.name), [domain.name]);
   // No query and no type: nothing to search for; the overview below is the first picture of the graph.
-  const results = useLoad(() => (q.trim() || typeIri) ? api.search(domain.name, q, { type: typeIri || null, match: (match as "contains" | "exact" | "starts_with") || "contains" }) : Promise.resolve(null), [domain.name, q, typeIri, match]);
+  const [settled, setSettled] = useState(q);   // the query as typed 350 ms ago: one search per pause, not one per keystroke
+  useEffect(() => { const t = setTimeout(() => setSettled(q), 350); return () => clearTimeout(t); }, [q]);
+  const results = useLoad(() => (settled.trim() || typeIri) ? api.search(domain.name, settled, { type: typeIri || null, match: (match as "contains" | "exact" | "starts_with") || "contains" }) : Promise.resolve(null), [domain.name, settled, typeIri, match]);
   const entityId = entityParam;   // nothing chosen yet: the canvas shows the overview sample and the panel waits
   const ent = useLoad(() => entityId ? api.entity(domain.name, entityId) : Promise.resolve(null), [domain.name, entityId]);
   const overview = useLoad(() => api.graphOverview(domain.name, 300).catch(() => ({ nodes: [], edges: [] })), [domain.name]);

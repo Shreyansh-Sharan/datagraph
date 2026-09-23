@@ -13,7 +13,9 @@ class Database:
     def __init__(self, url: str, schema: str | None = None, max_size: int = 8) -> None:
         kwargs = {"options": f"-c search_path={schema},public"} if schema else {}
         self.schema = schema
-        self.pool = ConnectionPool(url, min_size=1, max_size=max_size, kwargs=kwargs, open=True)
+        # timeout: a caller waits at most 30 s for a connection instead of for ever when slow reads hold them all;
+        # check: a connection that died (Docker restart, idle timeout) is dropped instead of handed out.
+        self.pool = ConnectionPool(url, min_size=1, max_size=max_size, kwargs=kwargs, open=True, timeout=30, check=ConnectionPool.check_connection)
 
     @contextmanager
     def transaction(self) -> Iterator[psycopg.Cursor]:

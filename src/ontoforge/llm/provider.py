@@ -82,7 +82,7 @@ class AnthropicProvider(LLMProvider):
                  effort: str = "high", fallbacks: bool = True) -> None:
         if client is None:
             import anthropic  # lazy: optional at import time
-            client = anthropic.Anthropic()
+            client = anthropic.Anthropic(timeout=180.0, max_retries=1)   # the SDK's default is ten minutes times three attempts: a hung call held the assistant for half an hour
         self.client, self.model, self.max_tokens, self.effort, self.fallbacks = client, model, max_tokens, effort, fallbacks
 
     def complete_json(self, system: str, user: str, schema: dict) -> dict:

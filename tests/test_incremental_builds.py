@@ -172,3 +172,20 @@ def test_compile_reads_column_types_from_the_snapshot_and_drift_looks_only_at_ch
         cur.execute("UPDATE departments SET dname = 'MARKETING' WHERE deptno = 10")
     third = pipeline.run(v.id, actor="alice")
     assert next(s for s in third.steps if s["name"] == "drift")["detail"]["tables"] == 1 and _plan(third)["changed"] == ["departments"]
+
+
+def test_drift_answers_from_the_last_build_unless_asked_to_look_live(db):
+    from ontoforge.metadata import MetadataService, drift_from_last_build
+    from ontoforge.build import PostgresSource
+    reg, store, _, v = _env(db)
+    src = PostgresSource(db)
+    meta = MetadataService(reg, src.catalog, db)
+    meta.import_tables(v.id, ["employees", "departments"], actor="alice")
+    assert drift_from_last_build(reg, v.id) == []                                  # nothing built yet: nothing found
+    pipeline = BuildPipeline(reg, TripleStore(db), src, metadata=meta)
+    assert pipeline.run(v.id, actor="alice").status == "succeeded"
+    assert drift_from_last_build(reg, v.id) == []
+    with db.transaction() as cur:
+        cur.execute("ALTER TABLE employees DROP COLUMN hired")
+    assert drift_from_last_build(reg, v.id) == []                                  # the last build saw no drift; only a live check or the next build will
+    assert [i.column for i in meta.drift(v.id)] == ["hired"]

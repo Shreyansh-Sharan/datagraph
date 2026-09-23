@@ -15,9 +15,18 @@ export function Build() {
   const dbx = sourceKind === "databricks";
   const history = useLoad(() => api.builds(domain.name, version!.version), [domain.name, version?.version]);
   const checklist = useLoad(() => api.checklist(domain.name, version!.version), [domain.name, version?.version]);
-  // Drift re-reads every mapped table from the source, so it is its own row and never holds the rest of the list back.
+  // Drift as the last build found it (instant); a live check re-reads every mapped table from the source and runs only when asked.
   const drift = useLoad(() => api.drift(domain.name, version!.version), [domain.name, version?.version]);
-  const driftItem = { label: "Schema drift", value: drift.loading ? "checking the source…" : drift.error ? "could not check the source" : `${drift.data?.length ?? 0} issue${drift.data?.length === 1 ? "" : "s"}`, ok: !drift.loading && !drift.error && !(drift.data?.length), pending: drift.loading, go: { screen: "metadata" } as { screen: string; arg?: string } };
+  const [checking, setChecking] = useState(false);
+  const [liveDrift, setLiveDrift] = useState<{ n: number; error: string | null } | null>(null);
+  const checkDrift = async () => {
+    setChecking(true); setLiveDrift(null);
+    try { const issues = await api.drift(domain.name, version!.version, { live: true }); setLiveDrift({ n: issues.length, error: null }); say(issues.length ? `${issues.length} drift issue${issues.length === 1 ? "" : "s"} found` : "No drift: the source matches the mapping"); }
+    catch (e) { setLiveDrift({ n: 0, error: e instanceof Error ? e.message : String(e) }); }
+    finally { setChecking(false); }
+  };
+  const driftCount = liveDrift && !liveDrift.error ? liveDrift.n : drift.data?.length ?? 0;
+  const driftItem = { label: "Schema drift", value: checking ? "checking the source…" : liveDrift?.error ? "could not check the source" : drift.loading ? "…" : `${driftCount} issue${driftCount === 1 ? "" : "s"}${liveDrift && !liveDrift.error ? " · checked now" : drift.data ? " · last build" : ""}`, ok: !checking && !liveDrift?.error && !drift.error && driftCount === 0, pending: drift.loading || checking, go: { screen: "metadata" } as { screen: string; arg?: string } };
   const items = [...(checklist.data ?? []).map(c => ({ ...c, pending: false })), ...(checklist.data ? [driftItem] : [])];
   const [live, setLive] = useState<BuildRun | null>(null);
   const [lost, setLost] = useState<string | null>(null);
@@ -97,6 +106,7 @@ export function Build() {
             <h2 className="h2" style={{ marginBottom: 10 }}>Pre-build checklist</h2>
             {checklist.loading && !checklist.data && <div style={{ display: "grid", gap: 10 }}><Skeleton h={16} /><Skeleton h={16} /><Skeleton h={16} /><Skeleton h={16} /></div>}
             {items.map(c => <a key={c.label} href="#" className="row" style={{ gap: 10, padding: "9px 0", borderTop: "1px solid var(--line-2)", color: "var(--ink)", fontSize: 12.5 }} onClick={e => { e.preventDefault(); go(c.go.screen, c.go.arg ? (c.go.screen === "ontology" ? { view: c.go.arg } : { table: c.go.arg }) : {}); }}>{c.pending ? <Spinner blue /> : <CheckDot ok={c.ok} />}<span style={{ flex: 1 }}>{c.label}</span><span className="muted small">{c.value}</span></a>)}
+            <div className="row between" style={{ paddingTop: 8, fontSize: 12 }}><span className="muted-2">Drift is what the last build found. A live check re-reads every mapped table from the source.</span><Button size="xs" disabled={checking} onClick={checkDrift}>{checking ? "Checking…" : "Check drift now"}</Button></div>
           </Card>
           <Card>
             <h2 className="h2" style={{ marginBottom: 10 }}>Warehouse publish</h2>
