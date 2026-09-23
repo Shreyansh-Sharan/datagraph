@@ -629,3 +629,26 @@ describe("Rules and Data quality across the version", () => {
     expect(within(links).getAllByRole("link").map(a => a.textContent)).toEqual(["Import tables", "Ontology", "Mapping", "Rules", "Build", "Explore", "Ask", "Versions"]);
   });
 });
+
+
+describe("Ontology screen · the table behind a class", () => {
+  it("shows the mapped table of the selected class and opens its metadata and profile", async () => {
+    renderAt("#/d/rgm/ontology?v=3&cls=Customer", new MockApi({ latency: 5 }));
+    const user = userEvent.setup();
+    const asset = await screen.findByRole("region", { name: "Mapped table" });
+    expect(await within(asset).findByText("gold.dim_customer")).toBeInTheDocument();
+    await user.click(within(asset).getByRole("link", { name: "Metadata" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Metadata" })).toBeInTheDocument();
+    expect(window.location.hash).toMatch(/table=dim_customer/);
+    window.location.hash = "#/d/rgm/ontology?v=3&cls=Customer";
+    await user.click(within(await screen.findByRole("region", { name: "Mapped table" })).getByRole("link", { name: "Profile" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "dim_customer" })).toBeInTheDocument();
+    expect(window.location.hash).toMatch(/tab=profile/);
+  });
+  it("offers to map a class that has no table", async () => {
+    renderAt("#/d/rgm/ontology?v=3&cls=Channel", new MockApi({ latency: 5 }));
+    const asset = await screen.findByRole("region", { name: "Mapped table" });
+    expect(await within(asset).findByText(/not mapped/i)).toBeInTheDocument();
+    expect(within(asset).getByRole("link", { name: "Map it" })).toBeInTheDocument();
+  });
+});

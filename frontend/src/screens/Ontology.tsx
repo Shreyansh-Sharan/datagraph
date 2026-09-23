@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button, Card, Dialog, Dot, ErrorNotice, Glyph, Label, Pill, Skeleton, Spinner, Tabs } from "@/components/ui";
-import type { AiProgress, SnapshotTable } from "@/api";
+import type { AiProgress, ClassMapping, SnapshotTable } from "@/api";
 import { Stage, colorFor, glyphOf, type StageEdge, type StageGroup, type StageNode } from "@/components/Stage";
 import { useApp, useLoad } from "@/state/app";
 import { useDomain, useGo, useParam } from "@/state/domain";
@@ -16,6 +16,7 @@ export function Ontology() {
   const [clsId, setCls] = useParam("cls", "");
   const classes = useLoad(() => api.ontology(domain.name, version!.version).catch(e => { if (/no ontology/i.test(String(e))) return []; throw e; }), [domain.name, version?.version]);
   const checks = useLoad(() => api.ontologyChecks(domain.name, version!.version).catch(() => []), [domain.name, version?.version]);
+  const mapping = useLoad(() => api.mapping(domain.name, version!.version).catch(() => ({} as Record<string, ClassMapping>)), [domain.name, version?.version]);   // the table behind each class
   const [draft, setDraft] = useState<"ai" | "tables" | null>(null);
   const [running, setRunning] = useState<{ progress: string; since: number } | null>(null);
   const [tick, setTick] = useState(0);
@@ -72,6 +73,7 @@ export function Ontology() {
           <Card>
             <div className="row" style={{ gap: 10, marginBottom: 4 }}><Glyph size={28} fontSize={12}>{glyphOf(sel.id)}</Glyph><h2 style={{ fontSize: 17, fontWeight: 800 }}>{sel.id}</h2></div>
             <div className="mono" style={{ fontSize: 11, color: "var(--muted-2)", marginBottom: 14, wordBreak: "break-all" }}>{sel.iri}</div>
+            <MappedTable m={mapping.data?.[sel.id]} loading={mapping.loading && !mapping.data} cls={sel.id} go={go} />
             <Label>Description</Label>
             <textarea id="cls-desc" className="textarea full" rows={2} defaultValue={sel.desc} key={sel.id} disabled={!editable} style={{ marginBottom: 12 }} />
             <Label>Parents</Label>
@@ -142,5 +144,31 @@ function DraftDialog({ mode, existing, onClose, onDraft, tables }: { mode: "ai" 
         ? <div className="notice" style={{ marginTop: 10 }}><div className="row" style={{ gap: 8, fontWeight: 600 }}><Spinner blue />{stage ?? `Reading ${chosen.length} table${chosen.length === 1 ? "" : "s"} from the source, then asking the AI`} · {elapsed} s</div><div className="muted xs" style={{ marginTop: 4 }}>A few tables take about 15 seconds; dozens take a few minutes. Keep this dialog open.</div></div>
         : <div className="muted-2 xs" style={{ marginTop: 8 }}>{mode === "ai" ? "The AI connection reads the columns, keys and comments of these tables and proposes classes, attributes and relationships." : "One class per table, attributes from columns, relationships from foreign keys; keys are inferred where the catalog has none."}{chosen.length > 20 && <> <strong style={{ color: "var(--orange-text)" }}>{chosen.length} tables selected: expect a few minutes, and a very large ontology.</strong></>}</div>}
     </Dialog>
+  );
+}
+
+
+/** The table a class is mapped to, with the ways into it: its metadata, its profile, its data quality; or the way to map it. */
+function MappedTable({ m, loading, cls, go }: { m: ClassMapping | undefined; loading: boolean; cls: string; go: ReturnType<typeof useGo> }) {
+  const full = m?.fullName ?? (m?.table ? m.table.filter(Boolean).join(".") : m?.sql ? "(SQL query)" : null);
+  const parts = m?.table ?? (full && !m?.sql ? [full.split(".").slice(0, -1).join("."), full.split(".").pop() ?? full] as [string, string] : null);
+  const link = (label: string, screen: string, params: Record<string, string>) => <a href="#" key={label} className="btn sm" style={{ height: 26, fontSize: 12 }} onClick={e => { e.preventDefault(); go(screen, params); }}>{label}</a>;
+  return (
+    <section className="mapped-table" aria-label="Mapped table">
+      <Label>Mapped table</Label>
+      {loading && <Skeleton h={16} />}
+      {!loading && full && (
+        <>
+          <div className="mono" style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, wordBreak: "break-all" }}>{full}</div>
+          <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+            {parts && link("Metadata", "metadata", { schema: parts[0], table: parts[1] })}
+            {parts && link("Profile", "table", { schema: parts[0], table: parts[1], tab: "profile" })}
+            {parts && link("Data quality", "table", { schema: parts[0], table: parts[1], tab: "dq" })}
+            {link("Mapping", "mapping", { cls })}
+          </div>
+        </>
+      )}
+      {!loading && !full && <div className="row between" style={{ gap: 8 }}><span className="muted" style={{ fontSize: 12.5 }}>Not mapped to a table yet.</span><a href="#" className="btn sm" style={{ height: 26, fontSize: 12 }} onClick={e => { e.preventDefault(); go("mapping", { cls }); }}>Map it</a></div>}
+    </section>
   );
 }
