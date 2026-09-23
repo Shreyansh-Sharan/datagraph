@@ -171,7 +171,11 @@ def test_domain_settings_reference_hub_connections(client, hub):
     assert client.put("/domains/hr", json={"connection_id": str(uuid.uuid4())}).status_code == 404
     src = client.get("/domains/hr/source").json()
     assert src["kind"] == "databricks" and src["connection"] == "warehouse" and src["catalog"] == "rgm" and src["schema"] == "gold" and src["host"] == "adb-1.azuredatabricks.net"
-    assert src["ai"] == {"connection": "gpt", "kind": "azureopenai", "deployment": "gpt-5.1"} and src["connections_backend"] == "hub"
+    # The domain points at this connection; the deployment's own provider is what answers, and
+    # the facts say so rather than implying the domain's choice is in force.
+    assert src["ai"]["connection"] == "gpt" and src["ai"]["kind"] == "azureopenai" and src["ai"]["deployment"] == "gpt-5.1"
+    assert src["ai"]["in_use"] is False and src["ai"]["running"] is None
+    assert src["connections_backend"] == "hub"
     card = client.get("/domains/cards").json()[0]
     assert card["source"] == {"kind": "databricks", "connection": "warehouse", "catalog": "rgm", "schema": "gold", "schemas": ["gold"]}
     # the package deleted it in the hub; the UI then asks datagraph to drop the references
