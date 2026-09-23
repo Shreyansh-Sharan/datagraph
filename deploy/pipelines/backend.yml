@@ -1,0 +1,88 @@
+# The API: test against a real Postgres, then build and push the image.
+# Set up once in Azure DevOps: a Docker registry service connection named by REGISTRY_CONNECTION,
+# and nothing else — no personal access token is used anywhere here.
+name: backend-$(Date:yyyyMMdd)-$(Rev:r)
+
+trigger:
+  branches: { include: [main] }
+  paths:
+    include: [backend, deploy/backend, deploy/pipelines/backend.yml]
+pr:
+  branches: { include: [main] }
+  paths:
+    include: [backend, deploy/backend, deploy/pipelines/backend.yml]
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  PYTHON_VERSION: "3.12"
+  REGISTRY_CONNECTION: 1p-microservice-acr
+  IMAGE_REPO: datagraph-api
+
+resources:
+  containers:
+    - container: postgres
+      image: postgres:16-alpine
+      ports: ["5432:5432"]
+      env:
+        POSTGRES_USER: ontoforge
+        POSTGRES_PASSWORD: ontoforge
+        POSTGRES_DB: ontoforge
+      options: --health-cmd="pg_isready -U ontoforge" --health-interval=5s --health-timeout=3s --health-retries=20
+
+stages:
+  - stage: Test
+    displayName: Tests
+    jobs:
+      - job: Pytest
+        displayName: Backend suite
+        services:
+          postgres: postgres
+        variables:
+          # Every test creates its own schema in this database and drops it afterwards.
+          ONTOFORGE_TEST_DATABASE_URL: postgresql://ontoforge:ontoforge@localhost:5432/ontoforge
+        steps:
+          - task: UsePythonVersion@0
+            inputs: { versionSpec: $(PYTHON_VERSION) }
+          - script: |
+              set -eux
+              python -m pip install --upgrade pip
+              pip install -e "./backend[dev,databricks]"
+            displayName: Install the package
+          - script: pytest --junitxml=junit.xml
+            displayName: Run the suite
+          - task: PublishTestResults@2
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFiles: junit.xml
+              testRunTitle: Backend
+
+  - stage: Build
+    displayName: Image
+    dependsOn: Test
+    condition: succeeded()
+    jobs:
+      - job: Image
+        displayName: Build and push
+        steps:
+          - task: Docker@2
+            displayName: Build
+            inputs:
+              command: build
+              containerRegistry: $(REGISTRY_CONNECTION)
+              repository: $(IMAGE_REPO)
+              Dockerfile: deploy/backend/Dockerfile
+              buildContext: $(Build.SourcesDirectory)
+              tags: |
+                $(Build.BuildId)
+          - task: Docker@2
+            displayName: Push
+            # Only main publishes; a pull request build proves the image builds and stops there.
+            condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+            inputs:
+              command: push
+              containerRegistry: $(REGISTRY_CONNECTION)
+              repository: $(IMAGE_REPO)
+              tags: |
+                $(Build.BuildId)

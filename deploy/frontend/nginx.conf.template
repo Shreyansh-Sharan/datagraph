@@ -1,0 +1,85 @@
+# Rendered at container start: API_UPSTREAM, HUB_UPSTREAM and AUTH_HEADER are substituted,
+# nginx's own variables ($uri, $host) are left alone because no environment variable carries
+# those names.
+server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+    client_max_body_size 50m;
+
+    gzip on;
+    gzip_types application/javascript application/json text/css text/plain image/svg+xml;
+    gzip_min_length 1024;
+    gzip_proxied any;
+
+    # Hashed filenames never change contents, so they can be cached for a year.
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
+    # The shell must not be cached, or a deploy leaves stale code pointing at missing assets.
+    location = /index.html {
+        add_header Cache-Control "no-store";
+    }
+
+    # Builds, the assistant and the drafting calls run for minutes; the rest answers in seconds.
+    location ~ ^/api/(versions/[^/]+/(builds|autodraft|llm|metadata)|assistant) {
+        proxy_pass ${API_UPSTREAM};
+        rewrite ^/api/(.*)$ /$1 break;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # The API trusts its identity header, so this proxy must be the only thing that can set
+        # it. Clearing it here means a caller cannot claim to be someone else. Whatever
+        # authenticates the user (the gateway, an OIDC proxy) sets it again in front of this.
+        proxy_set_header ${AUTH_HEADER} "";
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;                      # progress must reach the browser as it happens
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+    }
+
+    location /api/ {
+        proxy_pass ${API_UPSTREAM}/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # The API trusts its identity header, so this proxy must be the only thing that can set
+        # it. Clearing it here means a caller cannot claim to be someone else. Whatever
+        # authenticates the user (the gateway, an OIDC proxy) sets it again in front of this.
+        proxy_set_header ${AUTH_HEADER} "";
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+    }
+
+    # The MCP endpoint keeps its path: agents are configured with it as it stands.
+    location /mcp {
+        proxy_pass ${API_UPSTREAM}/mcp;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # The API trusts its identity header, so this proxy must be the only thing that can set
+        # it. Clearing it here means a caller cannot claim to be someone else. Whatever
+        # authenticates the user (the gateway, an OIDC proxy) sets it again in front of this.
+        proxy_set_header ${AUTH_HEADER} "";
+        proxy_buffering off;
+        proxy_read_timeout 600s;
+    }
+
+    # The connection module is its own service; this route is what the package talks to.
+    location /hub/ {
+        proxy_pass ${HUB_UPSTREAM}/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 60s;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

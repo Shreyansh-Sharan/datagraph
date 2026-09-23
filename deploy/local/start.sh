@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Start ontoforge locally: Postgres container, demo schema + sample tables, API + UI.
-# Usage: scripts/start.sh [--open]      env: ONTOFORGE_PORT (default 8765), ONTOFORGE_SCHEMA (default demo)
+# Run datagraph on this machine: Postgres in Docker, the demo schema with sample tables, the API.
+# Usage: deploy/local/start.sh [--open]   env: ONTOFORGE_PORT (default 8765), ONTOFORGE_SCHEMA (default demo)
 set -euo pipefail
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 PORT="${ONTOFORGE_PORT:-8765}"
 SCHEMA="${ONTOFORGE_SCHEMA:-demo}"
@@ -10,9 +10,9 @@ export ONTOFORGE_DATABASE_URL="${ONTOFORGE_DATABASE_URL:-postgresql://ontoforge:
 export ONTOFORGE_AUTH_DEFAULT_ROLE="${ONTOFORGE_AUTH_DEFAULT_ROLE:-admin}"   # local trial: everyone is admin
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
-log() { printf '[ontoforge] %s\n' "$*"; }
+log() { printf '[datagraph] %s\n' "$*"; }
 
-# 1. Postgres in Docker (docker compose service "postgres"; falls back to the ontoforge-pg container)
+# 1. Postgres (the same container deploy/compose.dev.yml starts, so either way works)
 if ! (docker ps --format '{{.Names}}' | grep -qx ontoforge-pg); then
   if docker ps -a --format '{{.Names}}' | grep -qx ontoforge-pg; then docker start ontoforge-pg >/dev/null
   else docker run -d --name ontoforge-pg -e POSTGRES_USER=ontoforge -e POSTGRES_PASSWORD=ontoforge -e POSTGRES_DB=ontoforge -p 5439:5432 postgres:16-alpine >/dev/null; fi
@@ -21,7 +21,7 @@ for _ in $(seq 1 60); do docker exec ontoforge-pg pg_isready -U ontoforge >/dev/
 log "postgres ready (container ontoforge-pg, port 5439)"
 
 # 2. Python environment
-[ -x .venv/bin/python ] || { log "creating .venv"; uv venv -q && uv pip install -q -e ".[dev]"; }
+[ -x .venv/bin/python ] || { log "creating .venv"; uv venv -q && uv pip install -q -e "./backend[dev]"; }
 
 # 3. Schema, migrations, sample data (idempotent)
 .venv/bin/python - "$SCHEMA" <<'PY'
@@ -36,11 +36,11 @@ with db.transaction() as cur:
 run_migrations(db)
 if schema == "demo" and not has_tables:
     sys.path.insert(0, ".")
-    from tests.hr_fixture import seed_tables
+    from tests.backend.hr_fixture import seed_tables
     seed_tables(db)
     with db.transaction() as cur:
         cur.execute("COMMENT ON COLUMN employees.sal IS 'Monthly salary in EUR'")
-    print("[ontoforge] seeded sample HR tables into schema demo")
+    print("[datagraph] seeded sample HR tables into schema demo")
 db.close()
 PY
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Register ontoforge as a macOS login service (launchd): starts at login, restarts if it dies.
-# Usage: scripts/install-launchd.sh [install|uninstall]
+# Register datagraph as a macOS login service (launchd): starts at login, restarts if it dies.
+# Usage: deploy/local/install-launchd.sh [install|uninstall]
 set -euo pipefail
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 LABEL="dev.ontoforge.local"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 LOG="$HOME/Library/Logs/ontoforge.log"
@@ -14,7 +14,7 @@ case "${1:-install}" in
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>$LABEL</string>
-  <key>ProgramArguments</key><array><string>/bin/bash</string><string>$ROOT/scripts/start.sh</string></array>
+  <key>ProgramArguments</key><array><string>/bin/bash</string><string>$ROOT/deploy/local/start.sh</string></array>
   <key>WorkingDirectory</key><string>$ROOT</string>
   <key>EnvironmentVariables</key><dict>
     <key>ONTOFORGE_PORT</key><string>${ONTOFORGE_PORT:-8765}</string>

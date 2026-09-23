@@ -6,9 +6,21 @@ REST, GraphQL and MCP. Postgres is the registry and the default graph store; Dat
 first warehouse target, with the dialect/catalog/source ports built for Fabric, Snowflake and
 SQL Server to follow.
 
+## Where things live
+
+Four folders, one job each. Each side of the product keeps its own tests, because that is where
+pytest and vitest look for them.
+
+```
+backend/    the Python package and its suite: API, MCP server, compiler, build pipeline, registry
+frontend/   the React app and its suite
+deploy/     images, compose, pipelines, and the scripts for a developer machine
+docs/       architecture decisions, the gap analysis, design notes
+```
+
 ## Run it
 
-One command (starts Postgres in Docker, seeds a demo schema, serves API + UI, opens the browser):
+One command starts Postgres in Docker, seeds a demo schema, serves the API and opens the browser:
 
 ```bash
 make start                 # http://127.0.0.1:8765/ui/  — Ctrl-C to stop
@@ -18,16 +30,24 @@ make install-service       # macOS: start at login and keep running (make uninst
 Step by step:
 
 ```bash
-docker compose up -d                       # Postgres 16 on :5439
-uv venv && uv pip install -e ".[dev]"
-.venv/bin/pytest                           # 150+ behaviour tests against the live Postgres
+make db                                    # Postgres 16 on :5439
+uv venv && uv pip install -e "./backend[dev]"
+pytest                                     # 380 behaviour tests against the live Postgres
 .venv/bin/python -m ontoforge migrate      # apply migrations
 .venv/bin/python -m ontoforge serve        # REST API on http://127.0.0.1:8000 (docs at /docs)
 .venv/bin/python -m ontoforge serve-mcp    # MCP server over stdio (Claude Desktop, Cursor, ...)
 .venv/bin/python -m ontoforge compile m.ttl --dialect databricks --view main.kg.triples
 ```
 
-Configuration is environment-driven; see `.env.example`.
+The React app runs against that API:
+
+```bash
+cd frontend && npm install && npm run dev  # http://127.0.0.1:5173, proxying to :8765
+npm run typecheck && npx vitest run        # or `make test-ui` from the root
+```
+
+Configuration is environment-driven; see `.env.example` for a developer machine and
+`deploy/.env.example` for a deployment.
 
 ## The pipeline
 
@@ -119,24 +139,23 @@ a freshly loaded version crawls.
 
 ## UI
 
-`/ui/` serves a dependency-free single-page app (ES modules, no build step) covering the whole
-workflow: domains and versions with the review lifecycle, metadata snapshots, the ontology map
-(click a class on the map to edit its icon, label, parents, properties and restrictions; checks,
-import, AI assist and a list view alongside), the mapping designer (the same map coloured by
-mapping status, with a Status / Data / SQL panel where clicking a column header binds it to an
-attribute), rules, data-quality constraints and validation, builds with live progress, graph
-exploration with a whole-graph backdrop, ranked search, entity detail and neighbourhood expansion,
-a sortable triples grid, analytics, and domain settings (MCP policy, attachments, cohorts, GraphQL
-console). The top bar shows the pipeline (Ontology › Mapping › Graph, ticked as each stage
-completes), the source warehouse, and a light/dark toggle. Identity is chosen in-app for header
-mode or by pasting an API key in token mode. The graph stage is sigma.js + graphology (vendored,
-MIT): ForceAtlas2 layout, colour by class or Louvain community, hover highlighting, expand on
-double-click, keyboard navigation.
+`frontend/` is the product's interface: a React app served by its own nginx image. Domains and
+versions with the review lifecycle, metadata snapshots and profiles, the ontology map, the mapping
+designer, data-quality rules, builds with live progress, graph exploration and the assistant, with
+every activity arriving in the bell.
+
+A dependency-free single-page app also ships inside the package and is what the API serves at
+`/ui/`. It covers the same workflow with no build step and is kept for deployments that run the
+API alone; new work goes into `frontend/`.
 
 ## Deploy
 
-`docker build -t ontoforge .` (migrations run at startup) or Databricks Apps via `deploy/app.yaml` —
-see [deploy/README.md](deploy/README.md).
+Two images, one database, a pipeline each: see [deploy/README.md](deploy/README.md).
+
+```bash
+cp deploy/.env.example deploy/.env
+docker compose -f deploy/compose.yml up -d --build   # http://localhost:8080
+```
 
 ## Not yet
 

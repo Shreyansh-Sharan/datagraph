@@ -1,0 +1,26 @@
+# Just the database, for running the API and the UI from source on this machine.
+#
+#   docker compose -f deploy/compose.dev.yml up -d
+#
+# Port 5439 keeps it out of the way of any other Postgres. deploy/local/start.sh starts the
+# same container by hand, so either way the connection string is the same.
+name: datagraph-dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ontoforge-pg
+    environment:
+      POSTGRES_USER: ontoforge
+      POSTGRES_PASSWORD: ontoforge
+      POSTGRES_DB: ontoforge
+    ports: ["5439:5432"]
+    volumes: ["ontoforge-pg:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ontoforge"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  ontoforge-pg:

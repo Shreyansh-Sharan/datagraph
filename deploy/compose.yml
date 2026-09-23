@@ -1,0 +1,64 @@
+# The whole product on one machine: database, migrations, API, UI.
+#
+#   cp deploy/.env.example deploy/.env      # fill it in first
+#   docker compose -f deploy/compose.yml up -d --build
+#   open http://localhost:8080
+#
+# The connection module (mf-studio-connectors) is a separate service: point HUB_UPSTREAM at it.
+name: datagraph
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ontoforge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ontoforge}
+      POSTGRES_DB: ${POSTGRES_DB:-ontoforge}
+    volumes: ["datagraph-pg:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ontoforge}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Migrations run once, before the API starts, so two API replicas never race to apply them.
+  migrate:
+    build: { context: .., dockerfile: deploy/backend/Dockerfile }
+    image: ${API_IMAGE:-datagraph-api:local}
+    command: ["python", "-m", "ontoforge", "migrate"]
+    env_file: [.env]
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  api:
+    image: ${API_IMAGE:-datagraph-api:local}
+    env_file: [.env]
+    # Reachable only from the web container. Published on the host it would bypass the proxy
+    # that clears the identity header, and anyone could then claim to be anyone.
+    expose: ["8000"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/frontend/Dockerfile
+      secrets: [npm_token]
+    image: ${WEB_IMAGE:-datagraph-web:local}
+    environment:
+      API_UPSTREAM: http://api:8000
+      HUB_UPSTREAM: ${HUB_UPSTREAM:-http://host.docker.internal:8025}
+      AUTH_HEADER: ${ONTOFORGE_AUTH_HEADER:-X-Actor}   # cleared on the way in, so no caller can set it
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    ports: ["${WEB_PORT:-8080}:80"]
+    depends_on: [api]
+    restart: unless-stopped
+
+secrets:
+  npm_token:
+    environment: NPM_TOKEN
+
+volumes:
+  datagraph-pg:

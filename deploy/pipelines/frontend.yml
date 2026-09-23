@@ -1,0 +1,82 @@
+# The UI: type-check and test, then build and push the nginx image.
+# Set up once in Azure DevOps: a Docker registry service connection named by REGISTRY_CONNECTION,
+# and a secret variable NPM_TOKEN for the private @polestar feed (a variable group is fine).
+# The token reaches the image as a BuildKit secret, so it is never written into a layer.
+name: frontend-$(Date:yyyyMMdd)-$(Rev:r)
+
+trigger:
+  branches: { include: [main] }
+  paths:
+    include: [frontend, deploy/frontend, deploy/pipelines/frontend.yml]
+pr:
+  branches: { include: [main] }
+  paths:
+    include: [frontend, deploy/frontend, deploy/pipelines/frontend.yml]
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  NODE_VERSION: "22.x"
+  REGISTRY_CONNECTION: 1p-microservice-acr
+  IMAGE_REPO: datagraph-web
+
+stages:
+  - stage: Test
+    displayName: Tests
+    jobs:
+      - job: Vitest
+        displayName: Type-check and unit tests
+        steps:
+          - task: NodeTool@0
+            inputs: { versionSpec: $(NODE_VERSION) }
+          - task: npmAuthenticate@0
+            displayName: Authenticate the private feed
+            inputs: { workingFile: frontend/.npmrc }
+          - script: npm ci
+            workingDirectory: frontend
+            displayName: Install
+          - script: npm run typecheck
+            workingDirectory: frontend
+            displayName: Type-check
+          - script: npx vitest run --reporter=junit --outputFile=../junit.xml
+            workingDirectory: frontend
+            displayName: Unit tests
+          - task: PublishTestResults@2
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFiles: junit.xml
+              testRunTitle: Frontend
+
+  - stage: Build
+    displayName: Image
+    dependsOn: Test
+    condition: succeeded()
+    jobs:
+      - job: Image
+        displayName: Build and push
+        variables:
+          DOCKER_BUILDKIT: 1                 # --secret needs BuildKit
+        steps:
+          - task: Docker@2
+            displayName: Build
+            inputs:
+              command: build
+              containerRegistry: $(REGISTRY_CONNECTION)
+              repository: $(IMAGE_REPO)
+              Dockerfile: deploy/frontend/Dockerfile
+              buildContext: $(Build.SourcesDirectory)
+              arguments: --secret id=npm_token,env=NPM_TOKEN
+              tags: |
+                $(Build.BuildId)
+            env:
+              NPM_TOKEN: $(NPM_TOKEN)
+          - task: Docker@2
+            displayName: Push
+            condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+            inputs:
+              command: push
+              containerRegistry: $(REGISTRY_CONNECTION)
+              repository: $(IMAGE_REPO)
+              tags: |
+                $(Build.BuildId)
