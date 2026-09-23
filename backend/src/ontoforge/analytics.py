@@ -236,10 +236,17 @@ def interpret_run(registry: Registry, store: TripleStore, run_id: UUID, provider
                "estimated_metrics": run.results.get("estimated", []), "data_model_health": health}
     data = provider.complete_json(prompts.INTERPRET_ANALYTICS, json.dumps(payload, indent=1, default=str), INSIGHT_SCHEMA)
     iris = [e["iri"] for e in data.get("notable_entities", [])]
-    labels = ga._labels(run.domain_version_id, iris)
+    # A model can name an entity the graph does not hold. Minting a label from the IRI would make
+    # the invention read like a finding, so only entities the store actually types are kept; the
+    # rest are listed as skipped, which is also the signal that the prompt drifted.
+    with store.db.transaction() as cur:
+        found = store._entities(cur, run.domain_version_id, sorted(set(iris))) if iris else []
+    labels = {e.iri: e.label for e in found if e.types}
+    known = set(labels)
     return {"run_id": str(run_id), "key_findings": data["key_findings"],
-            "notable_entities": [{"iri": e["iri"], "label": labels.get(e["iri"], Ontology.local_name(e["iri"])), "reason": e["reason"]}
-                                 for e in data.get("notable_entities", [])],
+            "notable_entities": [{"iri": e["iri"], "label": labels[e["iri"]], "reason": e["reason"]}
+                                 for e in data.get("notable_entities", []) if e["iri"] in known],
+            "skipped_entities": [iri for iri in iris if iri not in known],
             "recommendations": list(data.get("recommendations", []))}
 
 
@@ -248,6 +255,9 @@ def insight_markdown(insight: dict) -> str:
     if insight["notable_entities"]:
         lines.append("Notable entities:")
         lines += [f"- {e['label']} (`{e['iri']}`): {e['reason']}" for e in insight["notable_entities"]]
+        lines.append("")
+    if insight.get("skipped_entities"):
+        lines.append(f"Left out: {len(insight['skipped_entities'])} entity the graph does not hold.")
         lines.append("")
     if insight["recommendations"]:
         lines.append("Recommendations:")

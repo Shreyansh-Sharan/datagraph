@@ -54,3 +54,26 @@ def test_global_quality_rules_labels_and_orphans(db):
     by = {r.name: r for r in QualityEngine(reg, store).run(v.id, include_ontology=False).results}
     assert by["emp-connected"].violations == 1 and by["emp-connected"].samples[0]["focus"] == BASE + "Employee/9"
     assert "sh:" in cs.to_shacl() and ConstraintSet.from_shacl(cs.to_shacl()) == cs
+
+
+def test_an_entity_the_graph_does_not_hold_is_not_given_a_label(db):
+    """A model can name an IRI that exists nowhere; minting a label for it makes it look real."""
+    from ontoforge.analytics import interpret_run
+    from ontoforge.registry import Registry
+    from ontoforge.store import TripleStore
+    from tests.fakes import FakeProvider
+    from tests.hr_fixture import BASE, built_domain
+
+    reg, store, v = built_domain(db)
+    run = reg.start_analytics(v.id, scope="graph", actor="a")
+    reg.finish_analytics(run.id, status="succeeded", nodes=3, edges=2, components=1, avg_degree=1.3, density=0.2,
+                         duration=0.1, results={"top": []})
+    provider = FakeProvider([{
+        "key_findings": "The graph is small.",
+        "notable_entities": [{"iri": BASE + "Employee/1", "reason": "central"},
+                             {"iri": BASE + "Employee/9999", "reason": "invented by the model"}],
+        "recommendations": ["look again"],
+    }])
+    out = interpret_run(Registry(db), TripleStore(db), run.id, provider)
+    assert [e["iri"] for e in out["notable_entities"]] == [BASE + "Employee/1"]
+    assert out["skipped_entities"] == [BASE + "Employee/9999"]

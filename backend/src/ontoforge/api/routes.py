@@ -1011,11 +1011,13 @@ def autodraft(version_id: UUID, body: AutodraftIn, request: Request, me: Princip
     snap = SnapshotCatalog(st.metadata, version_id)
     wanted = body.tables if body.tables is not None else (snap.list_tables(body.schema_name) or None)
     catalog = snap if wanted and all(snap.has(t) for t in wanted) else st.sources.for_version(version_id).catalog
-    onto, spec = draft_from_catalog(catalog, ontology_iri=body.ontology_iri, base_iri=domain.base_iri,
-                                    tables=wanted, schema=body.schema_name, infer=body.infer_keys)
+    onto, spec, keys = draft_from_catalog(catalog, ontology_iri=body.ontology_iri, base_iri=domain.base_iri,
+                                          tables=wanted, schema=body.schema_name, infer=body.infer_keys)
     st.registry.update_content(version_id, actor=me.name, ontology_ttl=onto.to_turtle(), mapping=spec.to_dict())
     return {"classes": len(onto.classes), "properties": len(onto.datatype_properties) + len(onto.object_properties),
-            "relations": len(spec.relations), "issues": onto.check()}
+            "relations": len(spec.relations), "issues": onto.check(),
+            # Which tables the warehouse gave keys for, and which were guessed from column names.
+            "declared_keys": keys["declared_keys"], "inferred_keys": keys["inferred_keys"]}
 
 
 # -- rules -----------------------------------------------------------------------

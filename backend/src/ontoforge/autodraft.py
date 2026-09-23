@@ -132,10 +132,18 @@ def infer_keys(catalog: CatalogAdapter, tables: list[str]) -> dict[str, Inferred
 
 
 def draft_from_catalog(catalog: CatalogAdapter, *, ontology_iri: str, base_iri: str,
-                       tables: list[str] | None = None, schema: str | None = None, infer: bool = True) -> tuple[Ontology, MappingSpec]:
+                       tables: list[str] | None = None, schema: str | None = None,
+                       infer: bool = True) -> tuple[Ontology, MappingSpec, dict]:
+    """Returns the ontology, the mapping and a report saying which keys came from the warehouse.
+
+    A key the warehouse declares and a key guessed from a column name are different evidence. The
+    report names both sets so whoever reviews the draft knows which relations rest on a guess.
+    """
     tables = [catalog.qualified(t, schema) for t in (tables if tables is not None else catalog.list_tables(schema))]
     onto = Ontology(iri=ontology_iri, label=Ontology.local_name(ontology_iri) or "Draft")
     inferred = infer_keys(catalog, tables) if infer else {}
+    declared_keys: list[str] = []
+    inferred_keys: list[str] = []
     meta = {}
     for t in tables:
         if not catalog.column_types(t):
@@ -143,8 +151,11 @@ def draft_from_catalog(catalog: CatalogAdapter, *, ontology_iri: str, base_iri: 
         pk = catalog.primary_key(t)
         own = t.rsplit(".", 1)[0] if "." in t else schema   # references are spelled like the tables they point at
         fks = [(cols, catalog.qualified(ref, own), rcols) for cols, ref, rcols in catalog.foreign_keys(t)]
-        if infer and not pk and not fks and t in inferred:
+        if pk or fks:
+            declared_keys.append(t)
+        elif infer and t in inferred:
             pk, fks = inferred[t].primary_key, inferred[t].foreign_keys
+            inferred_keys.append(t)
         meta[t] = _TableMeta(t, catalog.column_types(t), pk, fks)
     class_iri: dict[str, str] = {}
     for t, m in meta.items():
@@ -200,7 +211,8 @@ def draft_from_catalog(catalog: CatalogAdapter, *, ontology_iri: str, base_iri: 
         prop = onto.add_object_property(ObjectProperty(onto.mint(name), label=humanize(name), domain=class_iri[sref], range=class_iri[tref]))
         relations.append(RelationMapping(prop.iri, class_iri[sref], class_iri[tref], table=t, source_key=scols, target_key=tcols))
 
-    return onto, MappingSpec(base_iri=base_iri, classes=tuple(classes), relations=tuple(relations))
+    report = {"declared_keys": sorted(declared_keys), "inferred_keys": sorted(inferred_keys)}
+    return onto, MappingSpec(base_iri=base_iri, classes=tuple(classes), relations=tuple(relations)), report
 
 
 class _TableMeta:

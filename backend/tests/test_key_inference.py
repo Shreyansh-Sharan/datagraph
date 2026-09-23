@@ -32,12 +32,12 @@ def test_infer_keys_from_naming():
 
 
 def test_draft_uses_inferred_keys_when_catalog_has_none():
-    onto, spec = draft_from_catalog(NoKeysCatalog(), ontology_iri="http://d/fin", base_iri="http://d/fin/", infer=True)
+    onto, spec, _ = draft_from_catalog(NoKeysCatalog(), ontology_iri="http://d/fin", base_iri="http://d/fin/", infer=True)
     rels = {(onto.local_name(r.property_iri), onto.local_name(r.source_class), onto.local_name(r.target_class)) for r in spec.relations}
     assert ("customer", "Account", "Customer") in rels and ("merchant", "Transaction", "Merchant") in rels
     assert next(c for c in spec.classes if c.class_iri.endswith("#Transaction")).key_columns == ("id",)
     assert next(c for c in spec.classes if c.class_iri.endswith("#DailyKpi")).key_columns == ("date", "revenue")   # fallback: all columns
-    onto2, spec2 = draft_from_catalog(NoKeysCatalog(), ontology_iri="http://d/fin", base_iri="http://d/fin/", infer=False)
+    onto2, spec2, _ = draft_from_catalog(NoKeysCatalog(), ontology_iri="http://d/fin", base_iri="http://d/fin/", infer=False)
     assert spec2.relations == ()
 
 
@@ -60,7 +60,7 @@ def test_star_schema_surrogate_keys_and_no_name_collisions():
     keys = infer_keys(cat, list(cat.TABLES))
     assert keys["gold.dim_customer"].primary_key == ("customer_sk",)
     assert keys["gold.fact_customer_churn"].primary_key == ("customer_sk", "product_profile_sk")
-    onto, spec = draft_from_catalog(cat, ontology_iri="http://d/fin", base_iri="http://d/fin/")
+    onto, spec, _ = draft_from_catalog(cat, ontology_iri="http://d/fin", base_iri="http://d/fin/")
     names = {onto.local_name(c) for c in onto.classes}
     assert names == {"Customer", "ProductProfile", "CustomerChurn"}
     rels = {onto.local_name(r.property_iri): (onto.local_name(r.source_class), onto.local_name(r.target_class)) for r in spec.relations}
@@ -122,7 +122,7 @@ def test_referenced_columns_win_as_primary_keys():
 
 
 def test_class_names_never_collide():
-    onto, spec = draft_from_catalog(CollidingCatalog(), ontology_iri="http://d/x", base_iri="http://d/x/")
+    onto, spec, _ = draft_from_catalog(CollidingCatalog(), ontology_iri="http://d/x", base_iri="http://d/x/")
     names = sorted(onto.local_name(c) for c in onto.classes)
     assert names == ["FactPromotion", "Product", "Promotion", "Sale"]
     keys = {onto.local_name(c.class_iri): c.key_columns for c in spec.classes}
@@ -138,7 +138,7 @@ def test_shared_relations_get_union_domains_instead_of_last_writer_wins():
                   "fact_target": {"id": "int", "customer_id": "int", "target": "double"}}
         def list_tables(self, schema=None): return sorted(self.TABLES)
         def column_types(self, table): return dict(self.TABLES[table])
-    onto, spec = draft_from_catalog(TwoFacts(), ontology_iri="http://d/x", base_iri="http://d/x/")
+    onto, spec, _ = draft_from_catalog(TwoFacts(), ontology_iri="http://d/x", base_iri="http://d/x/")
     p = onto.object_properties["http://d/x#customer"]
     assert set(p.domains) == {"http://d/x#Sale", "http://d/x#Target"} and p.range == "http://d/x#Customer"
     assert {onto.local_name(r.source_class) for r in spec.relations if r.property_iri == p.iri} == {"Sale", "Target"}
@@ -151,5 +151,5 @@ def test_autodraft_assigns_icons_from_class_names():
     assert icon_for("Customer") == "👤" and icon_for("Product") == "📦" and icon_for("SalesOrgHierarchy") == "🏢"
     assert icon_for("Calendar") == "📅" and icon_for("Geography") == "🌍" and icon_for("Sale") == "🧾"
     assert icon_for("QuantumFlux") == "🔹"
-    onto, spec = draft_from_catalog(RgmCatalog(), ontology_iri="http://d/fin", base_iri="http://d/fin/")
+    onto, spec, _ = draft_from_catalog(RgmCatalog(), ontology_iri="http://d/fin", base_iri="http://d/fin/")
     assert onto.classes["http://d/fin#Product"].icon == "📦" and onto.classes["http://d/fin#Store"].icon == "🏬"

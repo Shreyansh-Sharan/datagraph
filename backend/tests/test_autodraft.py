@@ -18,7 +18,7 @@ def test_catalog_exposes_keys(db):
 
 def test_draft_builds_classes_properties_and_relations(db):
     seed_tables(db)
-    onto, spec = draft_from_catalog(PostgresCatalog(db), ontology_iri="http://d/hr", base_iri="http://d/hr/")
+    onto, spec, _ = draft_from_catalog(PostgresCatalog(db), ontology_iri="http://d/hr", base_iri="http://d/hr/")
     names = {onto.local_name(c) for c in onto.classes}
     assert names == {"Department", "Employee", "EmployeeSkill"}          # collaborations is a pure link table
     emp = "http://d/hr#Employee"
@@ -35,7 +35,7 @@ def test_draft_builds_classes_properties_and_relations(db):
 
 def test_draft_is_buildable_end_to_end(db):
     seed_tables(db)
-    onto, spec = draft_from_catalog(PostgresCatalog(db), ontology_iri="http://d/hr", base_iri="http://d/hr/")
+    onto, spec, _ = draft_from_catalog(PostgresCatalog(db), ontology_iri="http://d/hr", base_iri="http://d/hr/")
     assert not [i for i in onto.check() if i.severity == "error"]
     reg = Registry(db)
     v = reg.create_version(reg.create_domain("hr", base_iri="http://d/hr/").id, actor="a")
@@ -64,11 +64,11 @@ def test_draft_names_tables_with_their_schema_when_one_is_given(db):
     """A snapshot is imported as schema.table; the draft must map the same names, or the two never meet."""
     seed_tables(db)
     sch = db.schema
-    onto, spec = draft_from_catalog(PostgresCatalog(db), ontology_iri="http://d/hr", base_iri="http://d/hr/", schema=sch)
+    onto, spec, _ = draft_from_catalog(PostgresCatalog(db), ontology_iri="http://d/hr", base_iri="http://d/hr/", schema=sch)
     assert {c.table for c in spec.classes} >= {f"{sch}.employees", f"{sch}.departments"}
     assert all(r.table is None or r.table.startswith(f"{sch}.") for r in spec.relations)
     assert len(spec.relations) >= 2 and {r.target_class for r in spec.relations} >= {"http://d/hr#Department"}   # the foreign keys still meet their classes
-    onto2, spec2 = draft_from_catalog(PostgresCatalog(db, default_schema=sch), ontology_iri="http://d/hr", base_iri="http://d/hr/", tables=["employees"])
+    onto2, spec2, _ = draft_from_catalog(PostgresCatalog(db, default_schema=sch), ontology_iri="http://d/hr", base_iri="http://d/hr/", tables=["employees"])
     assert [c.table for c in spec2.classes] == [f"{sch}.employees"]
 
 
@@ -85,3 +85,36 @@ def test_a_draft_from_the_snapshot_matches_the_draft_from_the_live_catalog(db):
     snap = draft_from_catalog(SnapshotCatalog(meta, v.id), ontology_iri="http://d/hr", base_iri="http://d/hr/", tables=["employees", "departments", "employee_skills"])
     assert snap[1].to_dict() == live[1].to_dict() and set(snap[0].classes) == set(live[0].classes)
     assert SnapshotCatalog(meta, v.id).column_types("employees")["sal"] == "numeric" and SnapshotCatalog(meta, v.id).list_tables() == ["departments", "employee_skills", "employees"]
+
+
+def test_a_draft_names_the_tables_whose_keys_it_guessed(db):
+    """A guessed key and a declared key are different evidence, and the draft must not blur them."""
+    from ontoforge.autodraft import draft_from_catalog
+
+    class NoDeclaredKeys:
+        """A warehouse that publishes columns but no constraints, as Databricks often does."""
+
+        def qualified(self, table, schema=None):
+            return table
+
+        def list_tables(self, schema=None):
+            return ["orders", "customers"]
+
+        def column_types(self, table):
+            return {"order_id": "int", "customer_id": "int"} if table == "orders" else {"customer_id": "int", "name": "string"}
+
+        def column_details(self, table):
+            return [{"name": n, "type": t, "comment": None} for n, t in self.column_types(table).items()]
+
+        def table_comment(self, table):
+            return None
+
+        def primary_key(self, table):
+            return ()
+
+        def foreign_keys(self, table):
+            return []
+
+    onto, spec, report = draft_from_catalog(NoDeclaredKeys(), ontology_iri="http://o/", base_iri="http://b/")
+    assert sorted(report["inferred_keys"]) == ["customers", "orders"]
+    assert report["declared_keys"] == []
