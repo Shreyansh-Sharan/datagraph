@@ -1,9 +1,8 @@
 // REST adapter for the datagraph backend (FastAPI, docs/UI-BLUEPRINT.html §8).
 // Methods with a settled contract call the API; the rest fall through to the mock so the
 // app stays usable while integration proceeds. Replace fallbacks method by method.
-import { MockApi } from "./mock";
 import { forget, memo } from "./cache";
-import type { AssistantContext, ChatEvent, ChatMessage, ChatResult, Conversation, DqRule, DqRun, DqStatus, FailingRows, GlossaryEntry, RuleInput, TableProfile, TermInput, AiProgress, AuditEntry, BuildRun, GraphSample, SearchOptions, BuildStep, CatalogTable, ChecklistItem, DriftIssue, MappingKpis, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, RefreshChange, SnapshotTable, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus, DqKindInfo, DqOverview, NotificationFeed } from "./types";
+import type { Analytics, ApiKey, Constraint, DatagraphApi, Lock, OntoCheck, Rule, AssistantContext, ChatEvent, ChatMessage, ChatResult, Conversation, DqRule, DqRun, DqStatus, FailingRows, GlossaryEntry, RuleInput, TableProfile, TermInput, AiProgress, AuditEntry, BuildRun, GraphSample, SearchOptions, BuildStep, CatalogTable, ChecklistItem, DriftIssue, MappingKpis, ClassMapping, Comment, Config, ConnResult, ConnectionRec, ConnectorSpec, DomainSettingsPatch, DomainSummary, EntityDetail, GraphStatus, Me, NewDomainInput, OntoClass, Principal, Role, SearchHit, RefreshChange, SnapshotTable, SourceFacts, TableDetail, TablePreview, Task, TriplePage, TripleQuery, VersionInfo, VersionStatus, DqKindInfo, DqOverview, NotificationFeed } from "./types";
 import { tableName } from "./types";
 import { humanAction, relTime } from "./format";
 
@@ -27,7 +26,23 @@ interface AiJob<T> { id: string; status: "running" | "succeeded" | "failed"; pro
 interface BackendSpec { base_iri: string; classes: { class_iri: string; table: string | null; sql_query: string | null; key_columns: string[]; iri_template: string | null; attributes: { property_iri: string; column: string; datatype: string | null; language: string | null }[]; excluded: string[] }[]; relations: { property_iri: string; source_class: string; target_class: string; source_key: string[] | null; target_key: string[] | null; table: string | null; sql_query: string | null; direction: string }[] }
 interface BackendCard { name: string; version_count: number; active_version: { version: number } | null; latest_version: { version: number; status: string } | null; triples: number; last_build: { status: string; finished_at: string | null; triple_count: number | null } | null; source: { kind: string; connection: string | null; catalog: string | null; schema: string | null }; mcp: { exposed: boolean; disabled_tools: string[] } }
 
-export class RestApi extends MockApi {
+// One colour per class on the analytics bars; the palette repeats past its length.
+const CLASS_COLORS = ["#2249FF", "#FF7000", "#00A3A3", "#8B5CF6", "#E11D48", "#0EA5E9", "#65A30D", "#B45309"];
+
+interface AnalyticsRunRow { id: string; scope: string; status: string; started_at: string; finished_at: string | null; nodes: number | null; edges: number | null; components: number | null; duration_seconds: number | null; results: Record<string, unknown> | null }
+
+/** What a finished analytics run found, in one line, from whatever it recorded. */
+function resultLine(r: AnalyticsRunRow): string {
+  const res = (r.results ?? {}) as Record<string, unknown>;
+  const n = (k: string) => (typeof res[k] === "number" ? (res[k] as number) : null);
+  const communities = n("communities"), modularity = n("modularity");
+  if (communities != null) return `${communities} communities${modularity == null ? "" : ` · modularity ${modularity.toFixed(2)}`}`;
+  const top = (res.top ?? res.centralities) as unknown[] | undefined;
+  if (Array.isArray(top)) return `top ${top.length}`;
+  return r.components == null ? "done" : `${r.components} component${r.components === 1 ? "" : "s"}`;
+}
+
+export class RestApi implements DatagraphApi {
   private base: string;
   private ropts: RestOptions;
   private versionIds: Record<string, string> = {};   // "domain:3" -> uuid
@@ -35,13 +50,13 @@ export class RestApi extends MockApi {
   private cfg: Config | null = null;
 
   constructor(opts: RestOptions = {}) {
-    super({});
     this.ropts = opts;
     this.base = (opts.base ?? "/api").replace(/\/$/, "");
   }
 
   private authHeaders(): Record<string, string> {
-    return this.ropts.token ? { Authorization: `Bearer ${this.ropts.token}` } : { [this.cfg?.authHeader ?? "X-Actor"]: this.ropts.actor ?? "alice" };
+    if (this.ropts.token) return { Authorization: `Bearer ${this.ropts.token}` };
+    return this.ropts.actor ? { [this.cfg?.authHeader ?? "X-Actor"]: this.ropts.actor } : {};
   }
   /** timeoutMs: reads give up after 60 s by default so a stuck source never leaves a screen spinning; 0 disables it (long checks, writes and polling). */
   private async req<T>(method: string, path: string, body?: unknown, text = false, timeoutMs?: number): Promise<T> {
@@ -64,12 +79,12 @@ export class RestApi extends MockApi {
     return (text ? await res.text() : await res.json()) as T;
   }
 
-  override async config(): Promise<Config> {
+  async config(): Promise<Config> {
     const c = await this.req<{ mode: "header" | "token"; header: string; source: { kind: "databricks" | "postgres"; catalog: string | null }; materialization?: string }>("GET", "/auth/config");
     this.cfg = { sourceKind: c.source.kind, catalog: c.source.catalog, authMode: c.mode, authHeader: c.header, materialization: c.materialization ?? "none", capabilities: { profiling: true, quality: true, glossary: true } };
     return this.cfg;
   }
-  override async me(): Promise<Me> { const m = await this.req<{ name: string; role: Role }>("GET", "/me"); return { name: m.name, role: m.role }; }
+  async me(): Promise<Me> { const m = await this.req<{ name: string; role: Role }>("GET", "/me"); return { name: m.name, role: m.role }; }
 
   private toVersion(d: BackendDomain, v: BackendSummary, prev?: BackendSummary): VersionInfo {
     this.versionIds[`${d.name}:${v.version}`] = v.id;
@@ -104,20 +119,20 @@ export class RestApi extends MockApi {
       triples: c ? c.triples.toLocaleString() : "—", lastBuild: c?.last_build ? `${c.last_build.status}${c.last_build.finished_at ? " · " + new Date(c.last_build.finished_at).toLocaleString() : ""}` : "never",
       versions, lease: versions.find(v => v.status === "draft")?.lease ?? null, review: versions.find(v => v.status === "in_review")?.review ?? null, connectionId: d.connection_id ?? null, aiConnectionId: d.ai_connection_id ?? null, targetSchema: d.target_schema ?? null };
   }
-  override async domains(): Promise<DomainSummary[]> {
+  async domains(): Promise<DomainSummary[]> {
     const [ds, cards] = await Promise.all([this.req<BackendDomain[]>("GET", "/domains"), this.req<BackendCard[]>("GET", "/domains/cards")]);
     return Promise.all(ds.map(d => this.toDomain(d, cards.find(c => c.name === d.name))));
   }
-  override async updateDomain(domain: string, patch: DomainSettingsPatch): Promise<DomainSummary> { await this.req("PUT", `/domains/${encodeURIComponent(domain)}`, patch); return this.domain(domain); }
-  override async sourceFacts(domain: string): Promise<SourceFacts> { return this.req<SourceFacts>("GET", `/domains/${encodeURIComponent(domain)}/source`); }
-  override async connectors(): Promise<ConnectorSpec[]> { return this.req<ConnectorSpec[]>("GET", "/connectors"); }
-  override async connections(): Promise<ConnectionRec[]> { return this.req<ConnectionRec[]>("GET", "/connections"); }
-  override async testConnectionById(id: string): Promise<ConnResult> { return this.req<ConnResult>("POST", `/connections/${id}/test`); }
-  override async detachConnection(id: string): Promise<void> { await this.req("DELETE", `/connections/${id}/references`); }
+  async updateDomain(domain: string, patch: DomainSettingsPatch): Promise<DomainSummary> { await this.req("PUT", `/domains/${encodeURIComponent(domain)}`, patch); return this.domain(domain); }
+  async sourceFacts(domain: string): Promise<SourceFacts> { return this.req<SourceFacts>("GET", `/domains/${encodeURIComponent(domain)}/source`); }
+  async connectors(): Promise<ConnectorSpec[]> { return this.req<ConnectorSpec[]>("GET", "/connectors"); }
+  async connections(): Promise<ConnectionRec[]> { return this.req<ConnectionRec[]>("GET", "/connections"); }
+  async testConnectionById(id: string): Promise<ConnResult> { return this.req<ConnResult>("POST", `/connections/${id}/test`); }
+  async detachConnection(id: string): Promise<void> { await this.req("DELETE", `/connections/${id}/references`); }
   // Remembered for a few seconds and dropped by any write: one screen load asks for the domain from several hooks, and the
   // version summary and the domain cards are the slow reads behind it.
-  override async domain(name: string): Promise<DomainSummary> { return this.toDomain(await memo(this, `read:domain:${name}`, () => this.req<BackendDomain>("GET", `/domains/${encodeURIComponent(name)}`), 8000)); }
-  override async createDomain(input: NewDomainInput): Promise<DomainSummary> {
+  async domain(name: string): Promise<DomainSummary> { return this.toDomain(await memo(this, `read:domain:${name}`, () => this.req<BackendDomain>("GET", `/domains/${encodeURIComponent(name)}`), 8000)); }
+  async createDomain(input: NewDomainInput): Promise<DomainSummary> {
     const body: Record<string, unknown> = { name: input.name, description: input.description, base_iri: input.base_iri, review_quorum: input.quorum };
     if (input.ai_connection_id) body.ai_connection_id = input.ai_connection_id;
     if (input.sources?.length) body.sources = input.sources;
@@ -128,69 +143,191 @@ export class RestApi extends MockApi {
     if (!id) throw new Error(`Version v${version} of ${domain} is not loaded yet`);
     return id;
   }
-  override async transition(domain: string, version: number, to: VersionStatus | "active"): Promise<DomainSummary> {
+  async transition(domain: string, version: number, to: VersionStatus | "active"): Promise<DomainSummary> {
     if (to === "active") await this.req("POST", `/domains/${encodeURIComponent(domain)}/active`, { version_id: this.vid(domain, version) });
     else await this.req("POST", `/versions/${this.vid(domain, version)}/transition`, { to });
     return this.domain(domain);
   }
-  override async createDraft(domain: string): Promise<DomainSummary> { await this.req("POST", `/domains/${encodeURIComponent(domain)}/versions`); return this.domain(domain); }
-  override async review(domain: string, version: number, approved: boolean, comment?: string): Promise<DomainSummary> {
+  async createDraft(domain: string): Promise<DomainSummary> { await this.req("POST", `/domains/${encodeURIComponent(domain)}/versions`); return this.domain(domain); }
+  async review(domain: string, version: number, approved: boolean, comment?: string): Promise<DomainSummary> {
     await this.req("POST", `/versions/${this.vid(domain, version)}/reviews`, { approved, comment: comment ?? null });
     if (!approved) await this.req("POST", `/versions/${this.vid(domain, version)}/transition`, { to: "draft" });
     return this.domain(domain);
   }
-  override async takeLease(domain: string, version: number, force = false): Promise<DomainSummary> {
+  async takeLease(domain: string, version: number, force = false): Promise<DomainSummary> {
     await this.req("POST", `/versions/${this.vid(domain, version)}/lease`, { ttl_seconds: 900, force });
     return this.domain(domain);
   }
-  override async releaseLease(domain: string, version: number): Promise<DomainSummary> {
+  async releaseLease(domain: string, version: number): Promise<DomainSummary> {
     await this.req("DELETE", `/versions/${this.vid(domain, version)}/lease`);
     return this.domain(domain);
   }
-  override async deleteDraft(domain: string, version: number): Promise<DomainSummary> {
+  async deleteDraft(domain: string, version: number): Promise<DomainSummary> {
     await this.req("DELETE", `/versions/${this.vid(domain, version)}`);
     delete this.versionIds[`${domain}:${version}`];
     return this.domain(domain);
   }
-  override async exportBundle(domain: string, version: number): Promise<unknown> {
+  async exportBundle(domain: string, version: number): Promise<unknown> {
     return this.req("GET", `/domains/${encodeURIComponent(domain)}/export?version_id=${this.vid(domain, version)}`);
   }
-  override async tasks(): Promise<Task[]> {
+  async tasks(): Promise<Task[]> {
     type T = { domain: string; version_id: string; version: number; status: VersionStatus; editor: string | null; approvals: number; quorum: number };
     const t = await this.req<{ drafts: T[]; to_review: T[]; publishable: T[] }>("GET", "/tasks");
     const me = this.ropts.actor ?? "alice";
     return [
-      ...t.to_review.map(x => ({ title: `Review ${x.domain} v${x.version}`, sub: `${x.approvals} of ${x.quorum} approvals · your review is pending`, when: "now", icon: "tasks", go: { screen: "versions", domain: x.domain, version: x.version } })),
-      ...t.publishable.map(x => ({ title: `Publish ${x.domain} v${x.version}`, sub: `Quorum met · ${x.approvals} of ${x.quorum} approvals`, when: "now", icon: "check", go: { screen: "versions", domain: x.domain, version: x.version } })),
-      ...t.drafts.filter(x => x.editor === me).map(x => ({ title: `Your draft ${x.domain} v${x.version}`, sub: "You hold the edit lease", when: "now", icon: "settings", go: { screen: "overview", domain: x.domain, version: x.version } })),
+      ...t.to_review.map(x => ({ title: `Review ${x.domain} v${x.version}`, sub: `${x.approvals} of ${x.quorum} approvals · your review is pending`, when: "", icon: "tasks", go: { screen: "versions", domain: x.domain, version: x.version } })),
+      ...t.publishable.map(x => ({ title: `Publish ${x.domain} v${x.version}`, sub: `Quorum met · ${x.approvals} of ${x.quorum} approvals`, when: "", icon: "check", go: { screen: "versions", domain: x.domain, version: x.version } })),
+      ...t.drafts.filter(x => x.editor === me).map(x => ({ title: `Your draft ${x.domain} v${x.version}`, sub: "You hold the edit lease", when: "", icon: "settings", go: { screen: "overview", domain: x.domain, version: x.version } })),
     ];
   }
-  override async notifications(since?: number): Promise<NotificationFeed> {
+  async notifications(since?: number): Promise<NotificationFeed> {
     return this.req("GET", `/notifications?limit=60${since != null ? `&since=${since}` : ""}`, undefined, false, 15_000);
   }
-  override async markRead(input: { ids?: number[]; until?: number }): Promise<{ unread: number }> {
+  async markRead(input: { ids?: number[]; until?: number }): Promise<{ unread: number }> {
     return this.req("POST", "/notifications/read", input);
   }
-  override async audit(domain: string): Promise<AuditEntry[]> {
+  /** The last segment of an IRI: what the ontology calls the class or property. */
+  private static short(iri: string): string {
+    const tail = iri.split(/[#/]/).pop();
+    return tail || iri;
+  }
+
+  async setClassDescription(domain: string, version: number, cls: string, description: string): Promise<void> {
+    const vid = this.vid(domain, version);
+    const doc = await this.req<{ classes: { iri: string; description: string | null }[] }>("GET", `/versions/${vid}/ontology`);
+    const target = doc.classes.find(c => RestApi.short(c.iri) === cls || c.iri === cls);
+    if (!target) throw new ApiError(404, `The ontology has no class ${cls}`);
+    target.description = description.trim() || null;
+    await this.req("PUT", `/versions/${vid}/ontology/json`, doc);
+  }
+  async ontologyChecks(domain: string, version: number): Promise<OntoCheck[]> {
+    const rows = await this.req<{ code: string; subject: string; message: string; severity: string }[]>("GET", `/versions/${this.vid(domain, version)}/ontology/checks`);
+    return rows.map(r => ({ severity: (r.severity === "error" || r.severity === "info" ? r.severity : "warning") as OntoCheck["severity"],
+                            code: r.code, subject: RestApi.short(r.subject), message: r.message,
+                            target: { screen: "ontology" as const, cls: RestApi.short(r.subject) } }));
+  }
+  async rules(domain: string, version: number): Promise<Rule[]> {
+    const r = await this.req<{ rules: { name: string; mode: string; enabled: boolean; text?: string }[] }>("GET", `/versions/${this.vid(domain, version)}/rules`);
+    // Rule runs are not recorded per rule, so the screen says "never" rather than inventing a time.
+    return (r.rules ?? []).map(x => ({ name: x.name, mode: x.mode === "violation" ? "violation" : "materialize", text: x.text ?? "", enabled: !!x.enabled, lastRun: null }));
+  }
+  async constraints(domain: string, version: number): Promise<Constraint[]> {
+    const r = await this.req<{ constraints: { name: string; target_class: string; property: string | null; kind: string; value: unknown; severity: string; message: string | null }[] }>(
+      "GET", `/versions/${this.vid(domain, version)}/quality`);
+    // These are the definitions. Violations exist only once the checks are run, so count stays unknown.
+    return (r.constraints ?? []).map(c => ({ name: c.name, target: RestApi.short(c.target_class), kind: c.kind,
+                                             severity: (c.severity === "warning" || c.severity === "info" ? c.severity : "violation") as Constraint["severity"],
+                                             count: null, sample: null }));
+  }
+  async runConstraintChecks(domain: string, version: number): Promise<Constraint[]> {
+    const vid = this.vid(domain, version);
+    const r = await this.req<{ results: { name: string; kind: string; severity: string; targets: number; violations: number; samples: { focus?: string; value?: string }[] }[] }>(
+      "POST", `/versions/${vid}/reasoning/quality`, {}, false, 0);
+    const defs = await this.constraints(domain, version);
+    const by = new Map(r.results.map(x => [x.name, x]));
+    return defs.map(d => {
+      const run = by.get(d.name);
+      if (!run) return d;
+      const focus = run.samples[0]?.focus;
+      return { ...d, count: run.violations, sample: focus ? RestApi.short(focus) : run.violations ? "—" : "none", sampleEntity: focus };
+    });
+  }
+  /** The ontology's own restrictions, turned into constraints through the shapes it generates. */
+  async deriveConstraints(domain: string, version: number): Promise<Constraint[]> {
+    const vid = this.vid(domain, version);
+    const turtle = await this.req<string>("GET", `/versions/${vid}/reasoning/shapes`, undefined, true);
+    await this.req("POST", `/versions/${vid}/quality/import-shacl`, { turtle }, false, 0);
+    return this.constraints(domain, version);
+  }
+  async runInference(domain: string, version: number): Promise<{ inferred: number; seconds: number; inconsistent: string[] }> {
+    return this.req("POST", `/versions/${this.vid(domain, version)}/reasoning/infer`, {}, false, 0);
+  }
+  async runReasoningRules(domain: string, version: number): Promise<{ materialised: number; violations: number }> {
+    const r = await this.req<{ materialised: number; iterations: number; per_rule: Record<string, number>; violations: unknown[] }>(
+      "POST", `/versions/${this.vid(domain, version)}/reasoning/rules`, {}, false, 0);
+    return { materialised: r.materialised, violations: r.violations.length };
+  }
+  async setRuleEnabled(domain: string, version: number, name: string, enabled: boolean): Promise<Rule[]> {
+    const vid = this.vid(domain, version);
+    const current = await this.req<{ rules: Record<string, unknown>[] }>("GET", `/versions/${vid}/rules`);
+    const rules = (current.rules ?? []).map(r => (r.name === name ? { ...r, enabled } : r));
+    await this.req("PUT", `/versions/${vid}/rules`, { rules });
+    return this.rules(domain, version);
+  }
+  async analytics(domain: string): Promise<Analytics> {
+    const vid = await this.activeVid(domain);
+    const opt = <T,>(path: string, fallback: T) => this.req<T>("GET", path).catch(() => fallback);
+    const [status, health, runs] = await Promise.all([
+      opt<{ triples: number; inferred: number; types?: Record<string, number> }>(`/versions/${vid}/graph/status`, { triples: 0, inferred: 0, types: {} }),
+      opt<{ entity_type: string; instances: number; relationship_predicates: number; flag: string | null; recommendation: string | null }[]>(`/versions/${vid}/analytics/health`, []),
+      opt<AnalyticsRunRow[]>(`/versions/${vid}/analytics/runs`, []),
+    ]);
+    const entities = health.reduce((a, h) => a + h.instances, 0);
+    const flagged = health.filter(h => h.flag).length;
+    const done = runs.filter(r => r.status === "succeeded");
+    const latest = done.find(r => r.results && (r.results.top || r.results.centralities));
+    const top = ((latest?.results?.top ?? latest?.results?.centralities ?? []) as { iri?: string; label?: string; score?: number; type?: string }[])
+      .slice(0, 8).map(n => ({ label: n.label ?? RestApi.short(n.iri ?? ""), type: n.type ? RestApi.short(n.type) : "", score: n.score == null ? "—" : n.score.toFixed(3), entity: n.iri ?? "" }));
+    return {
+      health: [
+        { label: "Triples", value: status.triples.toLocaleString(), sub: `${status.inferred.toLocaleString()} inferred`, tone: "blue" },
+        { label: "Inferred", value: status.inferred.toLocaleString(), sub: "from rules and OWL RL", tone: "ink" },
+        { label: "Entities", value: entities.toLocaleString(), sub: `${health.length} class${health.length === 1 ? "" : "es"}`, tone: "ink" },
+        { label: "Classes flagged", value: String(flagged), sub: flagged ? "see the recommendations" : "nothing to report", tone: flagged ? "warn" : "ink" },
+      ],
+      perClass: health.map((h, i) => ({ label: RestApi.short(h.entity_type), n: h.instances, color: CLASS_COLORS[i % CLASS_COLORS.length] })),
+      runs: done.map(r => ({ kind: r.scope, params: r.duration_seconds == null ? "—" : `${r.duration_seconds.toFixed(1)} s`,
+                             result: resultLine(r), when: relTime(r.finished_at ?? r.started_at) })),
+      top,
+    };
+  }
+  async runAnalytics(domain: string, kind: "communities" | "centralities"): Promise<Analytics> {
+    await this.req("POST", `/versions/${await this.activeVid(domain)}/analytics/${kind}`, {}, false, 0);
+    return this.analytics(domain);
+  }
+  async apiKeys(): Promise<ApiKey[]> {
+    const rows = await this.req<{ name: string; principal: string; role: Role; revoked_at: string | null }[]>("GET", "/admin/api-keys");
+    return rows.filter(k => !k.revoked_at).map(k => ({ name: k.name, prefix: k.principal, role: k.role }));
+  }
+  async createApiKey(name: string, principal: string, role: Role): Promise<{ secret: string }> {
+    const k = await this.req<{ secret: string }>("POST", "/admin/api-keys", { name, principal, role });
+    return { secret: k.secret };
+  }
+  async revokeApiKey(name: string): Promise<void> {
+    const rows = await this.req<{ id: string; name: string }[]>("GET", "/admin/api-keys");
+    const key = rows.find(k => k.name === name);
+    if (key) await this.req("DELETE", `/admin/api-keys/${key.id}`);
+  }
+  async setPrincipalRole(name: string, role: Role): Promise<void> {
+    await this.req("PUT", `/admin/principals/${encodeURIComponent(name)}`, { role });
+  }
+  async locks(): Promise<Lock[]> {
+    const rows = await this.req<{ domain: string; version: number; version_id: string; editor: string | null; lease_expires_at: string | null; stale: boolean }[]>("GET", "/admin/locks");
+    return rows.map(l => ({ what: `${l.domain} v${l.version}`, who: l.editor ?? "—", exp: l.stale ? "expired" : relTime(l.lease_expires_at), id: l.version_id }));
+  }
+  async forceRelease(versionId: string): Promise<void> {
+    await this.req("DELETE", `/admin/locks/${versionId}`);
+  }
+  async audit(domain: string): Promise<AuditEntry[]> {
     const d = await this.domain(domain);
     type Row = { actor: string | null; action: string; created_at: string; detail: Record<string, unknown> | null };
     const trails = await Promise.all(d.versions.map(async v => (await this.req<Row[]>("GET", `/versions/${this.vid(domain, v.version)}/audit`)).map(r => ({ ...r, version: v.version }))));
     return trails.flat().sort((a, b) => b.created_at.localeCompare(a.created_at))
       .map(r => ({ who: r.actor ?? "system", what: humanAction(r.action, r.detail), version: r.version, when: relTime(r.created_at) }));
   }
-  override async comments(domain: string): Promise<Comment[]> {
+  async comments(domain: string): Promise<Comment[]> {
     const d = await this.domain(domain); const latest = d.versions[0]; if (!latest) return [];
     const rows = await this.req<{ author: string; created_at: string; body: string }[]>("GET", `/versions/${this.vid(domain, latest.version)}/comments`);
     return rows.map(r => ({ who: r.author, when: r.created_at, text: r.body }));
   }
-  override async addComment(domain: string, text: string): Promise<Comment[]> {
+  async addComment(domain: string, text: string): Promise<Comment[]> {
     const d = await this.domain(domain); const latest = d.versions[0]; if (!latest) return [];
     await this.req("POST", `/versions/${this.vid(domain, latest.version)}/comments`, { body: text });
     return this.comments(domain);
   }
-  override async setMcp(domain: string, exposed: boolean): Promise<void> { await this.req("PUT", `/domains/${encodeURIComponent(domain)}/mcp-policy`, { exposed, disabled_tools: [] }); }
+  async setMcp(domain: string, exposed: boolean): Promise<void> { await this.req("PUT", `/domains/${encodeURIComponent(domain)}/mcp-policy`, { exposed, disabled_tools: [] }); }
 
-  override async schemas(domain: string): Promise<{ id: string; label: string; group?: string }[]> {
+  async schemas(domain: string): Promise<{ id: string; label: string; group?: string }[]> {
     const f = await this.sourceFacts(domain);
     const entries = f.sources?.length ? f.sources : [{ kind: f.kind, connection: f.connection, catalog: f.catalog, schemas: f.schemas ?? (f.schema ? [f.schema] : []) }];
     const all = async (catalog: string | null) => this.req<string[]>("GET", `/catalog/schemas?domain=${encodeURIComponent(domain)}${catalog ? `&catalog=${encodeURIComponent(catalog)}` : ""}`).catch(() => [] as string[]);
@@ -198,7 +335,7 @@ export class RestApi extends MockApi {
     return expanded.flatMap(src => { const dbx = src.kind === "databricks" && !!src.catalog;
       return src.schemas.map(sch => ({ id: dbx ? `${src.catalog}.${sch}` : sch, label: `${dbx ? `${src.catalog}.` : ""}${sch}`, group: src.connection ?? "deployment default" })); });
   }
-  override async catalogSchemas(domain: string): Promise<string[]> {
+  async catalogSchemas(domain: string): Promise<string[]> {
     const d = await this.domain(domain); const cfg = this.cfg ?? await this.config();
     const q = cfg.sourceKind === "databricks" && d.catalog ? `&catalog=${encodeURIComponent(d.catalog)}` : "";
     return this.req<string[]>("GET", `/catalog/schemas?domain=${encodeURIComponent(domain)}${q}`);
@@ -211,7 +348,7 @@ export class RestApi extends MockApi {
     const hit = Object.entries(m).find(([, x]) => x.fullName?.toLowerCase() === q) ?? Object.entries(m).find(([, x]) => x.fullName?.toLowerCase().split(".").pop() === bare);
     return hit?.[0] ?? null;
   }
-  override async catalogTables(domain: string, schema: string, version?: number): Promise<CatalogTable[]> {
+  async catalogTables(domain: string, schema: string, version?: number): Promise<CatalogTable[]> {
     const [raw, snap, mapped] = await Promise.all([
       this.req<({ name: string; columns: number; comment: string | null } | string)[]>("GET", `/catalog/tables?domain=${encodeURIComponent(domain)}&schema_name=${encodeURIComponent(schema)}&detail=true`),
       version !== undefined ? this.snapshot(domain, version).catch(() => [] as SnapshotTable[]) : Promise.resolve([] as SnapshotTable[]),
@@ -222,38 +359,38 @@ export class RestApi extends MockApi {
     return rows.map(r => { const name = r.name.split(".").pop() ?? r.name; const q = `${schema}.${name}`.toLowerCase(); const t = held.get(q) ?? held.get(name.toLowerCase());
       return { name, cols: r.columns || t?.columns || 0, imported: !!t, cls: byTable.get(q) ?? null, held: t?.table ?? null }; });
   }
-  override async tableClass(domain: string, table: string, version?: number): Promise<string | null> { return this.classOf(domain, version, table); }
+  async tableClass(domain: string, table: string, version?: number): Promise<string | null> { return this.classOf(domain, version, table); }
   // -- table insights ---------------------------------------------------------------------------------
   private tpath(domain: string, version: number, table: string) { return `/versions/${this.vid(domain, version)}/tables/${encodeURIComponent(table)}`; }
-  override async tableProfile(domain: string, version: number, table: string): Promise<TableProfile | null> {
+  async tableProfile(domain: string, version: number, table: string): Promise<TableProfile | null> {
     try { return await this.req<TableProfile>("GET", `${this.tpath(domain, version, table)}/profile`); }
     catch (e) { if (e instanceof Error && /No profile/.test(e.message)) return null; throw e; }
   }
-  override async runProfile(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<TableProfile> {
+  async runProfile(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<TableProfile> {
     return this.aiJob<TableProfile>(`${this.tpath(domain, version, table)}/profile`, undefined, onProgress);
   }
-  override async tableDq(domain: string, version: number, table: string): Promise<DqStatus> { return this.req<DqStatus>("GET", `${this.tpath(domain, version, table)}/dq`); }
-  override async dqKinds(): Promise<DqKindInfo[]> { return this.req<DqKindInfo[]>("GET", "/dq/kinds"); }
-  override async dqOverview(domain: string, version: number): Promise<DqOverview> { return this.req<DqOverview>("GET", `/versions/${this.vid(domain, version)}/dq`); }
-  override async runDq(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<DqRun> {
+  async tableDq(domain: string, version: number, table: string): Promise<DqStatus> { return this.req<DqStatus>("GET", `${this.tpath(domain, version, table)}/dq`); }
+  async dqKinds(): Promise<DqKindInfo[]> { return this.req<DqKindInfo[]>("GET", "/dq/kinds"); }
+  async dqOverview(domain: string, version: number): Promise<DqOverview> { return this.req<DqOverview>("GET", `/versions/${this.vid(domain, version)}/dq`); }
+  async runDq(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<DqRun> {
     return this.aiJob<DqRun>(`${this.tpath(domain, version, table)}/dq/run`, undefined, onProgress);
   }
-  override async addRule(domain: string, version: number, table: string, rule: RuleInput): Promise<DqRule> {
+  async addRule(domain: string, version: number, table: string, rule: RuleInput): Promise<DqRule> {
     const r = await this.req<Omit<DqRule, "last" | "history">>("POST", `${this.tpath(domain, version, table)}/dq/rules`, rule);
     return { ...r, last: null, history: [] };
   }
-  override async updateRule(ruleId: string, patch: Partial<RuleInput>): Promise<DqRule> { const r = await this.req<Omit<DqRule, "last" | "history">>("PUT", `/dq/rules/${ruleId}`, patch); return { ...r, last: null, history: [] }; }
-  override async deleteRule(ruleId: string): Promise<void> { await this.req<void>("DELETE", `/dq/rules/${ruleId}`); }
-  override async suggestRules(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<{ added: number; skipped: string[] }> {
+  async updateRule(ruleId: string, patch: Partial<RuleInput>): Promise<DqRule> { const r = await this.req<Omit<DqRule, "last" | "history">>("PUT", `/dq/rules/${ruleId}`, patch); return { ...r, last: null, history: [] }; }
+  async deleteRule(ruleId: string): Promise<void> { await this.req<void>("DELETE", `/dq/rules/${ruleId}`); }
+  async suggestRules(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<{ added: number; skipped: string[] }> {
     const r = await this.aiJob<{ added: number; skipped?: string[] }>(`${this.tpath(domain, version, table)}/dq/suggest`, undefined, onProgress);
     return { added: r.added, skipped: r.skipped ?? [] };
   }
-  override async autoSuggestRules(domain: string, version: number, table: string): Promise<{ added: number; skipped: string[] }> {
+  async autoSuggestRules(domain: string, version: number, table: string): Promise<{ added: number; skipped: string[] }> {
     const r = await this.req<{ added: number; skipped?: string[] }>("POST", `${this.tpath(domain, version, table)}/dq/auto`);
     return { added: r.added, skipped: r.skipped ?? [] };
   }
   // -- the assistant: one POST, the answer streamed as server-sent events -------------------------------
-  override async chat(message: string, ctx: AssistantContext, conversationId: string | null, onEvent?: (e: ChatEvent) => void): Promise<ChatResult> {
+  async chat(message: string, ctx: AssistantContext, conversationId: string | null, onEvent?: (e: ChatEvent) => void): Promise<ChatResult> {
     const res = await fetch(`${this.base}/assistant/chat`, { method: "POST", headers: { "Content-Type": "application/json", Accept: "text/event-stream", ...this.authHeaders() },
       body: JSON.stringify({ message, context: ctx, conversation_id: conversationId }) });
     if (!res.ok) { let detail = res.statusText; try { const j = await res.json(); detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail ?? j); } catch { /* keep */ } throw new ApiError(res.status, detail); }
@@ -278,15 +415,15 @@ export class RestApi extends MockApi {
     if (!done) throw new Error("The assistant's stream ended without an answer");
     return done;
   }
-  override async conversations(domain?: string): Promise<Conversation[]> { return this.req<Conversation[]>("GET", `/assistant/conversations${domain ? `?domain=${encodeURIComponent(domain)}` : ""}`); }
-  override async conversation(id: string): Promise<Conversation & { messages: ChatMessage[] }> { return this.req("GET", `/assistant/conversations/${id}`); }
-  override async deleteConversation(id: string): Promise<void> { await this.req<void>("DELETE", `/assistant/conversations/${id}`); }
-  override async ruleFailures(ruleId: string, limit = 20): Promise<FailingRows> { return this.req<FailingRows>("GET", `/dq/rules/${ruleId}/failures?limit=${limit}`); }
-  override async suggestTerms(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<{ added: number; skipped: string[] }> {
+  async conversations(domain?: string): Promise<Conversation[]> { return this.req<Conversation[]>("GET", `/assistant/conversations${domain ? `?domain=${encodeURIComponent(domain)}` : ""}`); }
+  async conversation(id: string): Promise<Conversation & { messages: ChatMessage[] }> { return this.req("GET", `/assistant/conversations/${id}`); }
+  async deleteConversation(id: string): Promise<void> { await this.req<void>("DELETE", `/assistant/conversations/${id}`); }
+  async ruleFailures(ruleId: string, limit = 20): Promise<FailingRows> { return this.req<FailingRows>("GET", `/dq/rules/${ruleId}/failures?limit=${limit}`); }
+  async suggestTerms(domain: string, version: number, table: string, onProgress?: (p: AiProgress) => void): Promise<{ added: number; skipped: string[] }> {
     const r = await this.aiJob<{ added: number; skipped?: string[] }>(`${this.tpath(domain, version, table)}/glossary/suggest`, undefined, onProgress);
     return { added: r.added, skipped: r.skipped ?? [] };
   }
-  override async glossary(domain: string, opts?: { kind?: "term" | "metric"; table?: string; q?: string }): Promise<GlossaryEntry[]> {
+  async glossary(domain: string, opts?: { kind?: "term" | "metric"; table?: string; q?: string }): Promise<GlossaryEntry[]> {
     const params = new URLSearchParams();
     if (opts?.kind) params.set("kind", opts.kind);
     if (opts?.table) params.set("table", opts.table);
@@ -294,22 +431,22 @@ export class RestApi extends MockApi {
     const qs = params.toString();
     return this.req<GlossaryEntry[]>("GET", `/domains/${encodeURIComponent(domain)}/glossary${qs ? `?${qs}` : ""}`);
   }
-  override async addTerm(domain: string, term: TermInput): Promise<GlossaryEntry> { return this.req<GlossaryEntry>("POST", `/domains/${encodeURIComponent(domain)}/glossary`, term); }
-  override async updateTerm(id: string, patch: Partial<TermInput>): Promise<GlossaryEntry> { return this.req<GlossaryEntry>("PUT", `/glossary/${id}`, patch); }
-  override async deleteTerm(id: string): Promise<void> { await this.req<void>("DELETE", `/glossary/${id}`); }
+  async addTerm(domain: string, term: TermInput): Promise<GlossaryEntry> { return this.req<GlossaryEntry>("POST", `/domains/${encodeURIComponent(domain)}/glossary`, term); }
+  async updateTerm(id: string, patch: Partial<TermInput>): Promise<GlossaryEntry> { return this.req<GlossaryEntry>("PUT", `/glossary/${id}`, patch); }
+  async deleteTerm(id: string): Promise<void> { await this.req<void>("DELETE", `/glossary/${id}`); }
   private toSnapshot(t: { table: string; comment: string | null; columns: { name: string }[]; primary_key: string[]; captured_at?: string | null }): SnapshotTable {
     return { table: t.table, columns: t.columns.length, columnNames: t.columns.map(c => c.name), comment: t.comment, primaryKey: t.primary_key ?? [], capturedAt: t.captured_at ?? null };
   }
-  override async snapshot(domain: string, version: number): Promise<SnapshotTable[]> {
+  async snapshot(domain: string, version: number): Promise<SnapshotTable[]> {
     return (await this.req<Parameters<RestApi["toSnapshot"]>[0][]>("GET", `/versions/${this.vid(domain, version)}/metadata`)).map(t => this.toSnapshot(t));
   }
-  override async importTables(domain: string, version: number, schema: string, tables: string[]): Promise<SnapshotTable[]> {
+  async importTables(domain: string, version: number, schema: string, tables: string[]): Promise<SnapshotTable[]> {
     return (await this.req<Parameters<RestApi["toSnapshot"]>[0][]>("POST", `/versions/${this.vid(domain, version)}/metadata/import`, { tables, schema_name: schema })).map(t => this.toSnapshot(t));
   }
-  override async removeTable(domain: string, version: number, table: string): Promise<void> {
+  async removeTable(domain: string, version: number, table: string): Promise<void> {
     await this.req<void>("DELETE", `/versions/${this.vid(domain, version)}/metadata/${encodeURIComponent(table)}`);
   }
-  override async refreshSnapshot(domain: string, version: number): Promise<RefreshChange[]> {
+  async refreshSnapshot(domain: string, version: number): Promise<RefreshChange[]> {
     return this.req<RefreshChange[]>("POST", `/versions/${this.vid(domain, version)}/metadata/refresh`);
   }
   private factsOf = new Map<string, Promise<{ kind: string; catalog: string | null }>>();
@@ -319,14 +456,14 @@ export class RestApi extends MockApi {
     if (!p) { p = this.sourceFacts(domain).then(f => ({ kind: f.kind, catalog: f.catalog })).catch(async () => { const cfg = this.cfg ?? await this.config(); return { kind: cfg.sourceKind, catalog: cfg.catalog ?? null }; }); this.factsOf.set(domain, p); }
     return p;
   }
-  override async tableDetail(domain: string, schema: string, table: string): Promise<TableDetail> {
+  async tableDetail(domain: string, schema: string, table: string): Promise<TableDetail> {
     const src = await this.sourceOf(domain);
     const full = schema.includes(".") ? `${schema}.${table}` : src.kind === "databricks" && src.catalog ? tableName("databricks", src.catalog, schema, table) : `${schema}.${table}`;
     const t = await this.req<{ comment: string | null; columns: { name: string; type: string; comment: string | null }[]; primary_key: string[]; foreign_keys: { columns: string[] }[] }>("GET", `/catalog/tables/${encodeURIComponent(full)}?domain=${encodeURIComponent(domain)}`);
     const pk = new Set(t.primary_key ?? []); const fk = new Set((t.foreign_keys ?? []).flatMap(f => f.columns));
     return { name: table, fullName: full, comment: t.comment ?? "", columns: t.columns.map(c => ({ name: c.name, type: c.type, comment: c.comment ?? "", key: pk.has(c.name) ? "pk" : fk.has(c.name) ? "fk" : null, keyInferred: false })) };
   }
-  override async ontology(domain: string, version: number): Promise<OntoClass[]> {
+  async ontology(domain: string, version: number): Promise<OntoClass[]> {
     const o = await this.req<{ classes: { iri: string; label: string | null; description: string | null; parents: string[] }[]; object_properties: { iri: string; domain: string | null; domains: string[]; range: string | null }[]; datatype_properties: { iri: string; domain: string | null; domains: string[]; range: string | null }[] }>("GET", `/versions/${this.vid(domain, version)}/ontology`);
     const local = (iri: string) => iri.split(/[#/]/).pop() ?? iri;
     const doms = (p: { domain: string | null; domains: string[] }) => (p.domains?.length ? p.domains : p.domain ? [p.domain] : []);
@@ -378,17 +515,17 @@ export class RestApi extends MockApi {
     if (job.status === "failed") throw new Error(job.error ?? "The AI task failed");
     return job.result as T;
   }
-  override async suggestRelations(domain: string, version: number, onProgress?: (p: AiProgress) => void) {
+  async suggestRelations(domain: string, version: number, onProgress?: (p: AiProgress) => void) {
     const r = await this.aiJob<{ added: number; declared: number; by_name: number; ai: number; skipped?: string[]; unmappable?: string[] }>(`/versions/${this.vid(domain, version)}/llm/suggest-relations`, {}, onProgress);
     return { added: r.added, declared: r.declared, byName: r.by_name, ai: r.ai, skipped: r.skipped ?? [], unmappable: r.unmappable ?? [] };
   }
-  override async runningAiJob(domain: string, version: number, kind: "suggest-mapping" | "draft-ontology" | "suggest-relations", onProgress?: (p: AiProgress) => void): Promise<AiProgress | null> {
+  async runningAiJob(domain: string, version: number, kind: "suggest-mapping" | "draft-ontology" | "suggest-relations", onProgress?: (p: AiProgress) => void): Promise<AiProgress | null> {
     const latest = await this.req<AiJob<unknown> | null>("GET", `/versions/${this.vid(domain, version)}/jobs?kind=${kind}`);
     if (!latest || latest.status !== "running") return null;
     const job = await this.followJob(latest, onProgress);
     return { progress: job.status === "failed" ? (job.error ?? "failed") : (job.progress ?? "Done"), startedAt: job.started_at, progressAt: job.progress_at, status: job.status };
   }
-  override async draftOntology(domain: string, version: number, opts: { ai: boolean; description?: string; tables?: string[] }, onProgress?: (p: AiProgress) => void): Promise<{ classes: number; properties: number; warnings: number }> {
+  async draftOntology(domain: string, version: number, opts: { ai: boolean; description?: string; tables?: string[] }, onProgress?: (p: AiProgress) => void): Promise<{ classes: number; properties: number; warnings: number }> {
     const d = await this.domain(domain); const vid = this.vid(domain, version);
     const ontology_iri = `${d.base_iri.replace(/\/$/, "")}/ontology`;
     const tables = opts.tables ?? (await this.snapshot(domain, version)).map(t => t.table);
@@ -399,7 +536,7 @@ export class RestApi extends MockApi {
     const r = await this.req<{ classes: number; properties: number }>("POST", `/versions/${vid}/autodraft`, { ontology_iri, tables, infer_keys: true });
     return { classes: r.classes, properties: r.properties, warnings: 0 };
   }
-  override async mapping(domain: string, version: number): Promise<Record<string, ClassMapping>> {
+  async mapping(domain: string, version: number): Promise<Record<string, ClassMapping>> {
     const [st, spec] = await Promise.all([this.req<{ classes: { class_iri: string; state: "complete" | "partial" | "unmapped" }[] }>("GET", `/versions/${this.vid(domain, version)}/mapping/status`).catch(() => ({ classes: [] })), this.spec(domain, version)]);
     const out: Record<string, ClassMapping> = {};
     for (const c of spec.classes) {
@@ -410,7 +547,7 @@ export class RestApi extends MockApi {
     }
     return out;
   }
-  override async mapClass(domain: string, version: number, cls: string, table: string, key: string[]): Promise<void> {
+  async mapClass(domain: string, version: number, cls: string, table: string, key: string[]): Promise<void> {
     const [spec, names] = await Promise.all([this.spec(domain, version), this.names(domain, version)]);
     const iri = names.cls[cls]; if (!iri) throw new Error(`Class ${cls} is not in the ontology`);
     const old = spec.classes.find(c => c.class_iri === iri);
@@ -418,45 +555,45 @@ export class RestApi extends MockApi {
     spec.classes = [...spec.classes.filter(c => c.class_iri !== iri), entry];
     await this.saveSpec(domain, version, spec);
   }
-  override async bindAttribute(domain: string, version: number, cls: string, attr: string, column: string | null): Promise<void> {
+  async bindAttribute(domain: string, version: number, cls: string, attr: string, column: string | null): Promise<void> {
     const { spec, entry, names } = await this.classEntry(domain, version, cls);
     const piri = names.prop[attr]; if (!piri) throw new Error(`${attr} is not a property of the ontology`);
     entry.attributes = entry.attributes.filter(a => a.property_iri !== piri);
     if (column) entry.attributes.push({ property_iri: piri, column, datatype: null, language: null });
     await this.saveSpec(domain, version, spec);
   }
-  override async excludeProperty(domain: string, version: number, cls: string, prop: string, excluded: boolean): Promise<void> {
+  async excludeProperty(domain: string, version: number, cls: string, prop: string, excluded: boolean): Promise<void> {
     const { spec, entry, names } = await this.classEntry(domain, version, cls);
     const piri = names.prop[prop]; if (!piri) throw new Error(`${prop} is not a property of the ontology`);
     const ex = new Set(entry.excluded ?? []); if (excluded) ex.add(piri); else ex.delete(piri); entry.excluded = [...ex].sort();
     if (excluded) entry.attributes = entry.attributes.filter(a => a.property_iri !== piri);
     await this.saveSpec(domain, version, spec);
   }
-  override async mapRelation(domain: string, version: number, cls: string, rel: string, sourceKey: string[], targetKey: string[]): Promise<void> {
+  async mapRelation(domain: string, version: number, cls: string, rel: string, sourceKey: string[], targetKey: string[]): Promise<void> {
     const { spec, names } = await this.classEntry(domain, version, cls);
     const piri = names.prop[rel], src = names.cls[cls], tgt = names.target[rel]; if (!piri || !tgt) throw new Error(`${rel} is not a relationship of ${cls}`);
     spec.relations = [...spec.relations.filter(r => !(r.property_iri === piri && r.source_class === src)), { property_iri: piri, source_class: src, target_class: tgt, source_key: sourceKey, target_key: targetKey, table: null, sql_query: null, direction: "forward" }];
     await this.saveSpec(domain, version, spec);
   }
-  override async unmapClass(domain: string, version: number, cls: string): Promise<void> {
+  async unmapClass(domain: string, version: number, cls: string): Promise<void> {
     const names = await this.names(domain, version); const iri = names.cls[cls]; if (!iri) throw new Error(`Class ${cls} is not in the ontology`);
     await this.req("DELETE", `/versions/${this.vid(domain, version)}/mapping/classes?class_iri=${encodeURIComponent(iri)}`);
   }
-  override async excludeUnmapped(domain: string, version: number): Promise<void> { await this.req("POST", `/versions/${this.vid(domain, version)}/mapping/exclude-unmapped`); }
-  override async drift(domain: string, version: number, opts?: { live?: boolean }): Promise<DriftIssue[]> { return this.req<DriftIssue[]>("GET", `/versions/${this.vid(domain, version)}/mapping/drift${opts?.live ? "?live=true" : ""}`, undefined, false, opts?.live ? 0 : undefined); }
-  override async r2rml(domain: string, version: number): Promise<string> { return this.req<string>("GET", `/versions/${this.vid(domain, version)}/mapping/r2rml`, undefined, true); }
-  override async suggestMapping(domain: string, version: number, onProgress?: (p: AiProgress) => void): Promise<{ classes: number; relations: number; skipped: string[] }> {
+  async excludeUnmapped(domain: string, version: number): Promise<void> { await this.req("POST", `/versions/${this.vid(domain, version)}/mapping/exclude-unmapped`); }
+  async drift(domain: string, version: number, opts?: { live?: boolean }): Promise<DriftIssue[]> { return this.req<DriftIssue[]>("GET", `/versions/${this.vid(domain, version)}/mapping/drift${opts?.live ? "?live=true" : ""}`, undefined, false, opts?.live ? 0 : undefined); }
+  async r2rml(domain: string, version: number): Promise<string> { return this.req<string>("GET", `/versions/${this.vid(domain, version)}/mapping/r2rml`, undefined, true); }
+  async suggestMapping(domain: string, version: number, onProgress?: (p: AiProgress) => void): Promise<{ classes: number; relations: number; skipped: string[] }> {
     const r = await this.aiJob<{ classes: number; relations: number; skipped?: string[] }>(`/versions/${this.vid(domain, version)}/llm/suggest-mapping`, {}, onProgress);
     return { classes: r.classes, relations: r.relations, skipped: r.skipped ?? [] };
   }
-  override async tablePreview(domain: string, cls: string, version?: number): Promise<TablePreview> {
+  async tablePreview(domain: string, cls: string, version?: number): Promise<TablePreview> {
     const v = version ?? (await this.domain(domain)).versions[0]?.version; if (v === undefined) return { columns: [], rows: [] };
     const m = (await this.mapping(domain, v))[cls];
     if (!m?.fullName) return { columns: [], rows: [] };
     const r = await this.req<{ columns: string[]; rows: Record<string, string | null>[] }>("GET", `/versions/${this.vid(domain, v)}/mapping/table-preview?table=${encodeURIComponent(m.fullName)}&limit=5`);
     return { columns: r.columns, rows: r.rows.map(row => r.columns.map(c => row[c])) };
   }
-  override async classSql(domain: string, cls: string, version?: number): Promise<string> {
+  async classSql(domain: string, cls: string, version?: number): Promise<string> {
     const v = version ?? (await this.domain(domain)).versions[0]?.version; if (v === undefined) return "";
     const cfg = this.cfg ?? await this.config(); const names = await this.names(domain, v); const iri = names.cls[cls]; if (!iri) return "";
     return this.req<string>("GET", `/versions/${this.vid(domain, v)}/mapping/sql?dialect=${cfg.sourceKind}&class_iri=${encodeURIComponent(iri)}`, undefined, true);
@@ -493,11 +630,11 @@ export class RestApi extends MockApi {
   }
   private runDomains: Record<string, string> = {};   // run id -> domain, so a poll can still show the queued steps
   private remember(domain: string, run: BuildRun): BuildRun { this.runDomains[run.id] = domain; return run; }
-  override async builds(domain: string, version: number): Promise<BuildRun[]> { const rs = await this.req<Parameters<RestApi["toRun"]>[0][]>("GET", `/versions/${this.vid(domain, version)}/builds`); return rs.map(r => this.remember(domain, this.toRun(r, domain))); }
-  override async startBuild(domain: string, version: number, opts?: { full?: boolean }): Promise<BuildRun> { return this.remember(domain, this.toRun(await this.req("POST", `/versions/${this.vid(domain, version)}/builds${opts?.full ? "?full=true" : ""}`), domain)); }
-  override async buildStatus(runId: string): Promise<BuildRun> { return this.toRun(await this.req("GET", `/builds/${runId}`), this.runDomains[runId]); }
-  override async cancelBuild(runId: string): Promise<BuildRun> { return this.toRun(await this.req("POST", `/builds/${runId}/cancel`), this.runDomains[runId]); }
-  override async checklist(domain: string, version: number): Promise<ChecklistItem[]> {
+  async builds(domain: string, version: number): Promise<BuildRun[]> { const rs = await this.req<Parameters<RestApi["toRun"]>[0][]>("GET", `/versions/${this.vid(domain, version)}/builds`); return rs.map(r => this.remember(domain, this.toRun(r, domain))); }
+  async startBuild(domain: string, version: number, opts?: { full?: boolean }): Promise<BuildRun> { return this.remember(domain, this.toRun(await this.req("POST", `/versions/${this.vid(domain, version)}/builds${opts?.full ? "?full=true" : ""}`), domain)); }
+  async buildStatus(runId: string): Promise<BuildRun> { return this.toRun(await this.req("GET", `/builds/${runId}`), this.runDomains[runId]); }
+  async cancelBuild(runId: string): Promise<BuildRun> { return this.toRun(await this.req("POST", `/builds/${runId}/cancel`), this.runDomains[runId]); }
+  async checklist(domain: string, version: number): Promise<ChecklistItem[]> {
     const vid = this.vid(domain, version);
     const opt = <T,>(path: string) => this.req<T>("GET", path).catch(() => null);
     const [snap, onto, status, checks] = await Promise.all([   // drift is not here: it reads the source and the Build screen loads it on its own
@@ -513,7 +650,7 @@ export class RestApi extends MockApi {
       { label: "Ontology checks", value: checks ? n(errors, "error") : "—", ok: !!checks && errors === 0, go: { screen: "ontology", arg: "checks" } },
     ];
   }
-  override async mappingKpis(domain: string, version: number): Promise<MappingKpis> {
+  async mappingKpis(domain: string, version: number): Promise<MappingKpis> {
     const st = await this.req<{ completion: number; summary: Record<string, number> }>("GET", `/versions/${this.vid(domain, version)}/mapping/status`).catch(() => null);
     if (!st) return { completion: 0, classesMapped: [0, 0], attributes: [0, 0], relationships: [0, 0], excluded: 0 };
     const s = st.summary;
@@ -521,13 +658,13 @@ export class RestApi extends MockApi {
   }
 
   private async activeVid(domain: string): Promise<string> { const d = await this.domain(domain); const v = d.versions.find(x => x.active) ?? d.versions[0]; return this.vid(domain, v.version); }
-  override async search(domain: string, q: string, opts?: SearchOptions): Promise<SearchHit[]> {
+  async search(domain: string, q: string, opts?: SearchOptions): Promise<SearchHit[]> {
     const params = new URLSearchParams({ q, limit: "20", match: opts?.match ?? "contains" });
     if (opts?.type) params.set("type", opts.type);
     const hits = await this.req<{ iri: string; label: string; types: string[] }[]>("GET", `/versions/${await this.activeVid(domain)}/graph/search?${params}`);
     return hits.map(h => ({ id: h.iri, label: h.label, type: (h.types[0] ?? "").split(/[#/]/).pop() ?? "" }));
   }
-  override async entity(domain: string, id: string): Promise<EntityDetail> {
+  async entity(domain: string, id: string): Promise<EntityDetail> {
     const e = await this.req<{ neighbours?: { iri: string; label: string; types: string[] }[]; iri: string; label: string; types: string[]; attributes: { predicate: string; value: string; datatype: string | null; inferred: boolean }[]; outgoing: { predicate: string; target: string; inferred: boolean }[]; incoming: { predicate: string; source: string; inferred: boolean }[] }>("GET", `/versions/${await this.activeVid(domain)}/graph/entity?iri=${encodeURIComponent(id)}`);
     const local = (iri: string) => iri.split(/[#/]/).pop() ?? iri;
     const known = new Map((e.neighbours ?? []).map(n => [n.iri, n]));
@@ -538,26 +675,26 @@ export class RestApi extends MockApi {
       out: group(e.outgoing, x => x.target).map(([pred, ts]) => ({ pred: local(pred), targets: ts.map(hit) })),
       inc: group(e.incoming, x => x.source).map(([pred, ts]) => ({ pred: local(pred), count: `${ts.length}`, targets: ts.slice(0, 20).map(hit) })), far: [] };
   }
-  override async graphOverview(domain: string, limit = 300): Promise<GraphSample> {
+  async graphOverview(domain: string, limit = 300): Promise<GraphSample> {
     const g = await this.req<{ nodes: { iri: string; label: string; types: string[] }[]; edges: { source: string; predicate: string; target: string }[] }>("GET", `/versions/${await this.activeVid(domain)}/graph/overview?limit=${limit}`);
     const local = (iri: string) => iri.split(/[#/]/).pop() ?? iri;
     return { nodes: g.nodes.map(n => ({ id: n.iri, label: n.label || local(n.iri), type: n.types[0] ? local(n.types[0]) : "" })), edges: g.edges.map(e => ({ from: e.source, to: e.target, label: local(e.predicate) })) };
   }
-  override async graphStatus(domain: string): Promise<GraphStatus> {
+  async graphStatus(domain: string): Promise<GraphStatus> {
     const s = await this.req<{ triples: number; inferred: number; types?: Record<string, number> }>("GET", `/versions/${await this.activeVid(domain)}/graph/status`);
     const entities = Object.values(s.types ?? {}).reduce((a, b) => a + b, 0);   // one typed subject per entity
     const types = Object.entries(s.types ?? {}).map(([iri, count]) => ({ name: iri.split(/[#/]/).pop() ?? iri, iri, count })).sort((a, b) => b.count - a.count);
     return { triples: s.triples.toLocaleString(), inferred: s.inferred.toLocaleString(), entities: entities.toLocaleString(), types };
   }
-  override async triples(domain: string, q: TripleQuery): Promise<TriplePage> {
+  async triples(domain: string, q: TripleQuery): Promise<TriplePage> {
     const inferred = q.filter === "all" ? "" : `&inferred=${q.filter === "inferred"}`;
     const p = await this.req<{ total: number; rows: { subject: string; predicate: string; object: string; object_type: string; datatype: string | null; inferred: boolean }[] }>("GET", `/versions/${await this.activeVid(domain)}/graph/triples?text=${encodeURIComponent(q.q)}${inferred}&sort=${q.sort}&direction=${q.dir}&limit=${q.limit}&offset=${q.offset}`);
     return { total: p.total.toLocaleString(), rows: p.rows.map(r => ({ s: r.subject, p: r.predicate, o: r.object, isIri: r.object_type === "iri", dt: r.datatype ? `xsd:${r.datatype.split("#").pop()}` : "", inferred: r.inferred })) };
   }
-  override async testConnection(): Promise<ConnResult> {
+  async testConnection(): Promise<ConnResult> {
     const t0 = performance.now();
     try { const names = await this.req<string[]>("GET", "/catalog/tables"); return { ok: true, title: "Connected", detail: `GET /catalog/tables → ${names.length} tables in ${Math.round(performance.now() - t0).toLocaleString()} ms` }; }
     catch (e) { const msg = e instanceof Error ? e.message : String(e); return { ok: false, title: msg.includes("PERMISSION") ? "Permission error" : "Connection failed", detail: msg, action: msg.includes("PERMISSION") ? "Ask the workspace admin for USE CATALOG / USE SCHEMA / SELECT on the catalog for the service principal." : undefined }; }
   }
-  override async principals(): Promise<Principal[]> { const ps = await this.req<{ name: string; role: Role }[]>("GET", "/admin/principals"); return ps.map(p => ({ name: p.name, role: p.role, seen: "—" })); }
+  async principals(): Promise<Principal[]> { const ps = await this.req<{ name: string; role: Role }[]>("GET", "/admin/principals"); return ps.map(p => ({ name: p.name, role: p.role, seen: "—" })); }
 }

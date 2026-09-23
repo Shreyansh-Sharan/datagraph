@@ -140,7 +140,7 @@ export function Settings({ embedded = false, only = "all", right }: { embedded?:
             <h2 className="h2" style={{ marginBottom: 10 }}>MCP policy</h2>
             <div className="row between" style={{ padding: "8px 0", borderTop: "1px solid var(--line-2)", fontSize: 12.5 }}><span><strong style={{ fontWeight: 600 }}>Expose this domain to agents</strong><div className="muted small">Active version answers over MCP and GraphQL</div></span><Toggle on={mcp} label="Expose this domain to agents" onChange={async v => { setMcp(v); await api.setMcp(domain.name, v); patch({ ...domain, mcpExposed: v }); say(v ? "Domain exposed to agents" : "Domain hidden from agents"); }} /></div>
             <div className="muted small" style={{ paddingTop: 8, borderTop: "1px solid var(--line-2)" }}>Disabled tools</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>{domain.disabledTools.map(t => <span key={t} className="pill mono" style={{ height: 24, padding: "0 10px", border: "1px solid var(--grey-2)", background: "#fff", fontSize: 12 }}>{t}</span>)}<Button dashed onClick={() => say("Pick a tool to disable")}>+ Disable a tool</Button></div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>{domain.disabledTools.map(t => <span key={t} className="pill mono" style={{ height: 24, padding: "0 10px", border: "1px solid var(--grey-2)", background: "#fff", fontSize: 12 }}>{t}</span>)}<Button dashed disabled title="Not wired yet: set the policy through the MCP tool set_mcp_policy">+ Disable a tool</Button></div>
           </Card>}
         </div>
       </div>}

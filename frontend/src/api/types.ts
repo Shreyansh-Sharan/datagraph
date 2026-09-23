@@ -132,8 +132,8 @@ export interface MappingKpis { completion: number; classesMapped: [number, numbe
 export interface TablePreview { columns: string[]; rows: (string | null)[][] }
 
 // -- rules / quality -------------------------------------------------------------------
-export interface Rule { name: string; mode: "materialize" | "violation"; text: string; enabled: boolean; lastRun: string }
-export interface Constraint { name: string; target: string; kind: string; severity: "violation" | "warning" | "info"; count: number; sample: string; sampleEntity?: string }
+export interface Rule { name: string; mode: "materialize" | "violation"; text: string; enabled: boolean; lastRun: string | null }   // null: never run
+export interface Constraint { name: string; target: string; kind: string; severity: "violation" | "warning" | "info"; count: number | null; sample: string | null; sampleEntity?: string }   // null: not checked yet
 
 // -- build ------------------------------------------------------------------------------
 export type RunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
@@ -180,7 +180,7 @@ export interface DomainSettingsPatch { description?: string; review_quorum?: num
 export interface Task { title: string; sub: string; when: string; icon: string; go: { screen: string; domain?: string; version?: number } }
 export interface Principal { name: string; role: Role; seen: string }
 export interface ApiKey { name: string; prefix: string; role: Role }
-export interface Lock { what: string; who: string; exp: string }
+export interface Lock { what: string; who: string; exp: string; id?: string }   // id: the version whose lease it is
 // -- notifications (the bell) ------------------------------------------------------------
 export type NotificationStatus = "running" | "done" | "failed" | "info";
 export interface NotificationLink { domain?: string; screen?: string; version?: number; schema?: string; table?: string; tab?: string; cls?: string }
@@ -242,6 +242,7 @@ export interface DatagraphApi {
   ontology(domain: string, version: number): Promise<OntoClass[]>;
   draftOntology(domain: string, version: number, opts: { ai: boolean; description?: string; tables?: string[] }, onProgress?: (p: AiProgress) => void): Promise<{ classes: number; properties: number; warnings: number }>;   // replaces the draft's ontology: with the AI provider from the snapshot, or heuristically from the tables
   ontologyChecks(domain: string, version: number): Promise<OntoCheck[]>;
+  setClassDescription(domain: string, version: number, cls: string, description: string): Promise<void>;
 
   mapping(domain: string, version: number): Promise<Record<string, ClassMapping>>;
   mappingKpis(domain: string, version: number): Promise<MappingKpis>;
@@ -261,7 +262,12 @@ export interface DatagraphApi {
   runningAiJob(domain: string, version: number, kind: "suggest-mapping" | "draft-ontology" | "suggest-relations", onProgress?: (p: AiProgress) => void): Promise<AiProgress | null>;   // a job started earlier (or from another tab): followed to its end, null when none is running
 
   rules(domain: string, version: number): Promise<Rule[]>;
-  constraints(domain: string, version: number): Promise<Constraint[]>;
+  setRuleEnabled(domain: string, version: number, name: string, enabled: boolean): Promise<Rule[]>;
+  runInference(domain: string, version: number): Promise<{ inferred: number; seconds: number; inconsistent: string[] }>;      // OWL RL closure
+  runReasoningRules(domain: string, version: number): Promise<{ materialised: number; violations: number }>;
+  constraints(domain: string, version: number): Promise<Constraint[]>;                                                        // the definitions; counts are unknown until checked
+  runConstraintChecks(domain: string, version: number): Promise<Constraint[]>;                                                // checks them and returns the counts
+  deriveConstraints(domain: string, version: number): Promise<Constraint[]>;                                                  // from the ontology's own restrictions
 
   builds(domain: string, version: number): Promise<BuildRun[]>;
   startBuild(domain: string, version: number, opts?: { full?: boolean }): Promise<BuildRun>;   // full: read every source table again instead of only the changed ones
@@ -275,6 +281,7 @@ export interface DatagraphApi {
   graphOverview(domain: string, limit?: number): Promise<GraphSample>;   // a first picture of the whole graph: a few relationships of every predicate
   triples(domain: string, query: TripleQuery): Promise<TriplePage>;
   analytics(domain: string): Promise<Analytics>;
+  runAnalytics(domain: string, kind: "communities" | "centralities"): Promise<Analytics>;
 
   testConnection(): Promise<ConnResult>;               // the deployment's env source (no connection attached)
   connectors(): Promise<ConnectorSpec[]>;             // read from the connection module (the hub)
@@ -286,7 +293,11 @@ export interface DatagraphApi {
   tasks(): Promise<Task[]>;
   principals(): Promise<Principal[]>;
   apiKeys(): Promise<ApiKey[]>;
+  createApiKey(name: string, principal: string, role: Role): Promise<{ secret: string }>;   // the secret is shown once and never stored here
+  revokeApiKey(name: string): Promise<void>;
+  setPrincipalRole(name: string, role: Role): Promise<void>;
   locks(): Promise<Lock[]>;
+  forceRelease(versionId: string): Promise<void>;
   notifications(since?: number): Promise<NotificationFeed>;              // everything since the cursor, plus whatever is still running
   markRead(input: { ids?: number[]; until?: number }): Promise<{ unread: number }>;
 }

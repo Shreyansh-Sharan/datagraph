@@ -17,6 +17,7 @@ export function Ontology() {
   const classes = useLoad(() => api.ontology(domain.name, version!.version).catch(e => { if (/no ontology/i.test(String(e))) return []; throw e; }), [domain.name, version?.version]);
   const checks = useLoad(() => api.ontologyChecks(domain.name, version!.version).catch(() => []), [domain.name, version?.version]);
   const mapping = useLoad(() => api.mapping(domain.name, version!.version).catch(() => ({} as Record<string, ClassMapping>)), [domain.name, version?.version]);   // the table behind each class
+  const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<"ai" | "tables" | null>(null);
   const [running, setRunning] = useState<{ progress: string; since: number } | null>(null);
   const [tick, setTick] = useState(0);
@@ -47,11 +48,19 @@ export function Ontology() {
   const groups: StageGroup[] | undefined = hierarchical ? [...new Set(Object.values(roots))].sort().map(r => ({ id: r, label: r, color: colorFor(r) })) : undefined;
   const nodes: StageNode[] = list.map(c => ({ id: c.id, label: c.id, glyph: glyphOf(c.id), x: c.x, y: c.y, fill: colorFor(hierarchical ? roots[c.id] : c.id), border: c.id === sel?.id ? BLUE : undefined, selected: c.id === sel?.id, props: c.attrs.length + c.rels.length, title: c.iri, group: hierarchical ? roots[c.id] : undefined }));
 
+  const saveClass = async () => {
+    if (!sel) return;
+    const box = document.getElementById("cls-desc") as HTMLTextAreaElement | null;
+    setSaving(true);
+    try { await api.setClassDescription(domain.name, version!.version, sel.id, box?.value ?? ""); classes.reload(); say(`Saved ${sel.id}`); }
+    catch (e) { say(e instanceof Error ? e.message : String(e)); }
+    finally { setSaving(false); }
+  };
   return (
     <>
       <div className="page-head">
         <div><h1>Ontology</h1><p>{list.length} classes, {edges.length} relationships. Click a class to edit it.</p></div>
-        <div className="actions"><Button onClick={() => say("Import an ontology file (Turtle, JSON-LD, RDF/XML)")}>Import</Button><Button disabled={!editable} title={editable ? undefined : "Take the lease on a draft to change the ontology"} onClick={() => setDraft("ai")}>Draft with AI</Button><Button variant="primary" disabled={!editable} title={editable ? undefined : "Take the lease on a draft to change the ontology"} onClick={() => setDraft("tables")}>Draft from tables</Button></div>
+        <div className="actions"><Button disabled title="Not wired yet: draft from the tables, or import through the API">Import</Button><Button disabled={!editable} title={editable ? undefined : "Take the lease on a draft to change the ontology"} onClick={() => setDraft("ai")}>Draft with AI</Button><Button variant="primary" disabled={!editable} title={editable ? undefined : "Take the lease on a draft to change the ontology"} onClick={() => setDraft("tables")}>Draft from tables</Button></div>
       </div>
       <div style={{ marginBottom: 14 }}><Tabs<View> value={(view as View) || "map"} onChange={v => setView(v)} items={[{ id: "map", label: "Map" }, { id: "list", label: "Classes" }, { id: "checks", label: `Checks · ${checks.data?.length ?? 0}` }]} /></div>
       {running && <div className="notice" role="status" aria-live="polite" style={{ marginBottom: 14 }}><div className="row" style={{ gap: 8, fontWeight: 600 }}><Spinner blue />Drafting the ontology with AI · {running.progress} · {runningFor >= 60 ? `${Math.floor(runningFor / 60)} min ${runningFor % 60} s` : `${runningFor} s`}</div><div className="muted xs" style={{ marginTop: 4 }}>The map below is the current ontology; it is replaced when the draft finishes.</div></div>}
@@ -77,13 +86,13 @@ export function Ontology() {
             <Label>Description</Label>
             <textarea id="cls-desc" className="textarea full" rows={2} defaultValue={sel.desc} key={sel.id} disabled={!editable} style={{ marginBottom: 12 }} />
             <Label>Parents</Label>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>{sel.parents.map(p => <Pill key={p} tone="blue" size="lg" style={{ height: 24, fontSize: 12 }}>{p}</Pill>)}{editable && <Button dashed onClick={() => say("Pick a parent class")}>+ Add parent</Button>}</div>
-            <div className="row between" style={{ alignItems: "baseline" }}><Label block={false}>Attributes</Label>{editable && <a href="#" className="small" style={{ fontWeight: 600 }} onClick={e => { e.preventDefault(); say("Add attribute"); }}>+ Add</a>}</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>{sel.parents.map(p => <Pill key={p} tone="blue" size="lg" style={{ height: 24, fontSize: 12 }}>{p}</Pill>)}{editable && <Button dashed disabled title="Not wired yet: use the assistant or the MCP tools to change the ontology">+ Add parent</Button>}</div>
+            <div className="row between" style={{ alignItems: "baseline" }}><Label block={false}>Attributes</Label>{editable && <span className="muted-3 small" title="Not wired yet: use the assistant or the MCP tools to change the ontology">+ Add</span>}</div>
             {sel.attrs.map(a => <div key={a.name} className="row between" style={{ padding: "7px 0", borderBottom: "1px solid var(--line-2)", fontSize: 12.5 }}><span>{a.name}</span><span className="mono" style={{ fontSize: 11, color: "var(--muted-2)" }}>{a.range}</span></div>)}
-            <div className="row between" style={{ alignItems: "baseline", marginTop: 14 }}><Label block={false}>Relationships</Label>{editable && <a href="#" className="small" style={{ fontWeight: 600 }} onClick={e => { e.preventDefault(); say("Add relationship"); }}>+ Add</a>}</div>
+            <div className="row between" style={{ alignItems: "baseline", marginTop: 14 }}><Label block={false}>Relationships</Label>{editable && <span className="muted-3 small" title="Not wired yet: use the assistant or the MCP tools to change the ontology">+ Add</span>}</div>
             {sel.rels.map(r => <div key={r.name} className="row between" style={{ padding: "7px 0", borderBottom: "1px solid var(--line-2)", fontSize: 12.5 }}><span>{r.name}</span><span className="muted">→ {r.target}</span></div>)}
             {sel.rels.length === 0 && <p className="muted-2" style={{ fontSize: 12.5, margin: "8px 0" }}>No relationships from this class.</p>}
-            {editable && <div className="row" style={{ marginTop: 16 }}><Button variant="primary" size="sm" style={{ flex: 1, height: 32 }} onClick={() => say(`Saved ${sel.id}`)}>Save class</Button><Button size="sm" variant="danger" style={{ height: 32 }} onClick={() => say(`Type ${sel.id} to confirm deletion`)}>Delete</Button></div>}
+            {editable && <div className="row" style={{ marginTop: 16 }}><Button variant="primary" size="sm" style={{ flex: 1, height: 32 }} disabled={saving} onClick={() => void saveClass()}>{saving && <Spinner />}Save description</Button><Button size="sm" variant="danger" style={{ height: 32 }} disabled title="Not wired yet: use the assistant or the MCP tools to change the ontology">Delete</Button></div>}
           </Card>
         </div>
       )}

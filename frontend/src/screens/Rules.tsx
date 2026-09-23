@@ -2,7 +2,7 @@
 // kinds (DQX-style check functions) to pick from, every rule with its last result, and a way to
 // add one to any snapshotted table. The reasoning rules (SWRL, compiled to SQL) keep their own tab.
 import { useMemo, useState } from "react";
-import { Button, Card, Pill, Skeleton, Tabs, Toggle } from "@/components/ui";
+import { Button, Card, Pill, Skeleton, Spinner, Tabs, Toggle } from "@/components/ui";
 import { RuleDialog } from "@/components/RuleDialog";
 import { describeRule } from "@/screens/Table";
 import { useApp, useLoad } from "@/state/app";
@@ -101,20 +101,32 @@ function ReasoningRules() {
   const { api, say } = useApp();
   const { domain, version } = useDomain();
   const rules = useLoad(() => api.rules(domain.name, version!.version), [domain.name, version?.version]);
-  const [enabled, setEnabled] = useState<Record<string, boolean>>({});
+  const [busy, setBusy] = useState<"owl" | "rules" | null>(null);
+  const run = async (what: "owl" | "rules") => {
+    setBusy(what);
+    try {
+      if (what === "owl") { const r = await api.runInference(domain.name, version!.version); say(`OWL RL closure · +${r.inferred.toLocaleString()} triples in ${r.seconds.toFixed(1)} s${r.inconsistent.length ? ` · ${r.inconsistent.length} inconsistent` : ""}`); }
+      else { const r = await api.runReasoningRules(domain.name, version!.version); say(`Rules run · +${r.materialised.toLocaleString()} triples, ${r.violations} violation${r.violations === 1 ? "" : "s"}`); }
+    } catch (e) { say(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(null); }
+  };
+  const toggle = async (name: string, on: boolean) => {
+    try { await api.setRuleEnabled(domain.name, version!.version, name, on); rules.reload(); say(`${name} ${on ? "enabled" : "disabled"}`); }
+    catch (e) { say(e instanceof Error ? e.message : String(e)); }
+  };
   return (
     <div className="grid" style={{ gap: 12, marginTop: 16 }}>
       <div className="row between"><p className="muted">Rules over the graph: materialize adds inferred triples at build time; violation flags the entities that match.</p>
-        <div className="actions"><Button onClick={() => say("OWL RL closure · +23,207 triples")}>Run OWL RL</Button><Button onClick={() => say("2 rules run · +19,204 triples, 0 violations")}>Run rules</Button></div></div>
+        <div className="actions"><Button disabled={!!busy} onClick={() => void run("owl")}>{busy === "owl" && <Spinner />}Run OWL RL</Button><Button disabled={!!busy} onClick={() => void run("rules")}>{busy === "rules" && <Spinner />}Run rules</Button></div></div>
       {rules.loading && <Skeleton h={120} />}
-      {(rules.data ?? []).map(r => { const on = enabled[r.name] ?? r.enabled; return (
+      {(rules.data ?? []).map(r => { const on = r.enabled; return (
         <Card key={r.name} style={{ padding: "16px 20px", display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 16, alignItems: "start" }}>
           <div>
             <div className="row" style={{ gap: 10, marginBottom: 8 }}><strong style={{ fontSize: 14, fontWeight: 700 }}>{r.name}</strong><Pill tone="blue" style={{ border: 0 }}>{r.mode}</Pill></div>
             <pre className="pre light">{r.text}</pre>
-            <div className="muted small" style={{ marginTop: 8 }}>Last run: {r.lastRun}</div>
+            <div className="muted small" style={{ marginTop: 8 }}>Last run: {r.lastRun ?? "never"}</div>
           </div>
-          <label className="row muted small" style={{ fontWeight: 600, cursor: "pointer" }}><Toggle on={on} label={`Enable ${r.name}`} onChange={v => { setEnabled(e => ({ ...e, [r.name]: v })); say(`${r.name} ${v ? "enabled" : "disabled"}`); }} />Enabled</label>
+          <label className="row muted small" style={{ fontWeight: 600, cursor: "pointer" }}><Toggle on={on} label={`Enable ${r.name}`} onChange={v => void toggle(r.name, v)} />Enabled</label>
         </Card>); })}
       {rules.data?.length === 0 && <p className="muted">No reasoning rule yet.</p>}
     </div>

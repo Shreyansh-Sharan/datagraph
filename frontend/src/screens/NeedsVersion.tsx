@@ -14,6 +14,6 @@ export function NeedsVersion({ children }: { children: ReactNode }) {
   const source = sourceKind === "databricks" ? "Databricks" : "Postgres";
   return (
     <EmptyState title={`${domain.name} has no version yet`} text={`${label} needs a version to work on. Create a draft, then import tables from ${source} and draft the ontology.`}
-      action={can("builder") ? <Button variant="primary" onClick={async () => { patch(await api.createDraft(domain.name)); say("Draft v1 created"); }}>Create a draft version</Button> : undefined} />
+      action={can("builder") ? <Button variant="primary" onClick={async () => { const d = await api.createDraft(domain.name); patch(d); say(`Draft v${d.versions[0]?.version ?? 1} created`); }}>Create a draft version</Button> : undefined} />
   );
 }

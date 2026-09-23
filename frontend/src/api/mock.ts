@@ -617,9 +617,13 @@ export class MockApi implements DatagraphApi {
     return { ok: true, title: "Connected", detail: `GET /catalog/tables → 17 tables in ${dbx ? "1,842" : "38"} ms` };
   }
   async tasks(): Promise<Task[]> { return clone(D.TASKS); }
-  async principals(): Promise<Principal[]> { return clone(D.PRINCIPALS); }
-  async apiKeys(): Promise<ApiKey[]> { return clone(D.API_KEYS); }
-  async locks(): Promise<Lock[]> { return clone(D.LOCKS); }
+  async principals(): Promise<Principal[]> { return clone(this.principalState); }
+  private keys: ApiKey[] = clone(D.API_KEYS);
+  private lockState: Lock[] = clone(D.LOCKS).map((l, i) => ({ ...l, id: `lock-${i}` }));
+  private principalState: Principal[] = clone(D.PRINCIPALS);
+  private ruleState: Record<string, boolean> = {};
+  async apiKeys(): Promise<ApiKey[]> { return clone(this.keys); }
+  async locks(): Promise<Lock[]> { return clone(this.lockState); }
   private notes: Notification[] = clone(D.NOTIFICATIONS);
   async notifications(since?: number): Promise<NotificationFeed> {
     const items = this.notes.filter(n => since == null || n.id > since || n.status === "running");
@@ -629,4 +633,38 @@ export class MockApi implements DatagraphApi {
     for (const n of this.notes) if ((input.ids && input.ids.includes(n.id)) || (input.until != null && n.id <= input.until)) n.read = true;
     return { unread: this.notes.filter(n => !n.read).length };
   }
+  async setClassDescription(domain: string, version: number, cls: string, description: string): Promise<void> {
+    const list = await this.ontology(domain, version);
+    const c = list.find(x => x.id === cls);
+    if (!c) throw new Error(`The ontology has no class ${cls}`);
+    this.ontos[`${domain}:${version}`] = list.map(x => (x.id === cls ? { ...x, desc: description } : x));
+  }
+  async setRuleEnabled(_domain: string, _version: number, name: string, enabled: boolean): Promise<Rule[]> {
+    this.ruleState[name] = enabled;
+    return (clone(D.RULES) as Rule[]).map(r => ({ ...r, enabled: this.ruleState[r.name] ?? r.enabled }));
+  }
+  async runInference(_domain: string, _version: number): Promise<{ inferred: number; seconds: number; inconsistent: string[] }> {
+    await new Promise(r => setTimeout(r, this.mockOpts.latency ?? 200));
+    return { inferred: 23207, seconds: 4.1, inconsistent: [] };
+  }
+  async runReasoningRules(_domain: string, _version: number): Promise<{ materialised: number; violations: number }> {
+    await new Promise(r => setTimeout(r, this.mockOpts.latency ?? 200));
+    return { materialised: 19204, violations: 0 };
+  }
+  async runConstraintChecks(_domain: string, _version: number): Promise<Constraint[]> {
+    await new Promise(r => setTimeout(r, this.mockOpts.latency ?? 200));
+    return clone(D.CONSTRAINTS);
+  }
+  async deriveConstraints(_domain: string, _version: number): Promise<Constraint[]> { return clone(D.CONSTRAINTS); }
+  async runAnalytics(domain: string, _kind: "communities" | "centralities"): Promise<Analytics> { return this.analytics(domain); }
+  async createApiKey(name: string, principal: string, role: Role): Promise<{ secret: string }> {
+    this.keys.push({ name, prefix: principal, role });
+    return { secret: `of_${name.length}${principal.length}x` };
+  }
+  async revokeApiKey(name: string): Promise<void> { this.keys = this.keys.filter(k => k.name !== name); }
+  async setPrincipalRole(name: string, role: Role): Promise<void> {
+    const p = this.principalState.find(x => x.name === name);
+    if (p) p.role = role;
+  }
+  async forceRelease(versionId: string): Promise<void> { this.lockState = this.lockState.filter(l => l.id !== versionId); }
 }

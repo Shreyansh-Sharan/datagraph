@@ -1,7 +1,8 @@
+import type React from "react";
 import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
 import { ConnectionsProvider } from "@polestar/connections";
 import type { DatagraphApi } from "@/api";
-import { AppProvider } from "@/state/app";
+import { AppProvider, useApp } from "@/state/app";
 import { NotificationsProvider } from "@/state/notifications";
 import { AppShell, DomainShell, PlainMain } from "@/layout/Shell";
 import { Home } from "@/screens/Home";
@@ -24,11 +25,17 @@ import { NeedsVersion } from "@/screens/NeedsVersion";
 
 import { CONNECTIONS_URL } from "@/config";
 
+/** The connection module acts as the signed-in user, so its audit trail names the right person. */
+function Connections({ baseUrl, children }: { baseUrl: string; children: React.ReactNode }) {
+  const { me } = useApp();
+  return <ConnectionsProvider baseUrl={baseUrl} headers={() => ({ "X-Actor": me.name })}>{children}</ConnectionsProvider>;
+}
+
 export function App({ api, connectionsUrl = CONNECTIONS_URL }: { api: DatagraphApi; connectionsUrl?: string }) {
   return (
     <AppProvider api={api}>
       <NotificationsProvider>
-      <ConnectionsProvider baseUrl={connectionsUrl || "/hub"} headers={() => ({ "X-Actor": "alice" })}>
+      <Connections baseUrl={connectionsUrl || "/hub"}>
       <HashRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <Routes>
           <Route element={<AppShell />}>
@@ -59,7 +66,7 @@ export function App({ api, connectionsUrl = CONNECTIONS_URL }: { api: DatagraphA
           </Route>
         </Routes>
       </HashRouter>
-      </ConnectionsProvider>
+      </Connections>
       </NotificationsProvider>
     </AppProvider>
   );

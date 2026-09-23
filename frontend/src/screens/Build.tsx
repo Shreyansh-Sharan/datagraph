@@ -13,6 +13,7 @@ export function Build() {
   const { domain, version, editable, sourceKind } = useDomain();
   const go = useGo();
   const dbx = sourceKind === "databricks";
+  const facts = useLoad(() => api.sourceFacts(domain.name), [domain.name]);
   const history = useLoad(() => api.builds(domain.name, version!.version), [domain.name, version?.version]);
   const checklist = useLoad(() => api.checklist(domain.name, version!.version), [domain.name, version?.version]);
   // Drift as the last build found it (instant); a live check re-reads every mapped table from the source and runs only when asked.
@@ -110,7 +111,9 @@ export function Build() {
           </Card>
           <Card>
             <h2 className="h2" style={{ marginBottom: 10 }}>Warehouse publish</h2>
-            <KV k="Adapter" v={sourceKind} /><KV k="Materialization" v={dbx ? domain.materialization : "view"} /><KV k="Target schema" v={dbx ? domain.target : `${domain.name}_graph`} />
+            <KV k="Adapter" v={sourceKind} />
+            <KV k="Materialization" v={facts.data?.materialization ?? (facts.loading ? "…" : "—")} />
+            <KV k="Target schema" v={facts.data?.target_schema ?? (facts.loading ? "…" : "not published")} />
             <p className="muted-3" style={{ margin: "10px 0 0", fontSize: 11.5 }}>Read-only facts of the deployment.</p>
           </Card>
         </div>

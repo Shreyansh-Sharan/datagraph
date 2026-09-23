@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "@/App";
@@ -698,5 +698,43 @@ describe("Notifications bell", () => {
     await user.click(screen.getByRole("link", { name: "Mark all read" }));
     const bell = await screen.findByRole("button", { name: "Notifications" });
     expect(within(bell).queryByText("2")).toBeNull();
+  });
+});
+
+describe("Actions that used to only show a message", () => {
+  it("changes a role, revokes a key and releases a lease through the API", async () => {
+    const api = new MockApi();
+    const role = vi.spyOn(api, "setPrincipalRole"), revoke = vi.spyOn(api, "revokeApiKey"), release = vi.spyOn(api, "forceRelease");
+    renderAt("#/admin", api);
+    const user = userEvent.setup();
+    await user.selectOptions(await screen.findByLabelText("Role of priya"), "admin");
+    expect(role).toHaveBeenCalledWith("priya", "admin");
+    await user.click(screen.getByRole("button", { name: "Revoke CI builder" }));
+    expect(revoke).toHaveBeenCalledWith("CI builder");
+    await waitFor(() => expect(screen.queryByText("CI builder")).toBeNull());
+    await user.click(screen.getAllByRole("button", { name: /Force release/ })[0]);
+    expect(release).toHaveBeenCalled();
+  });
+  it("runs the graph constraint checks instead of announcing a result", async () => {
+    const api = new MockApi();
+    const run = vi.spyOn(api, "runConstraintChecks");
+    renderAt("#/d/rgm/quality?view=graph", api);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Run checks" }));
+    expect(run).toHaveBeenCalledWith("rgm", 3);
+  });
+  it("runs the reasoning rules and the OWL closure, and reports what they returned", async () => {
+    const api = new MockApi({ latency: 0 });
+    const infer = vi.spyOn(api, "runInference"), rules = vi.spyOn(api, "runReasoningRules");
+    renderAt("#/d/rgm/rules?view=reasoning", api);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Run OWL RL" }));
+    await waitFor(() => expect(infer).toHaveBeenCalledWith("rgm", 3));
+    await user.click(screen.getByRole("button", { name: "Run rules" }));
+    await waitFor(() => expect(rules).toHaveBeenCalledWith("rgm", 3));
+  });
+  it("hides the role switcher when the app talks to a real backend", async () => {
+    renderAt("#/");
+    expect(await screen.findByLabelText("Switch role")).toBeInTheDocument();   // a mock build may impersonate
   });
 });

@@ -30,7 +30,7 @@ export function Home() {
     <div className="home">
       <div className="home-head">
         <div><h1>Domains</h1><p className="muted">One knowledge graph each, with its own source, versions, review quorum and MCP policy. Open one to work in it.</p></div>
-        <div className="row" style={{ flex: "none", gap: 8 }}><Button onClick={() => say("Choose a bundle file to import")}>Import bundle</Button><Button variant="primary" onClick={() => setDialog(true)}>New domain</Button></div>
+        <div className="row" style={{ flex: "none", gap: 8 }}><Button disabled title="Not wired yet: POST a bundle to /domains/import">Import bundle</Button><Button variant="primary" onClick={() => setDialog(true)}>New domain</Button></div>
       </div>
       <div className="home-tools">
         <label className="home-filter"><Icon name="search" size={14} /><input aria-label="Filter domains" placeholder="Filter domains" value={q} onChange={e => setQ(e.target.value)} /></label>

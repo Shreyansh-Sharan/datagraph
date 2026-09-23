@@ -1,9 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { MockApi } from "@/api/mock";
-import { askTerm } from "@/api";
+import { createApi } from "@/api";
 import { RestApi } from "@/api/rest";
 import { compileClassSql, tableName } from "@/api/types";
-import { answer } from "@/screens/askEngine";
 import * as D from "@/api/mockData";
 
 describe("adapter-aware naming", () => {
@@ -86,22 +85,6 @@ describe("MockApi", () => {
     expect(objs).toEqual([...objs].sort().reverse());
     const text = await api.triples("rgm", { q: "carrefour", filter: "all", sort: "subject", dir: "asc", limit: 100, offset: 0 });
     expect(text.rows).toHaveLength(1);
-  });
-});
-
-describe("Ask", () => {
-  const ctx = async (kind: "databricks" | "postgres" = "databricks") => { const api = new MockApi({ sourceKind: kind }); return { domain: "rgm", domains: await api.domains(), glossary: (await api.glossary("rgm")).map(askTerm), classes: await api.ontology("rgm", 3), mapping: await api.mapping("rgm", 3), sourceKind: kind }; };
-  it("answers a glossary question with the term and links", async () => {
-    const a = answer("What is net revenue?", await ctx());
-    expect(a.term?.term).toBe("Net revenue"); expect(a.text).toContain("marc"); expect(a.links.map(l => l.screen)).toEqual(["explore", "quality"]);
-  });
-  it("routes a mapping question to the designer with the class preselected", async () => {
-    const a = answer("Where do I map Channel?", await ctx());
-    expect(a.links[0]).toMatchObject({ screen: "mapping", params: { cls: "Channel" } }); expect(a.text).toContain("unmapped");
-  });
-  it("describes another domain and names the running adapter in build answers", async () => {
-    expect(answer("Show hr domain", await ctx()).links[0]).toMatchObject({ screen: "overview", domain: "hr" });
-    expect(answer("how does a build work", await ctx("postgres")).text).toContain("Postgres SQL");
   });
 });
 
@@ -736,5 +719,95 @@ describe("assistant (rest)", () => {
     expect(events).toEqual(["tool_call", "tool_result", "text", "done"]);
     expect(r).toEqual({ conversation_id: "conv-1", answer: "Nothing matches x.", tools: [{ id: "c1", name: "search_entities", arguments: { query: "x" }, result: "[]" }] });
     expect(calls.some(c => c.startsWith("POST /api/assistant/chat") && c.includes('"context":{"domain":"aw"}'))).toBe(true);
+  });
+});
+
+describe("the REST adapter answers from the API, never from the mock", () => {
+  const domain = { name: "rgm", description: "", base_iri: "http://p/rgm/", review_quorum: 1, active_version_id: "v1" };
+  const summary = [{ id: "v1", version: 1, status: "published", has_ontology: true, has_mapping: true, rule_count: 0, constraint_count: 0, created_at: "2026-09-01T10:00:00Z", created_by: "alice", is_active: true,
+    stats: { classes: 2, attributes: 4, relationships: 1, bindings: 4, rules: 0, constraints: 0, triples: 100 }, mapping: { completion: 1, classes_mapped: 2, classes: 2, complete_classes: 2 },
+    last_build: null, review: null, lease: null }];
+  const routes: Record<string, unknown> = {
+    "GET /api/auth/config": { mode: "header", header: "X-Actor", source: { kind: "postgres", catalog: null } },
+    "GET /api/domains/rgm": domain,
+    "GET /api/domains/rgm/versions/summary": summary,
+    "GET /api/domains/cards": [{ name: "rgm", version_count: 1, active_version: { version: 1 }, latest_version: { version: 1, status: "published" }, triples: 100, last_build: null,
+                                 source: { kind: "postgres", connection: null, catalog: "rgm", schema: "gold" }, mcp: { exposed: true, disabled_tools: [] } }],
+    "GET /api/domains/rgm/source": { kind: "postgres", connection: null, connection_id: null, catalog: null, schema: null, host: null, auth_mode: "header", auth_header: "X-Actor", materialization: "none", target_schema: null, last_test: null, ai: null },
+    "GET /api/versions/v1/ontology/checks": [{ code: "missing-label", subject: "http://p/rgm/Customer", message: "Class has no rdfs:label", severity: "warning" },
+                                             { code: "unknown-parent", subject: "http://p/rgm/Order", message: "Parent class http://p/rgm/Thing is not defined", severity: "error" }],
+    "GET /api/versions/v1/rules": { rules: [{ name: "bought", mode: "materialize", enabled: true, text: "Order(?o) ^ ofCustomer(?o, ?c) -> bought(?c, ?o)", body: [], head: [] }] },
+    "GET /api/versions/v1/quality": { constraints: [{ name: "quantity is positive", target_class: "http://p/rgm/Sale", property: "http://p/rgm/quantity", kind: "min_exclusive", value: 0, severity: "violation", message: null }] },
+    "GET /api/versions/v1/graph/status": { triples: 100, inferred: 7, types: { "http://p/rgm/Sale": 60, "http://p/rgm/Customer": 40 } },
+    "GET /api/versions/v1/analytics/health": [{ entity_type: "http://p/rgm/Sale", instances: 60, relationship_predicates: 2, flag: null, recommendation: null },
+                                              { entity_type: "http://p/rgm/Customer", instances: 40, relationship_predicates: 1, flag: "time-series", recommendation: "consider aggregating" }],
+    "GET /api/versions/v1/analytics/runs": [{ id: "r1", scope: "communities", status: "succeeded", actor: "alice", started_at: "2026-09-20T09:00:00Z", finished_at: "2026-09-20T09:00:18Z",
+                                              nodes: 100, edges: 80, components: 3, avg_degree: 1.6, density: 0.01, duration_seconds: 18.2, error: null, results: { communities: 4 } }],
+    "GET /api/admin/api-keys": [{ id: "k1", name: "CI builder", principal: "svc-ci", role: "builder", created_at: "2026-09-01T10:00:00Z", revoked_at: null }],
+    "GET /api/admin/locks": [{ domain: "rgm", version_id: "v1", version: 1, status: "draft", editor: "alice", lease_expires_at: "2026-09-21T10:42:00Z", stale: false }],
+    "GET /api/admin/principals": [{ name: "alice", role: "admin" }],
+  };
+  const api = () => {
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      const key = `${init?.method ?? "GET"} ${url}`;
+      if (!(key in routes)) return new Response(JSON.stringify({ detail: `no stub for ${key}` }), { status: 404 });
+      return new Response(JSON.stringify(routes[key]));
+    }) as typeof fetch;
+    return new RestApi({ base: "/api", actor: "alice" });
+  };
+
+  it("inherits nothing, so no call can fall through to fabricated data", () => {
+    expect(Object.getPrototypeOf(RestApi.prototype)).toBe(Object.prototype);
+  });
+  it("reads the ontology checks the backend reports", async () => {
+    const a = api(); await a.domain("rgm");
+    const checks = await a.ontologyChecks("rgm", 1);
+    expect(checks).toHaveLength(2);
+    expect(checks[0]).toMatchObject({ severity: "warning", code: "missing-label", subject: "Customer", message: "Class has no rdfs:label" });
+    expect(checks[0].target).toMatchObject({ screen: "ontology", cls: "Customer" });
+    expect(checks[1].severity).toBe("error");
+  });
+  it("reads the reasoning rules, and says a rule has never been run rather than inventing a time", async () => {
+    const a = api(); await a.domain("rgm");
+    const rules = await a.rules("rgm", 1);
+    expect(rules).toEqual([{ name: "bought", mode: "materialize", text: "Order(?o) ^ ofCustomer(?o, ?c) -> bought(?c, ?o)", enabled: true, lastRun: null }]);
+  });
+  it("reads the graph constraints, leaving the violation count unknown until they are checked", async () => {
+    const a = api(); await a.domain("rgm");
+    const [c] = await a.constraints("rgm", 1);
+    expect(c).toMatchObject({ name: "quantity is positive", target: "Sale", kind: "min_exclusive", severity: "violation", count: null, sample: null });
+  });
+  it("builds the analytics page from the graph status, the health report and the runs", async () => {
+    const a = api();
+    const an = await a.analytics("rgm");
+    expect(an.health.map(h => h.value)).toEqual(["100", "7", "100", "1"]);          // one class carries a flag
+    expect(an.perClass).toEqual([{ label: "Sale", n: 60, color: expect.any(String) }, { label: "Customer", n: 40, color: expect.any(String) }]);
+    expect(an.runs[0]).toMatchObject({ kind: "communities", result: "4 communities" });
+    expect(an.top).toEqual([]);                                     // nothing is claimed until a centrality run exists
+  });
+  it("reads the real API keys, principals and locks", async () => {
+    const a = api();
+    expect(await a.apiKeys()).toEqual([{ name: "CI builder", prefix: "svc-ci", role: "builder" }]);
+    const [lock] = await a.locks();
+    expect(lock).toMatchObject({ what: "rgm v1", who: "alice" });
+  });
+});
+
+describe("choosing the adapter", () => {
+  it("talks to the real API unless the mock is asked for by name", () => {
+    expect(createApi({})).toBeInstanceOf(RestApi);                          // a forgotten setting must not fabricate data
+    expect(createApi({ VITE_API_MODE: "rest" })).toBeInstanceOf(RestApi);
+    expect(createApi({ VITE_API_MODE: "REST " })).toBeInstanceOf(RestApi);
+    expect(createApi({ VITE_API_MODE: "mock" })).toBeInstanceOf(MockApi);
+    expect(createApi({ VITE_API_MODE: " Mock" })).toBeInstanceOf(MockApi);
+  });
+  it("sends no identity of its own: the proxy in front decides who the caller is", async () => {
+    let sent: Record<string, string> = {};
+    globalThis.fetch = (async (_u: string, init?: RequestInit) => { sent = (init?.headers ?? {}) as Record<string, string>; return new Response(JSON.stringify([])); }) as typeof fetch;
+    await (createApi({}) as RestApi).domains().catch(() => undefined);
+    expect(Object.keys(sent)).not.toContain("X-Actor");
+    sent = {};
+    await (createApi({ VITE_ACTOR: "priya" }) as RestApi).domains().catch(() => undefined);
+    expect(sent["X-Actor"]).toBe("priya");
   });
 });

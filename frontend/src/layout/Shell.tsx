@@ -6,7 +6,7 @@ import { Spotlight } from "@/components/Spotlight";
 import { Bell } from "@/components/Bell";
 import { useApp, useLoad } from "@/state/app";
 import { DomainProvider, SECTIONS, sectionOf, useDomainLoad, useDomainOptional, useGo, type Screen } from "@/state/domain";
-import { STATUS_COLOR, STATUS_LABEL, type Role } from "@/api";
+import { STATUS_COLOR, STATUS_LABEL, isMockBuild, type Role } from "@/api";
 
 const ROLES: Role[] = ["viewer", "builder", "reviewer", "admin"];
 
@@ -66,7 +66,7 @@ function TopBar() {
       <SourceChip fallback={dbx ? `Databricks · ${config.catalog ?? "warehouse"}` : "Postgres"} />
       <span className="identity">
         <span style={{ fontWeight: 600 }}>{me.name}</span><span className="role">{me.role}</span>
-        <select aria-label="Switch role" className="btn xxs" style={{ padding: "0 6px" }} value={me.role} onChange={e => setRole(e.target.value as Role)}>{ROLES.map(r => <option key={r} value={r}>{r}</option>)}</select>
+        {isMockBuild() && <select aria-label="Switch role" className="btn xxs" style={{ padding: "0 6px" }} value={me.role} onChange={e => setRole(e.target.value as Role)}>{ROLES.map(r => <option key={r} value={r}>{r}</option>)}</select>}
       </span>
     </header>
   );
