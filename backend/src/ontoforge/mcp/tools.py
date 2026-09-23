@@ -235,9 +235,15 @@ class GraphTools:
 
     @staticmethod
     def _require(role: str) -> str | None:
-        """An error when the caller's role is known and below the one this action needs."""
+        """An error unless the caller's role is known and at least the one this action needs.
+
+        An unknown role is a refusal, not a pass: a transport that never establishes who is
+        calling must not be the way every gate is walked through.
+        """
         have = ROLE.get()
-        if have is not None and _RANK.get(have, 0) < _RANK[role]:
+        if have is None:
+            return f"This action needs {role}, and nothing established who is calling"
+        if _RANK.get(have, 0) < _RANK[role]:
             return f"{ACTOR.get() or 'the caller'} is {have}; this action needs {role}"
         return None
 

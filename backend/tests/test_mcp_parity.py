@@ -98,3 +98,30 @@ def test_policy_api_and_http_mount(db):
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
+
+
+def test_the_stdio_server_carries_the_same_services_and_a_caller(db, monkeypatch):
+    """Over stdio a desktop client must reach the whole backend, as the HTTP transport does."""
+    from ontoforge.api.app import stdio_mcp_server
+    from ontoforge.config import Settings
+    from ontoforge.mcp.tools import ACTOR, ROLE
+
+    monkeypatch.setenv("ONTOFORGE_MCP_ACTOR", "desktop")
+    server = stdio_mcp_server(db, Settings(auth_default_role="admin"))
+    assert ACTOR.get() == "desktop" and ROLE.get() == "admin"
+
+    tools = server.ontoforge_tools                     # the same GraphTools the HTTP app serves
+    assert tools.services is not None                  # profiles, quality, glossary, builds, sources
+    for name in ("profiles", "tabledq", "glossary", "scheduler", "sources", "jobs"):
+        assert getattr(tools.services, name, None) is not None, name
+    out = tools.create_domain("stdio-demo", "http://example.org/stdio/", description="made over stdio")
+    assert out.get("name") == "stdio-demo", out
+
+
+def test_without_a_caller_the_stdio_server_refuses_to_start(db, monkeypatch):
+    from ontoforge.api.app import stdio_mcp_server
+    from ontoforge.config import Settings
+
+    monkeypatch.delenv("ONTOFORGE_MCP_ACTOR", raising=False)
+    with pytest.raises(ValueError, match="ONTOFORGE_MCP_ACTOR"):
+        stdio_mcp_server(db, Settings())

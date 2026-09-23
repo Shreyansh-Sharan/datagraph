@@ -65,3 +65,33 @@ async def test_server_exposes_tools_over_mcp(db):
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
+
+
+def test_an_unknown_role_is_refused_rather_than_trusted(db):
+    """A caller whose role nobody established must not pass a gate that a viewer would fail."""
+    from ontoforge.mcp.tools import ACTOR, GraphTools, ROLE
+    from ontoforge.registry import Registry
+    from ontoforge.store import TripleStore
+
+    tools = GraphTools(Registry(db), TripleStore(db), None, None)
+    a, r = ACTOR.set(None), ROLE.set(None)
+    try:
+        assert "nothing established who is calling" in tools._require("builder")
+        assert tools._require("viewer") is not None
+    finally:
+        ACTOR.reset(a), ROLE.reset(r)
+
+
+def test_a_role_that_is_high_enough_still_passes(db):
+    from ontoforge.mcp.tools import ACTOR, GraphTools, ROLE
+    from ontoforge.registry import Registry
+    from ontoforge.store import TripleStore
+
+    tools = GraphTools(Registry(db), TripleStore(db), None, None)
+    a, r = ACTOR.set("alice"), ROLE.set("admin")
+    try:
+        assert tools._require("builder") is None
+        ROLE.set("viewer")
+        assert "alice is viewer" in tools._require("builder")
+    finally:
+        ACTOR.reset(a), ROLE.reset(r)

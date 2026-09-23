@@ -77,15 +77,6 @@ def _serve(args) -> int:
 
 
 def _serve_mcp(args) -> int:
-    from ontoforge.mcp import GraphTools, create_mcp_server
-    from ontoforge.registry import Registry
-    from ontoforge.store import TripleStore
-    db = _database(args)
-    from ontoforge.catalog import PostgresCatalog
-    from ontoforge.metadata import MetadataService
-    from ontoforge.attachments import AttachmentService
-    from ontoforge.build import PostgresSource
-    reg, store = Registry(db), TripleStore(db)
-    create_mcp_server(GraphTools(reg, store, MetadataService(reg, PostgresCatalog(db), db),
-                                 AttachmentService(reg, PostgresSource(db), store))).run(transport="stdio")
+    from ontoforge.api.app import stdio_mcp_server
+    stdio_mcp_server(_database(args)).run(transport="stdio")
     return 0

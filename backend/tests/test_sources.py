@@ -35,9 +35,9 @@ def test_domain_with_a_connection_opens_that_source_and_one_without_uses_the_dep
     assert type(src).__name__ == "DatabricksSource" and src.catalog.default_schema == "public"
     assert resolver.for_domain(d) is src and env_calls == []                      # cached, env untouched
     plain = reg.create_domain("plain", base_iri="http://d/plain/", ai_connection_id=ai["id"])
-    assert isinstance(resolver.for_domain(plain), PostgresSource) and env_calls == [1]   # deployment source, built once
-    v = reg.create_version(plain.id, actor="a")
-    assert resolver.for_version(v.id) is resolver.env
+    with pytest.raises(ValueError, match="no source connection"):     # a hub exists: an unattached domain is a mistake
+        resolver.for_domain(plain)
+    assert env_calls == []                                            # and the deployment's own source is never opened
 
 
 def test_postgres_credentials_open_a_postgres_source(db):
@@ -59,3 +59,34 @@ def test_unsupported_kinds_are_refused_plainly():
         SourceResolver._open({"id": "1", "name": "srv", "kind": "mssql", "config": {}}, None, None)
     with pytest.raises(ValueError, match="personal access token"):
         SourceResolver._open({"id": "1", "name": "sp", "kind": "databricks", "config": {"auth_type": "service_principal"}}, None, None)
+
+
+def test_a_domain_with_no_connection_is_refused_where_a_connection_module_exists(db, monkeypatch):
+    """Silently reading the deployment's own database looks like a working source. It is not one."""
+    from ontoforge.build import PostgresSource
+    from ontoforge.config import Settings
+    from ontoforge.registry import Registry
+    from ontoforge.sources import SourceResolver
+
+    class Hub:                                   # a connection module is configured
+        source = "hub"
+
+    reg = Registry(db)
+    d = reg.create_domain("nowhere", base_iri="http://x/")
+    resolver = SourceResolver(Settings(), reg, Hub(), lambda: PostgresSource(db))
+    with pytest.raises(ValueError, match="no source connection"):
+        resolver.for_domain(d.name)
+
+
+def test_without_a_connection_module_the_deployment_source_is_the_source(db):
+    """A single-node deployment maps the tables it already has; there is nothing to point at."""
+    from ontoforge.build import PostgresSource
+    from ontoforge.config import Settings
+    from ontoforge.connectors import NoConnectionModule
+    from ontoforge.registry import Registry
+    from ontoforge.sources import SourceResolver
+
+    reg = Registry(db)
+    d = reg.create_domain("local", base_iri="http://x/")
+    env = PostgresSource(db)
+    assert SourceResolver(Settings(), reg, NoConnectionModule(), lambda: env).for_domain(d.name) is env

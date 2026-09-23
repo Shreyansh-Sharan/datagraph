@@ -295,4 +295,5 @@ def create_mcp_server(tools: GraphTools, name: str = "ontoforge") -> MCPServer:
     def preview_sql(sql: str, domain: str | None = None, limit: int = 20) -> dict:
         return tools.preview_sql(domain, sql, limit)
 
+    server.ontoforge_tools = tools   # the wiring behind the tools, for a caller that builds the server itself
     return server

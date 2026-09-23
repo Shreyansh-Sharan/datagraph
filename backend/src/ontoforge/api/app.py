@@ -14,7 +14,7 @@ from ontoforge import ui
 
 from ontoforge.analytics import AnalyticsError, GraphAnalytics
 from ontoforge.attachments import AttachmentError, AttachmentService
-from ontoforge.auth import AuthError, Forbidden, Principals
+from ontoforge.auth import AuthError, Forbidden, Principals, Role
 from ontoforge.cohorts import CohortEngine, CohortError
 from ontoforge.auth.fastapi import principal_from_headers
 from ontoforge.build import BuildPipeline, BuildScheduler, DatabricksSource, PublishConfig, PostgresSource, SourceEngine, databricks_connect_factory
@@ -100,6 +100,28 @@ def create_app(db: Database, source_db: Database | None = None, settings: Settin
     for cls, code in _STATUS.items():
         app.add_exception_handler(cls, _handler(code))
     return app
+
+
+def stdio_mcp_server(db: Database, settings: Settings | None = None, actor: str | None = None):
+    """The same MCP server the HTTP transport serves, for a desktop client speaking stdio.
+
+    One wiring, so a tool cannot work over one transport and fail over the other. stdio has no
+    request to carry an identity, so the caller is named by ONTOFORGE_MCP_ACTOR and its role is
+    looked up like any other principal; without one the server refuses to start rather than
+    running every action with no role, which would pass every gate.
+    """
+    import os
+
+    settings = settings or load_settings()
+    name = (actor or os.environ.get("ONTOFORGE_MCP_ACTOR") or "").strip()
+    if not name:
+        raise ValueError("Set ONTOFORGE_MCP_ACTOR to the principal this server acts as")
+    app = create_app(db, settings=settings)
+    role = app.state.principals.get_role(name) or Role(settings.auth_default_role)
+    ACTOR.set(name)
+    ROLE.set(role.value)
+    VIA.set("mcp")
+    return app.state.mcp_server
 
 
 def _mcp_mount(app: FastAPI):
