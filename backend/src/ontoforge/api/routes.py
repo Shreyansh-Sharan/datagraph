@@ -11,7 +11,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import StreamingResponse
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from graphql import graphql_sync, print_schema
 from pydantic import BaseModel, Field
 
@@ -274,6 +274,61 @@ def health(request: Request):
     with _st(request).db.transaction() as cur:
         cur.execute("SELECT 1")
     return {"status": "ok"}
+
+
+@open_router.get("/health/ready")
+def readiness(request: Request):
+    """Whether this instance can serve, and what is wrong when it cannot.
+
+    Liveness only proves the process is up. A load balancer needs to know that the registry
+    answers, that the migrations this build expects are applied, that the workers are alive and
+    whether the connection module is reachable. A missing hub is degraded, not down: everything
+    already built keeps answering, only attaching a new source fails.
+    """
+    import time
+
+    from ontoforge.db.migrate import applied_migrations, migration_files
+
+    st = _st(request)
+    checks: dict[str, dict] = {}
+    started = time.perf_counter()
+    try:
+        with st.db.transaction() as cur:
+            cur.execute("SET LOCAL statement_timeout = '2s'")
+            cur.execute("SELECT 1")
+        checks["database"] = {"ok": True, "latency_ms": round((time.perf_counter() - started) * 1000, 1)}
+    except Exception as exc:  # noqa: BLE001 - the probe reports, it never raises
+        checks["database"] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    if checks["database"]["ok"]:
+        try:
+            done = set(applied_migrations(st.db))
+            pending = [f.name for f in migration_files() if f.name not in done]
+            checks["migrations"] = {"ok": not pending, "applied": len(done), "pending": pending}
+        except Exception as exc:  # noqa: BLE001
+            checks["migrations"] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    else:
+        checks["migrations"] = {"ok": False, "error": "the database is unreachable"}
+
+    builds = getattr(st.scheduler, "pool", None)
+    jobs = getattr(st.jobs, "pool", None)
+    alive = lambda pool: bool(pool) and not getattr(pool, "_shutdown", False)   # noqa: E731
+    checks["workers"] = {"ok": alive(builds) and alive(jobs), "builds": alive(builds), "jobs": alive(jobs)}
+
+    configured = st.connections.source != "none"
+    if not configured:
+        checks["connections"] = {"ok": True, "configured": False}
+    else:
+        try:
+            st.connections.specs()
+            checks["connections"] = {"ok": True, "configured": True}
+        except Exception as exc:  # noqa: BLE001 - reachable is a separate question from healthy
+            checks["connections"] = {"ok": False, "configured": True, "error": str(exc).split("\n")[0]}
+
+    hard = ("database", "migrations", "workers")
+    status = "down" if any(not checks[k]["ok"] for k in hard) else ("ok" if all(c["ok"] for c in checks.values()) else "degraded")
+    body = {"status": status, "version": request.app.version, "checks": checks}
+    return JSONResponse(body, status_code=503 if status == "down" else 200)
 
 
 @router.get("/domains")
@@ -1348,10 +1403,22 @@ def get_job(job_id: UUID, request: Request):
     return _st(request).jobs.get(job_id).to_dict()
 
 
+@router.post("/jobs/{job_id}/cancel")
+def cancel_job(job_id: UUID, request: Request, me: Principal = Depends(builder)):
+    """Ask a running job to stop. Work that can be interrupted ends cancelled, not failed."""
+    jobs = _st(request).jobs
+    asked = jobs.cancel(job_id)
+    return {"cancelling": asked, "job": jobs.get(job_id).to_dict()}
+
+
 @router.get("/versions/{version_id}/jobs")
-def latest_job(version_id: UUID, request: Request, kind: str | None = None):
+def latest_job(version_id: UUID, request: Request, kind: str | None = None,
+               history: bool = Query(default=False, description="true lists the version's jobs newest first instead of only the last one")):
     """The most recent background job of a version (optionally of one kind), or null."""
-    job = _st(request).jobs.latest(version_id, kind)
+    jobs = _st(request).jobs
+    if history:
+        return [j.to_dict() for j in jobs.list(version_id, kind)]
+    job = jobs.latest(version_id, kind)
     return job.to_dict() if job else None
 
 

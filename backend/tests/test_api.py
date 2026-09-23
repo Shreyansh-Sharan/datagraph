@@ -252,3 +252,57 @@ def test_graph_status_describes_the_last_build_and_refreshes_with_the_next(clien
     second = client.post(f"/versions/{v['id']}/builds", params={"wait": "true"}).json()
     fresh = client.get(f"/versions/{v['id']}/graph/status").json()
     assert fresh["last_build"]["id"] == second["id"] and fresh["triples"] == second["triple_count"]
+
+
+def test_readiness_reports_each_dependency_and_stays_public(db):
+    """Liveness says the process is up. Readiness says it can actually serve, and what is wrong."""
+    from ontoforge.config import Settings
+
+    with TestClient(create_app(db=db, settings=Settings())) as c:
+        r = c.get("/health/ready")                       # no identity: a probe cannot sign in
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["status"] == "ok"
+        checks = body["checks"]
+        assert checks["database"]["ok"] is True and checks["database"]["latency_ms"] >= 0
+        assert checks["migrations"]["ok"] is True and checks["migrations"]["applied"] > 0 and checks["migrations"]["pending"] == []
+        assert checks["workers"]["ok"] is True and checks["workers"]["builds"] and checks["workers"]["jobs"]
+        assert checks["connections"]["ok"] is True and checks["connections"]["configured"] is False
+        assert body["version"]
+
+
+def test_readiness_is_down_when_the_database_is_gone(db):
+    from ontoforge.config import Settings
+
+    from contextlib import contextmanager
+
+    class Unreachable:
+        @contextmanager
+        def transaction(self):
+            raise OSError("could not connect to server")
+            yield   # pragma: no cover
+
+    app = create_app(db=db, settings=Settings())
+    with TestClient(app) as c:
+        app.state.db = Unreachable()                     # the store stops answering
+        r = c.get("/health/ready")
+        assert r.status_code == 503 and r.json()["status"] == "down"
+        assert r.json()["checks"]["database"]["ok"] is False and r.json()["checks"]["database"]["error"]
+
+
+def test_an_unreachable_connection_module_is_degraded_not_down(db):
+    """Without the hub no source can be attached, but everything already built still answers."""
+    import httpx
+
+    from ontoforge.config import Settings
+
+    def refuse(_request):
+        raise httpx.ConnectError("connection refused")
+
+    client = httpx.Client(base_url="http://hub.invalid", transport=httpx.MockTransport(refuse))
+    settings = Settings(connections_hub_url="http://hub.invalid")
+    with TestClient(create_app(db=db, settings=settings, hub_client=client)) as c:
+        r = c.get("/health/ready")
+        assert r.status_code == 200 and r.json()["status"] == "degraded"
+        assert r.json()["checks"]["connections"]["ok"] is False and r.json()["checks"]["connections"]["configured"] is True
+        assert "unreachable" in r.json()["checks"]["connections"]["error"]

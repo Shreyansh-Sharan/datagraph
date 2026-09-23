@@ -78,13 +78,14 @@ def create_app(db: Database, source_db: Database | None = None, settings: Settin
     app.state.analytics = GraphAnalytics(app.state.registry, app.state.store)
     app.state.attachments = AttachmentService(app.state.registry, app.state.sources.for_version, app.state.store)
     app.state.cohorts = CohortEngine(app.state.registry, app.state.store)
-    app.state.jobs = JobRunner(workers=settings.build_workers, notifier=app.state.notifier, registry=app.state.registry)
+    app.state.jobs = JobRunner(workers=settings.build_workers, notifier=app.state.notifier, registry=app.state.registry, db=db)
     app.state.llm = llm if llm is not None else _llm_provider(settings)   # the CLI's serve path passes none: build it from settings
     mcp_app = _mcp_mount(app)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.registry.fail_stale_builds()   # no worker survives a restart
+        app.state.jobs.sweep_stale()
         app.state.notifier.fail_running("the API restarted while this was running", "job")
         async with mcp_app.router.lifespan_context(mcp_app):   # mounted apps don't get their lifespan run for them
             yield

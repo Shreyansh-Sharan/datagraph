@@ -71,20 +71,20 @@ def test_jobs_profiles_and_rule_runs_announce_themselves(db):
     meta = MetadataService(reg, src.catalog, db); meta.notifier = n
     meta.import_tables(v.id, ["employees"], actor="alice")
     assert any(x["kind"] == "metadata.imported" and "1 table snapshotted" in x["title"] for x in n.feed("bob", "viewer")["items"])
-    jobs = JobRunner(workers=1, notifier=n, registry=reg)
+    jobs = JobRunner(workers=1, notifier=n, registry=reg, db=db)
     seen = []
 
     def work(report):
         report("Describing table 1 of 2"); time.sleep(1.1); report("Describing table 2 of 2"); seen.append(1); return {"ok": True}
     job = jobs.submit("profile", v.id, work, actor="alice", label="employees")
-    for _ in range(50):
-        if job.status != "running": break
+    for _ in range(80):                                   # submit returns a snapshot; the table is the live record
+        if jobs.get(job.id).settled: break
         time.sleep(0.1)
     row = next(x for x in n.feed("bob", "viewer")["items"] if x["kind"] == "job.profile")
     assert row["status"] == "done" and row["title"] == "Profiled employees" and row["link"] == {"screen": "table", "tab": "profile", "domain": "hr", "version": 1, "table": "employees"}
     failing = jobs.submit("dq-run", v.id, lambda report: (_ for _ in ()).throw(RuntimeError("no source")), actor="alice", label="employees")
-    for _ in range(50):
-        if failing.status != "running": break
+    for _ in range(80):
+        if jobs.get(failing.id).settled: break
         time.sleep(0.1)
     bad = next(x for x in n.feed("bob", "viewer")["items"] if x["kind"] == "job.dq-run")
     assert bad["status"] == "failed" and "no source" in (bad["body"] or "")

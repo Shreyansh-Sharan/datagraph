@@ -216,7 +216,7 @@ def test_ai_tasks_can_run_in_the_background_with_progress(db):
         r = c.post(f"/versions/{v['id']}/llm/draft-ontology", params={"background": "true"}, json={"ontology_iri": ONTO_IRI, "description": "HR"})
         assert r.status_code == 202, r.text
         job = r.json()
-        assert job["kind"] == "draft-ontology" and job["status"] in ("running", "succeeded") and job["version_id"] == v["id"]
+        assert job["kind"] == "draft-ontology" and job["status"] in ("queued", "running", "succeeded") and job["version_id"] == v["id"]
         for _ in range(100):
             job = c.get(f"/jobs/{job['id']}").json()
             if job["status"] != "running":
