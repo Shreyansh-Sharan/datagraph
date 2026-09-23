@@ -12,7 +12,9 @@ db:               ## just the development Postgres, in Docker
 test:             ## the backend suite
 	.venv/bin/pytest
 test-ui:          ## the frontend suite
-	cd frontend && npx tsc --noEmit && npx vitest run
+	cd frontend && pnpm run typecheck && pnpm exec vitest run
+ui:               ## the frontend dev server
+	cd frontend && pnpm install && pnpm run dev
 up:               ## the whole product in containers (see deploy/README.md)
 	docker compose -f deploy/compose.yml up -d --build
 down:

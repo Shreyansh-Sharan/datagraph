@@ -71,10 +71,21 @@ Every setting is an environment variable with the prefix `ONTOFORGE_`, listed wi
 | `ONTOFORGE_SOURCE_KIND` | `postgres` or `databricks`: where the mapped tables live |
 | `ONTOFORGE_CONNECTIONS_HUB_URL` | the connection module; without it no source can be attached |
 | `ONTOFORGE_LLM_PROVIDER` | `none` turns the assistant off and says so in the UI |
+| `ONTOFORGE_UI_DIR` | a build of `frontend/` for the API to serve at `/ui`; unset when the web image serves it |
 
 **Header mode is only safe behind a proxy that strips that header from the public.** Anything that
 reaches the API directly can otherwise claim any identity. Where no such proxy exists, use token
 mode and issue API keys.
+
+## One interface
+
+`frontend/` is the only interface, managed with pnpm. It reaches a deployment two ways:
+
+- **The web image** serves the build on nginx at `/` and proxies this API. Build it with
+  `VITE_BASE=/ VITE_API_BASE=/api`, which the image already does.
+- **The API itself** serves a build at `/ui` when `ONTOFORGE_UI_DIR` points at one. Build it with
+  `VITE_BASE=/ui/ VITE_API_BASE=` so its assets and its calls resolve there. Without that variable
+  `/ui` answers 503 and says where the app lives, rather than pretending to be it.
 
 ## Health
 

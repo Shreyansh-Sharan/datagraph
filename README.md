@@ -13,7 +13,7 @@ pytest and vitest look for them.
 
 ```
 backend/    the Python package and its suite: API, MCP server, compiler, build pipeline, registry
-frontend/   the React app and its suite
+frontend/   the React app and its suite (pnpm; it is the only interface)
 deploy/     images, compose, pipelines, and the scripts for a developer machine
 docs/       architecture decisions, the gap analysis, design notes
 ```
@@ -42,8 +42,8 @@ pytest                                     # 380 behaviour tests against the liv
 The React app runs against that API:
 
 ```bash
-cd frontend && npm install && npm run dev  # http://127.0.0.1:5173, proxying to :8765
-npm run typecheck && npx vitest run        # or `make test-ui` from the root
+cd frontend && pnpm install && pnpm run dev   # http://127.0.0.1:5173, proxying to :8765
+pnpm run typecheck && pnpm exec vitest run    # or `make test-ui` from the root
 ```
 
 Configuration is environment-driven; see `.env.example` for a developer machine and

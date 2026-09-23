@@ -1,5 +1,7 @@
-# Databricks Apps manifest: `databricks apps deploy ontoforge --source-code-path .`
+# Databricks Apps manifest: `databricks apps deploy datagraph --source-code-path .`
 # The app reads its identity header from the Apps proxy and talks to Lakebase/Postgres + a SQL Warehouse.
+# This is the one deployment where the API serves the interface itself, so build it first:
+#   cd frontend && VITE_BASE=/ui/ VITE_API_BASE= pnpm run build && cp -r dist ../ui
 command: ["uvicorn", "ontoforge.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
 env:
   - name: ONTOFORGE_AUTH_MODE
@@ -20,6 +22,8 @@ env:
     valueFrom: databricks-token
   - name: ONTOFORGE_DATABASE_URL
     valueFrom: postgres-url             # Lakebase or any Postgres
+  - name: ONTOFORGE_UI_DIR
+    value: ui                           # a build of frontend/ shipped beside the source
   - name: ONTOFORGE_WAREHOUSE_TARGET_SCHEMA
     value: main.ontoforge
   - name: ONTOFORGE_WAREHOUSE_MATERIALIZATION

@@ -33,13 +33,15 @@ stages:
           - task: npmAuthenticate@0
             displayName: Authenticate the private feed
             inputs: { workingFile: frontend/.npmrc }
-          - script: npm ci
+          - script: corepack enable && corepack prepare --activate
+            displayName: Use the pnpm the package pins
+          - script: pnpm install --frozen-lockfile
             workingDirectory: frontend
             displayName: Install
-          - script: npm run typecheck
+          - script: pnpm run typecheck
             workingDirectory: frontend
             displayName: Type-check
-          - script: npx vitest run --reporter=junit --outputFile=../junit.xml
+          - script: pnpm exec vitest run --reporter=junit --outputFile=../junit.xml
             workingDirectory: frontend
             displayName: Unit tests
           - task: PublishTestResults@2

@@ -1,0 +1,7 @@
+# pnpm reads its settings from here (pnpm 10 and later), not from .npmrc.
+#
+# Running a script must not reach the network: installing is its own step, `pnpm install` here
+# and `pnpm install --frozen-lockfile` in the image and the pipeline.
+verifyDepsBeforeRun: false
+autoInstallPeers: true
+strictPeerDependencies: false

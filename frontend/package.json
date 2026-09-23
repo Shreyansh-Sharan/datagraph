@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "typecheck": "tsc --noEmit",
     "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -35,5 +35,10 @@
     "typescript": "^5.7.2",
     "vite": "^5.4.21",
     "vitest": "^2.1.8"
+  },
+  "packageManager": "pnpm@11.0.8",
+  "engines": {
+    "node": ">=22",
+    "pnpm": ">=11"
   }
 }

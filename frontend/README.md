@@ -1,17 +1,25 @@
 # datagraph UI (microfrontend)
 
-React + TypeScript + Vite front end for datagraph, built from the `Datagraph UI.html` design in this
-folder and the blueprint in `docs/UI-BLUEPRINT.html`. It talks to the backend only through the
-`DatagraphApi` port (`src/api/types.ts`), so it runs against design data today and the REST API
-during integration without touching the screens.
+React + TypeScript + Vite. This is the product's only interface: the API carries no copy of it and
+serves a build of this folder when `ONTOFORGE_UI_DIR` points at one. It talks to the backend only
+through the `DatagraphApi` port (`src/api/types.ts`), so the screens never know which adapter is
+behind them. The design it was built from is `docs/Datagraph UI.html` and `docs/UI-BLUEPRINT.html`.
 
-## Run
+Managed with **pnpm**, pinned by the `packageManager` field. `corepack enable` once, then:
 
 ```bash
 cd frontend
-npm install
-npm run dev            # http://localhost:5173/ui/  (mock data, Databricks adapter)
+pnpm install
+pnpm run dev           # http://localhost:5173/ui/
+pnpm run typecheck && pnpm exec vitest run
 ```
+
+> **The lockfile is not committed yet.** `@polestar/connections` comes from a private Azure
+> Artifacts feed whose token has expired, so nothing can resolve it today, with npm or pnpm alike.
+> Renew it (the Azure Artifacts Credential Provider writes it to `~/.npmrc`), then run
+> `pnpm import && rm package-lock.json && pnpm install` once. `pnpm import` reads the npm lockfile
+> kept beside this file, so the pinned versions carry over exactly. Until then the image and the
+> pipeline, which both run `pnpm install --frozen-lockfile`, cannot build the UI.
 
 Environment (`.env.local`, see `.env.example`):
 

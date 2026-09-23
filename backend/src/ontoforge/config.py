@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     database_schema: str | None = None
     base_iri: str = "http://ontoforge.local/"
     build_workers: int = 2
+    ui_dir: str | None = None           # a built frontend/ to serve at /ui; unset means the API serves no interface
     log_format: str = "text"            # "text" | "json"
     log_level: str = "INFO"
 
